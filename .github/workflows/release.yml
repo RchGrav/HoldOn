@@ -1,14 +1,18 @@
 name: Multi-arch Release
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
+      - macos-portability
     tags:
       - 'v*'
+      - '[0-9]*'
   pull_request:
     branches:
       - main
+      - macos-portability
 
 permissions:
   contents: write
@@ -18,7 +22,7 @@ jobs:
     name: Test (ubuntu amd64)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build static and dynamic
         run: |
           make clean
@@ -66,15 +70,15 @@ jobs:
             static_ldflags: ''
             package_binary: sigmund-dynamic
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Resolve version
         id: version
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
           else
-            version="0.0.0-${GITHUB_SHA::7}"
+            version="0.2.0-${GITHUB_SHA::7}"
           fi
           echo "value=${version}" >> "$GITHUB_OUTPUT"
 
@@ -97,7 +101,7 @@ jobs:
           ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ steps.version.outputs.value }}" "${{ matrix.package_binary }}" dist
 
       - name: Upload GNU artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.target }}
           path: dist/*.tar.gz
@@ -121,15 +125,15 @@ jobs:
           - target: linux-riscv64-musl-static
             zig_target: riscv64-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Resolve version
         id: version
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
           else
-            version="0.0.0-${GITHUB_SHA::7}"
+            version="0.2.0-${GITHUB_SHA::7}"
           fi
           echo "value=${version}" >> "$GITHUB_OUTPUT"
 
@@ -153,7 +157,56 @@ jobs:
           ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ steps.version.outputs.value }}" sigmund dist
 
       - name: Upload musl artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-15
+            arch: arm64
+            uname_m: arm64
+          - target: macos-x86_64
+            runner: macos-15-intel
+            arch: x86_64
+            uname_m: x86_64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate runner architecture
+        run: test "$(uname -m)" = "${{ matrix.uname_m }}"
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.2.0-${GITHUB_SHA::7}"
+          fi
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS binary
+        run: |
+          make clean
+          make CC=clang STATIC_LDFLAGS='' CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2'
+          file sigmund
+
+      - name: Package tarball
+        run: |
+          mkdir -p dist
+          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ steps.version.outputs.value }}" sigmund dist
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.target }}
           path: dist/*.tar.gz
@@ -161,15 +214,16 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref_type == 'tag'
     needs:
       - build-gnu
       - build-musl
+      - build-macos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
-          pattern: linux-*
+          pattern: '*'
           path: dist
           merge-multiple: true
 
