@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.3.0 - Alias capability profiles and stable fingerprints
+
+This release promotes Sigmund from run-ID lifecycle management into named,
+hash-pinned capability profiles while preserving the existing user-local and
+root-managed privilege boundary.
+
+### Added
+
+- Added `sigmund alias <id> <name>` to promote a recorded run into an immutable
+  profile stored in `profiles.json` and mapped through `aliases.json`.
+- Added `sigmund start <profile>` so aliases and profile hashes can start the
+  recorded command template without retyping the original argv.
+- Added `sigmund aliases` for visible alias/profile lookup.
+- Added root-managed `grant` and `revoke` support for hash-scoped sudoers
+  entries covering `start`, `stop`, `kill`, `tail`, `dump`, and `prune`.
+- Added macOS arm64 and x86_64 package builds to the multi-arch release
+  workflow.
+
+### Changed
+
+- Profile fingerprints now use the stable `sigmund-profile` domain, resolved
+  absolute binary path, argc, and indexed argv NUL framing only.
+- Profile fingerprints deliberately exclude environment, cwd, uid, timestamps,
+  hostnames, and other context so aliases, profiles, and grants remain stable.
+- Profile starts inherit Sigmund's current environment unchanged; privilege
+  crossing continues to rely on sudo's standard `env_reset` behavior.
+- Release/dev artifact fallback versions now use the `0.3.0-<sha>` prefix.
+
+### Fixed
+
+- Fixed self-elevation for aliases so privileged aliases resolve to
+  `system:<hash>` before crossing sudo, never to a mutable alias token.
+- Fixed sudoers profile grants so generated command entries contain immutable
+  hashes rather than alias names.
+- Fixed the profile fingerprint regression test to extract the `bin` value from
+  the exact hash entry under test.
+- Fixed the SHA-256 test helper to fail with a clear diagnostic when neither
+  `sha256sum` nor `shasum` is available.
+
 ## 0.2.0 - Root-managed state stabilization pass
 
 This pass hardens the root-managed state boundary without adding future command features.
