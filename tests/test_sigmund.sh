@@ -825,11 +825,12 @@ test_system_alias_start_elevates_hash_not_alias() {
 
 test_grant_revoke_writes_hash_scoped_sudoers() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 0
-  local safe out id hash sudoers_dir sudoers_file rc visudo_ok
+  local safe safe_real out id hash sudoers_dir sudoers_file rc visudo_ok
   safe="$TEST_ROOT/sigmund-safe"
   cp "$SIGMUND_REAL_BIN" "$safe" || return 1
   as_root chown 0:0 "$safe" || return 1
   as_root chmod 755 "$safe" || return 1
+  safe_real="$(cd "$(dirname "$safe")" && pwd -P)/$(basename "$safe")" || return 1
   sudoers_dir="$TEST_ROOT/sudoers.d"
   mkdir -p "$sudoers_dir" || return 1
   chmod 755 "$sudoers_dir" || return 1
@@ -854,17 +855,17 @@ test_grant_revoke_writes_hash_scoped_sudoers() {
   as_root "$safe" grant web-sys "$TEST_USER" start,stop >"$TEST_ROOT/grant.out" 2>"$TEST_ROOT/grant.err" || { cat "$TEST_ROOT/grant.out" "$TEST_ROOT/grant.err" >&2; return 1; }
   sudoers_file="$sudoers_dir/sigmund_web-sys_$TEST_USER"
   root_file_exists "$sudoers_file" || { echo "missing $sudoers_file" >&2; cat "$TEST_ROOT/grant.err" >&2; return 1; }
-  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe --system --elevated start system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe --system --elevated stop system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real --system --elevated start system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real --system --elevated stop system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
 
   as_root "$safe" revoke web-sys "$TEST_USER" start >"$TEST_ROOT/revoke.out" 2>"$TEST_ROOT/revoke.err" || { cat "$TEST_ROOT/revoke.out" "$TEST_ROOT/revoke.err" >&2; return 1; }
-  as_root sh -c '! grep -F -q -- "$1" "$2"' sh "$TEST_USER ALL=(root) NOPASSWD: $safe --system --elevated start system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe --system --elevated stop system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  as_root sh -c '! grep -F -q -- "$1" "$2"' sh "$TEST_USER ALL=(root) NOPASSWD: $safe_real --system --elevated start system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real --system --elevated stop system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
 
   as_root "$safe" grant web-sys "$TEST_USER" >"$TEST_ROOT/grant-all.out" 2>"$TEST_ROOT/grant-all.err" || { cat "$TEST_ROOT/grant-all.out" "$TEST_ROOT/grant-all.err" >&2; return 1; }
   root_grep '# actions: ALL' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe --system --elevated start system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe --system --elevated prune system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real --system --elevated start system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real --system --elevated prune system\\:$hash" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
   as_root "$safe" revoke web-sys "$TEST_USER" >"$TEST_ROOT/revoke-all.out" 2>"$TEST_ROOT/revoke-all.err" || { cat "$TEST_ROOT/revoke-all.out" "$TEST_ROOT/revoke-all.err" >&2; return 1; }
   root_path_absent "$sudoers_file"
 }
