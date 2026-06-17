@@ -1,5 +1,93 @@
 # Changelog
 
+## 0.3.0 - Alias capability profiles and stable fingerprints
+
+This release promotes Sigmund from run-ID lifecycle management into named
+aliases while preserving the existing user-local and root-managed privilege
+boundary. Run IDs remain concrete process-group handles; aliases are human
+labels and launch recipes; protected hashes are root-managed capability
+material, not normal action targets.
+
+### Added
+
+- Added `sigmund alias <id> <name>` to create or update an alias from a
+  recorded run. User-local aliases store a direct recipe in private
+  `aliases.json`; root-managed aliases publish only `alias -> hash` while the
+  protected recipe stays in root-private `profiles.json`.
+- Added `sigmund start <alias>` so aliases can start the recorded command
+  template without retyping the original argv.
+- Added `--multi [N]` for alias starts. Without it, `start <alias>` refuses when
+  that alias already has a running process.
+- Added alias-aware target resolution for `stop`, `kill`, `tail`, `dump`, and
+  `prune`; ambiguous alias selections exit 6 and print the matching run IDs.
+- Added `--all` to resolve alias ambiguity for `stop`, `kill`, and `prune`.
+- Added `sigmund aliases` for visible alias lookup. User aliases show `-` in the
+  hash column; system aliases show `<root-managed>` with a truncated protected
+  profile hash by default and the full hash with `-v`.
+- Added `stop --print` and `kill --print` as the dry-run replacement for the
+  old standalone signal-command helper.
+- Added root-managed `grant` and `revoke` support for hash-scoped sudoers
+  entries covering `start`, `stop`, `kill`, `tail`, `dump`, `prune`, and
+  `console`.
+- Added `sigmund --console <cmd...>` and `sigmund console <target>` for
+  socat-backed attachable PTY sessions. Console runs still tee output to the
+  normal log so `tail` and `dump` continue to work.
+- Added `sigmund help [topic]` plus action `-h` help for the core command
+  surface.
+- Added `-f` as the documented start-and-follow short form while keeping
+  `--tail` as a compatibility spelling.
+- Added macOS arm64 and x86_64 package builds to the multi-arch release
+  workflow.
+
+### Changed
+
+- Profile fingerprints now use the stable `sigmund-profile` domain, resolved
+  absolute binary path, argc, and indexed argv NUL framing only.
+- Profile fingerprints deliberately exclude environment, cwd, uid, timestamps,
+  hostnames, and other context so aliases, profiles, and grants remain stable.
+- Profile starts inherit Sigmund's current environment unchanged; privilege
+  crossing continues to rely on sudo's standard `env_reset` behavior.
+- Run IDs are now generated as 8 lowercase hex characters, with `00000000` and
+  `ffffffff` reserved for internal capability selectors.
+- Alias-started runs record their alias label in private run records and, for
+  root-managed runs, in the redacted public index.
+- Root-managed alias self-elevation now carries the internal capability argv
+  shape `<verb> <runid_sel> <alias> <hash>` so sudoers remains hash-pinned
+  while root Sigmund resolves concrete runs by alias label and command intent.
+- Console socket paths are private run-state fields and are cleaned up by
+  normal prune lifecycle handling.
+- Start now writes only the bare 8-hex run ID to stdout and writes the human
+  banner to stderr; `--quiet` suppresses that human banner/status output.
+- `list` now supports alias filtering and relative start ages by default; use
+  `--iso` or `-l` for absolute timestamps.
+- Successful `stop`, `kill`, and `prune` operations now confirm what happened
+  on stderr while keeping stdout scriptable.
+- `alias`, `grant`, and `revoke` confirmations now use stderr as human status;
+  alias pinning prints the pinned command instead of making scripts parse a
+  hash-oriented status line.
+- Release/dev artifact fallback versions now use the `0.3.0-<sha>` prefix.
+
+### Fixed
+
+- Fixed sudoers profile grants so generated command entries contain the
+  selected run ID slot, alias label, and immutable hash, and root Sigmund
+  verifies the pair plus selected run records before acting.
+- Fixed the profile fingerprint regression test to extract the `bin` value from
+  the exact hash entry under test.
+- Fixed the SHA-256 test helper to fail with a clear diagnostic when neither
+  `sha256sum` nor `shasum` is available.
+
+### Verification
+
+The following checks passed in the update environment:
+
+```bash
+make clean && make test CC=gcc CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2'
+make clean && make test CC=clang CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2'
+make clean && make test CC=gcc CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined' STATIC_LDFLAGS='' LDFLAGS='-fsanitize=address,undefined' TEST_LDFLAGS='-fsanitize=address,undefined'
+cppcheck --enable=warning,performance,portability --error-exitcode=1 --suppress=missingIncludeSystem --std=c11 src/sigmund.c
+```
+
 ## 0.2.0 - Root-managed state stabilization pass
 
 This pass hardens the root-managed state boundary without adding future command features.
@@ -222,7 +310,7 @@ This changelog records the changes made during the Linux/macOS portability and p
 - Improved `list`:
   - warns on unreadable or corrupt `.json` records;
   - uses boot markers only when available.
-- Improved `prune` and `killcmd`:
+- Improved `prune` and dry-run signal printing:
   - use safer boot handling;
   - refuse unknown or unvalidated signaling targets.
 

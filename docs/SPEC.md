@@ -20,11 +20,11 @@ Required permissions:
 directory: 0700 user:user
 records:   0600 user:user
 logs:      0600 user:user
+console:   0700 user:user console sockets, 0600 per socket
 aliases:   0600 user:user aliases.json
-profiles:  0600 user:user profiles.json
 ```
 
-User-local state is private to the user. Sigmund does not scan every user's home directory and does not require globally unique run IDs across users.
+User-local state is private to the user. User aliases store direct launch recipes in `aliases.json`; they do not create a user-global protected profile object. Sigmund does not scan every user's home directory and does not require globally unique run IDs across users.
 
 ### 1.2 Root-managed state
 
@@ -40,6 +40,7 @@ Layout:
 ```text
 /var/lib/sigmund/runs/      private root run records
 /var/lib/sigmund/logs/      private root logs
+/var/lib/sigmund/console/   private root console sockets
 /var/lib/sigmund/profiles.json
 /var/lib/sigmund/public/    public root run index
 /var/lib/sigmund/public/aliases.json
@@ -53,6 +54,8 @@ Required permissions:
 root state dir:       0755 root:root
 private run records:  0600 root:root
 private logs:         0600 root:root
+private console dir:  0700 root:root
+private sockets:      0600 root:root
 private profiles:     0600 root:root
 public dir:           0755 root:root
 public index files:   0644 root:root
@@ -133,6 +136,7 @@ list
 stop
 kill
 tail
+console
 dump
 prune
 start
@@ -140,17 +144,20 @@ alias
 aliases
 grant
 revoke
+help
 ```
 
 For Sigmund-owned commands, invocation switches may appear before or after the command arguments:
 
 ```bash
-sigmund --system stop 7f3c2a
-sigmund stop 7f3c2a --system
+sigmund --system stop 7f3c2a9d
+sigmund stop 7f3c2a9d --system
 sigmund start "qemu-system-x86_64 -m 4096" --system
 ```
 
 These canonicalize to the same root-side command shape when elevation is required.
+
+`sigmund help [topic]` is a Sigmund-owned documentation command and never starts a child command named `help`.
 
 ## 4. Start behavior
 
@@ -199,11 +206,26 @@ A root-managed start writes:
 
 If public index creation fails, startup fails and rolls back. A root-managed run that cannot be discovered violates the storage model.
 
-### 4.4 Profile start
+### 4.4 Alias start
 
-`sigmund start <alias>` and `sigmund start <hash>` start immutable profiles. A profile start loads the protected profile by hash, executes the stored argv using the stored absolute binary path, and writes `profile_hash` into the new run record.
+`sigmund start <alias>` starts the launch recipe currently assigned to that alias.
 
-For normal non-root invocation, plain profile targets resolve user-local first, then public root-managed aliases/hashes. Root-managed profile starts self-elevate and canonicalize the target to `system:<hash>` before crossing sudo.
+For user-local aliases, Sigmund loads the direct recipe from the user's private `aliases.json` and records the alias label on the new run. For root-managed aliases, Sigmund resolves the public alias to its protected profile hash, crosses sudo with the internal capability argv shape `<verb> <runid_sel> <alias> <hash>` when needed, verifies that alias/hash pair as root, loads the protected root-private profile for `start`, and records the alias label on the new run.
+
+`--multi` is an alias-start modifier. Without `--multi`, `start <alias>` refuses when that alias already has a running process. Bare `--multi` starts one additional run and bypasses that guard; `--multi N` and `--multi=N` start N runs.
+
+### 4.5 Console start
+
+`--console` is a start modifier. It may be used with raw starts or alias starts:
+
+```bash
+sigmund --console <cmd...>
+sigmund start <alias> --console
+```
+
+Console starts require `socat`. If `socat` is not available in `PATH`, Sigmund refuses before generating a run ID or launching the command.
+
+A console run records a private `console_sock` path and starts the command behind a per-run PTY broker. Output is tee'd to the normal log, so `tail` and `dump` keep their normal behavior. Console sockets are private state and must not be exposed through the public root index.
 
 ## 5. Public root index and aliases
 
@@ -213,9 +235,10 @@ Example:
 
 ```json
 {
-  "id": "7f3c2a",
+  "id": "7f3c2a9d",
   "root_managed": true,
   "requires_elevation": true,
+  "alias": "web-test",
   "state_hint": "unknown",
   "started_at": "2026-06-15T18:42:11Z"
 }
@@ -227,6 +250,7 @@ The public index must not include:
 argv
 cmdline_display
 log_path
+console_sock
 environment
 pid
 pgid
@@ -236,6 +260,7 @@ process start time
 executable identity
 sudo provenance
 private filesystem paths
+profile hashes
 ```
 
 Private root records are authoritative. Public records are derived discovery data.
@@ -250,17 +275,18 @@ Because Sigmund is daemonless and cannot continuously refresh root-public state 
 }
 ```
 
-Public aliases must not include argv, binary paths, log paths, environment, process identity, or sudo provenance.
+Public aliases must not include argv, binary paths, log paths, console socket paths, environment, process identity, or sudo provenance.
 
 ## 6. Run IDs and collision checks
 
-Run IDs are random opaque hex identifiers. Global uniqueness across all users is not required.
+Run IDs are random opaque 8-character lowercase hex identifiers. `00000000` and `ffffffff` are reserved internal sentinels and must never be generated. Global uniqueness across all users is not required.
 
 ### 6.1 User-local start avoids
 
 ```text
 that user's local records
 that user's local logs
+that user's local console sockets
 that user's local reservation files
 root-managed public index IDs
 ```
@@ -270,9 +296,10 @@ root-managed public index IDs
 ```text
 root-managed private records
 root-managed private logs
+root-managed private console sockets
 root-managed reservation files
 root-managed public index IDs
-the invoking user's local records/logs/reservations
+the invoking user's local records/logs/console sockets/reservations
 ```
 
 ### 6.3 Direct root start avoids
@@ -280,6 +307,7 @@ the invoking user's local records/logs/reservations
 ```text
 root-managed private records
 root-managed private logs
+root-managed private console sockets
 root-managed reservation files
 root-managed public index IDs
 ```
@@ -295,6 +323,7 @@ stop
 kill
 prune
 tail
+console
 dump
 ```
 
@@ -303,12 +332,26 @@ Targets may be:
 ```text
 run ID prefix
 alias
-64-character profile hash
 user:<target>
 system:<target>
 ```
 
 Alias names must be 1 to 64 characters and must contain only `[A-Za-z0-9_-]`. They must not contain `/` or `.`, and must not parse as a full profile hash. If an alias also looks like a run-ID prefix, concrete run-ID resolution wins before alias lookup.
+
+A profile hash is not a run ID and is not a normal action target. Hashes identify protected launch recipes and sudoers capabilities. Action commands resolve aliases by matching the alias label recorded on run records.
+
+Alias resolution is verb-specific:
+
+```text
+start: running alias-labeled runs gate new starts unless --multi is supplied
+stop/kill: running alias-labeled runs
+tail: running alias-labeled runs
+console: running console-enabled alias-labeled runs
+dump: alias-labeled runs with logs
+prune: prunable alias-labeled past data
+```
+
+If an alias selection has zero candidates but the alias exists, the action is a successful no-op. If the alias is unknown, the action returns not found. If an alias selection has more than one candidate, Sigmund exits 6 and prints the filtered candidates. `--all` resolves that ambiguity for `stop`, `kill`, and `prune`.
 
 The resolver returns one normative result:
 
@@ -326,12 +369,12 @@ Final action execution must use only the resolved target. Action commands must n
 ```text
 if user-local ID exists:
   target user-local
-else if user-local alias/hash matches exactly one run:
+else if user-local alias exists:
   target user-local
 else if root public ID exists:
   target root-managed requiring elevation
-else if root public alias/hash exists:
-  target root-managed requiring elevation as system:<hash>
+else if root public alias exists:
+  target root-managed requiring elevation as <runid_sel> <alias> <hash>
 else:
   not found
 ```
@@ -346,8 +389,8 @@ normal Sigmund targets the user-local match and does not self-elevate.
 ### 7.2 Root/sudo plain target
 
 ```text
-root_match = root-managed private ID exists, or alias/hash matches exactly one root-managed run
-user_match = invoking-user-local ID exists, or alias/hash matches exactly one invoking-user run, if sudo provenance exists
+root_match = root-managed private ID exists, or alias matches the verb-specific root-managed run set
+user_match = invoking-user-local ID exists, or alias matches the verb-specific invoking-user run set, if sudo provenance exists
 
 if root_match:
   target root-managed
@@ -407,7 +450,13 @@ The domain string `sigmund-profile` is a fixed namespace label, not a version. D
 
 Sigmund does not scrub, allowlist, capture, or hash the launched command's environment. `perform_start` and profile starts use the inherited process environment unchanged. Privilege-crossing starts rely on sudo's standard `env_reset` behavior before root Sigmund reaches `perform_start`; disabling `env_reset` or preserving loader variables through sudoers is host sudo policy, not Sigmund policy.
 
-When a normal user targets a root-managed alias, Sigmund resolves the alias to its hash before self-elevation. The sudo boundary must carry `system:<hash>`, never `system:<alias>`.
+When a normal user targets a root-managed alias, Sigmund resolves the public alias to the current protected hash before self-elevation and carries the internal capability argv shape over sudo:
+
+```text
+<verb> <runid_sel> <alias> <hash>
+```
+
+`runid_sel` is always present. It is a concrete 8-hex run ID, `00000000` for `start`, or `ffffffff` for an approved `--all` action. Root Sigmund must verify that the alias still points at that hash and that selected concrete run records are recorded under that alias before acting.
 
 ## 8. Self-elevation boundary
 
@@ -416,11 +465,15 @@ Normal non-root Sigmund may self-elevate only when:
 ```text
 the command is stop, kill, prune, tail, or dump;
 no user-local plain target matched;
-a root-managed public ID, alias, or profile hash matched;
+a root-managed public ID or alias matched;
 the target requires elevation.
 ```
 
-`sigmund --system start <profile>` may also self-elevate. Here, `<profile>` is an alias or a profile hash. Before the sudo boundary, a root-managed alias must be resolved to its profile hash.
+`sigmund --system start <alias>` may also self-elevate. Before the sudo boundary, a root-managed alias must be resolved to the internal start capability shape:
+
+```text
+start 00000000 <alias> <hash>
+```
 
 The elevation boundary is argv-preserving `fork()` + `waitpid()`:
 
@@ -437,7 +490,7 @@ child:
     "/absolute/path/to/sigmund",
     "--system",
     "--elevated",
-    <canonical-command using system:<id-or-hash> where needed>,
+    <canonical-command using system:<id> for ID targets or <runid_sel> <alias> <hash> for alias capabilities>,
     NULL
   ])
 ```
@@ -531,10 +584,11 @@ state
 exit_code
 term_signal
 launch_error
-profile_hash
+alias
+console_sock
 ```
 
-`profile_hash` is present when a run was started from an immutable profile.
+`alias` is present when a run was started through an alias. `console_sock` is present only for console-enabled runs. Run records never store protected profile hashes; hashes live in root-private `profiles.json`, public root-managed `aliases.json`, and sudo capability argv only.
 
 Best-effort process identity fields:
 
@@ -565,6 +619,8 @@ fsync containing directory when possible
 ## 11. Process creation and logging
 
 Sigmund launches the child in a new session / process group. Child `stdin` is redirected from `/dev/null`; child `stdout` and `stderr` are redirected to the per-run log.
+
+Start writes only the bare 8-character run ID to stdout. Human banners and confirmations, including `alias`, `grant`, `revoke`, `stop`, `kill`, and `prune` status lines, go to stderr and are suppressed by `--quiet` where applicable. `sigmund -f <cmd...>` starts and follows the log immediately; `--tail` remains accepted as a compatibility spelling.
 
 An exec-success handshake distinguishes successful `execvp()` from immediate exec failure:
 
@@ -603,25 +659,37 @@ Signaling refuses `stale` and `unknown` targets. A zombie leader with live same-
 
 ## 13. Prune behavior
 
-`sigmund prune` removes prunable records and orphan logs. Running records are kept. `sigmund prune <id>` removes exactly one prunable target. `sigmund prune all` removes all prunable targets.
+`sigmund prune` removes prunable past run data, unreferenced logs, and orphan console sockets. Running records are kept. `sigmund prune <id>` removes exactly one prunable target. `sigmund prune all` removes all prunable targets.
 
 Root-managed prune follows the same resolver and elevation rules as other action commands.
+
+### 13.1 Console behavior
+
+`sigmund console <target>` attaches to a running console-enabled run through the recorded private socket:
+
+```text
+socat -,raw,echo=0 UNIX-CONNECT:<console_sock>
+```
+
+A run ID targets that one run directly. An alias resolves by recorded alias label and the `console` verb intent-set: running runs with `console_sock`. More than one matching alias run exits 6 and prints candidates; zero candidates for a known alias exits 0. A finished run reports that it has exited and points the user to `sigmund dump <id>`. A non-console run reports that it has no console.
+
+Console is interactive process access and follows the same privilege boundary as `stop` and `kill`: user-local sockets are private to that user, and root-managed console attaches require root authority or a matching sudoers grant. The public root index must not expose console socket paths.
 
 ## 14. Sudoers grants
 
 `sigmund grant` and `sigmund revoke` manage only Sigmund-owned sudoers entries. They require root authority and operate on root-managed profiles only:
 
 ```text
-sigmund grant <alias> <user> [start,stop,kill,tail,dump,prune]
-sigmund revoke <alias> <user> [start,stop,kill,tail,dump,prune]
+sigmund grant <alias> <user> [start,stop,kill,tail,dump,prune,console]
+sigmund revoke <alias> <user> [start,stop,kill,tail,dump,prune,console]
 ```
 
-The grant target must be an existing root-managed alias. The `<user>` argument may be a username, `%group`, or `all`. Sigmund resolves the alias to its immutable profile hash before writing sudoers; the alias name is used only for the managed filename. If the action list is omitted, all supported Sigmund actions for the profile are selected. This is a wildcard over Sigmund's supported profile actions, not arbitrary sudo command access. `purge` is not a supported action; the command is `prune`.
+The grant target must be an existing root-managed alias. The `<user>` argument may be a username, `%group`, or `all`. Sigmund resolves the alias to its immutable profile hash before writing sudoers; the managed filename is keyed by alias and user, and the sudoers command carries a fixed alias/hash pair plus an 8-hex `runid_sel` slot so root can verify the alias/hash pair and selected run records before acting. If the action list is omitted, all supported Sigmund actions for that alias are selected. This is a wildcard over Sigmund's supported alias actions, not arbitrary sudo command access. `purge` is not a supported action; the command is `prune`.
 
-Before writing sudoers, Sigmund resolves its own executable path and refuses to proceed unless that file is root-owned, regular, and not writable by group or world. Managed sudoers lines grant NOPASSWD access only to exact canonical invocations such as:
+Before writing sudoers, Sigmund resolves its own executable path and refuses to proceed unless that file is root-owned, regular, and not writable by group or world. Managed sudoers lines grant NOPASSWD access only to tightly scoped canonical invocations with one anchored argument regex, such as:
 
 ```text
-alice ALL=(root) NOPASSWD: /usr/bin/sigmund --system --elevated stop system\:<hash>
+alice ALL=(root) NOPASSWD: /usr/bin/sigmund ^--system --elevated (start|stop) [0-9a-f]{8} web-test <hash>$
 ```
 
 The managed file path is `/etc/sudoers.d/sigmund_<alias>_<user>` in production. Test builds may use `SIGMUND_TEST_SUDOERS_DIR`. Writes go to a same-directory `.tmp` candidate, use mode `0440`, are validated with `visudo -cf <tmp>`, and then `rename()` into place.
