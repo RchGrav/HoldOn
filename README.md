@@ -66,6 +66,66 @@ $ sigmund stop 7f3c2a
 
 Use `sigmund -- <cmd>` when the child command name overlaps with a `sigmund` subcommand.
 
+## Real-World Workflows
+
+### 1. CI/CD pipeline integration tests
+
+When integration tests need a database, web server, emulator, or other long-running helper, `sigmund` can start it in one CI step, keep it alive after that step exits, capture its logs, and tear down the full process group later.
+
+```yaml
+- name: Start test database
+  run: |
+    out="$(sigmund -- redis-server --port 6379 2>&1)"
+    printf '%s\n' "$out"
+    run_id="$(printf '%s\n' "$out" | sed -n 's/^sigmund: id=\([0-9a-f][0-9a-f]*\).*/\1/p')"
+    echo "REDIS_RUN_ID=$run_id" >> "$GITHUB_ENV"
+    sleep 2
+
+- name: Run integration tests
+  run: npm run test:integration
+
+- name: Show database log on failure
+  if: failure()
+  run: sigmund dump "$REDIS_RUN_ID" || true
+
+- name: Teardown test database
+  if: always()
+  run: |
+    sigmund stop "$REDIS_RUN_ID" || true
+    sigmund prune "$REDIS_RUN_ID" || true
+```
+
+### 2. Local development stack
+
+For a local app with several cooperating processes, start each one once and keep one terminal free for normal work.
+
+```bash
+sigmund npm run dev:frontend
+sigmund npm run dev:backend
+sigmund celery -A myapp worker
+
+sigmund list
+sigmund tail <backend-run-id>
+
+# Later, stop the pieces you started.
+sigmund stop <frontend-run-id> <backend-run-id> <worker-run-id>
+sigmund prune all
+```
+
+### 3. Root-managed helpers
+
+Some test helpers need root privileges or system-visible state. Use `--system` for those runs. Normal users can still see that a root-managed run exists through the redacted public index, while private command details and logs stay root-only.
+
+```bash
+sigmund --system qemu-system-x86_64 -m 4096 -nographic
+
+sigmund list
+# root-managed rows appear as <root-managed> with STATE unknown
+
+sudo sigmund tail system:<run-id>
+sigmund stop system:<run-id>
+```
+
 ## Storage model
 
 `sigmund` has two storage contexts.
