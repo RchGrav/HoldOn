@@ -667,7 +667,7 @@ Root-managed prune follows the same resolver and elevation rules as other action
 
 ### 13.1 Console behavior
 
-`sigmund console <target>` attaches to a running console-enabled run through the recorded private socket. Interactive attaches save the local terminal, enter an alternate screen, forward terminal resize events to the child PTY, and restore the original terminal state when the attach exits. Ctrl-] detaches without stopping the run. Non-interactive attaches stream stdin/stdout without changing screen state.
+`sigmund console <target>` attaches to a running console-enabled run through the recorded private socket. Interactive attaches save the local terminal, enter an alternate screen, forward terminal resize events to the child PTY, and restore the original terminal state when the attach exits. Ctrl-] detaches without stopping the run. Non-interactive attaches stream stdin/stdout without changing screen state. On attach, the broker replays recent PTY output before live output so reattaches can redraw an idle console without sending input to the child.
 
 A run ID targets that one run directly. An alias resolves by recorded alias label and the `console` verb intent-set: running runs with `console_sock`. More than one matching alias run exits 6 and prints candidates; zero candidates for a known alias exits 0. A finished run reports that it has exited and points the user to `sigmund dump <id>`. A non-console run reports that it has no console.
 

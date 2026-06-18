@@ -921,6 +921,7 @@ static void sig_note(const struct invocation *inv, const char *fmt, ...) {
 #define CONSOLE_FRAME_DETACH 'X'
 #define CONSOLE_FRAME_HEADER_LEN 3
 #define CONSOLE_ATTACH_DETACH 0x1d
+#define CONSOLE_REPLAY_LIMIT (64 * 1024)
 
 struct console_client_state {
     bool framed;
@@ -928,6 +929,62 @@ struct console_client_state {
     unsigned char pending[16384];
     size_t pending_len;
 };
+
+struct console_replay_buffer {
+    unsigned char *data;
+    size_t cap;
+    size_t len;
+    size_t start;
+};
+
+static void console_replay_init(struct console_replay_buffer *replay) {
+    memset(replay, 0, sizeof(*replay));
+    replay->data = malloc(CONSOLE_REPLAY_LIMIT);
+    if (replay->data) {
+        replay->cap = CONSOLE_REPLAY_LIMIT;
+    }
+}
+
+static void console_replay_free(struct console_replay_buffer *replay) {
+    free(replay->data);
+    memset(replay, 0, sizeof(*replay));
+}
+
+static void console_replay_append(struct console_replay_buffer *replay,
+                                  const void *buf,
+                                  size_t n) {
+    if (!replay->data || replay->cap == 0 || n == 0) {
+        return;
+    }
+    const unsigned char *p = buf;
+    for (size_t i = 0; i < n; i++) {
+        if (replay->len < replay->cap) {
+            replay->data[(replay->start + replay->len) % replay->cap] = p[i];
+            replay->len++;
+        } else {
+            replay->data[replay->start] = p[i];
+            replay->start = (replay->start + 1) % replay->cap;
+        }
+    }
+}
+
+static int console_replay_write(const struct console_replay_buffer *replay, int fd) {
+    if (!replay->data || replay->len == 0) {
+        return 0;
+    }
+    size_t first = replay->cap - replay->start;
+    if (first > replay->len) {
+        first = replay->len;
+    }
+    if (write_all(fd, replay->data + replay->start, first) != 0) {
+        return -1;
+    }
+    if (replay->len > first &&
+        write_all(fd, replay->data, replay->len - first) != 0) {
+        return -1;
+    }
+    return 0;
+}
 
 static uint16_t load_be16(const unsigned char *p) {
     return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
@@ -1333,6 +1390,8 @@ static void run_console_broker(int parent_pipe,
     bool client_input_closed = false;
     struct console_client_state client_state;
     memset(&client_state, 0, sizeof(client_state));
+    struct console_replay_buffer replay;
+    console_replay_init(&replay);
     bool target_done = false;
     while (1) {
         if (!target_done) {
@@ -1374,6 +1433,8 @@ static void run_console_broker(int parent_pipe,
             if (next >= 0) {
                 if (client >= 0) {
                     close(next);
+                } else if (console_replay_write(&replay, next) != 0) {
+                    close(next);
                 } else {
                     client = next;
                     client_input_closed = false;
@@ -1410,6 +1471,7 @@ static void run_console_broker(int parent_pipe,
             ssize_t n = read(master, buf, sizeof(buf));
             if (n > 0) {
                 (void)write_all(logfd, buf, (size_t)n);
+                console_replay_append(&replay, buf, (size_t)n);
                 if (client >= 0 && write_all(client, buf, (size_t)n) != 0) {
                     close(client);
                     client = -1;
@@ -1422,6 +1484,7 @@ static void run_console_broker(int parent_pipe,
     }
 
     if (client >= 0) close(client);
+    console_replay_free(&replay);
     if (have_old_pipe) {
         sigaction(SIGPIPE, &old_pipe, NULL);
     }

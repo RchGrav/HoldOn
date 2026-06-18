@@ -921,6 +921,7 @@ test_console_can_reattach_after_detach() {
     cat "$TEST_ROOT/console-second.out" "$TEST_ROOT/console-second.err" >&2
     return 1
   }
+  grep -q 'seen:first' "$TEST_ROOT/console-second.out" || { cat "$TEST_ROOT/console-second.out" >&2; return 1; }
   grep -q 'seen:done' "$TEST_ROOT/console-second.out" || { cat "$TEST_ROOT/console-second.out" >&2; return 1; }
   sleep 0.2
   grep -q 'seen:first' "$store/$id.log" || { cat "$store/$id.log" >&2; return 1; }
