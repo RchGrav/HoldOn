@@ -78,10 +78,10 @@ curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.s
 By default the installer uses the latest GitHub release. Pin a release when reproducibility matters:
 
 ```sh
-curl -LsSf https://github.com/RchGrav/sigmund/releases/download/v0.3.0/install.sh | sh
+curl -LsSf https://github.com/RchGrav/sigmund/releases/download/v0.3.1/install.sh | sh
 ```
 
-You can also run the latest installer against a specific release by setting `SIGMUND_VERSION`; `SIGMUND_VERSION=0.3.0` and `SIGMUND_VERSION=v0.3.0` are equivalent.
+You can also run the latest installer against a specific release by setting `SIGMUND_VERSION`; `SIGMUND_VERSION=0.3.1` and `SIGMUND_VERSION=v0.3.1` are equivalent.
 
 ## Selection logic
 
