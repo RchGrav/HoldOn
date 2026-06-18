@@ -47,6 +47,10 @@ For console starts, the child path redirects stdio to `/dev/null` and calls `run
 
 The run record stores `console_sock` only when console mode is active. That path is private state. The system public index never includes it.
 
+## Aliases and console mode
+
+Aliases store the command recipe, not whether a previous run used a console. That keeps the alias reusable in both shapes: `sigmund start <alias>` launches it as a normal logged run, and `sigmund start <alias> --console` launches the same alias behind an attachable PTY. This is intentional flexibility, so console mode stays a launch-time modifier instead of hidden alias state.
+
 ## Components
 
 ```mermaid
