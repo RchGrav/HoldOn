@@ -167,6 +167,8 @@ Most users only need this small set:
 | Start a command | `sigmund <cmd...>` |
 | List visible runs | `sigmund list` |
 | Follow output | `sigmund tail <id-or-alias>` |
+| Start with an attachable console | `sigmund --console <cmd...>` |
+| Attach to a console | `sigmund console <id-or-alias>` |
 | Print saved output | `sigmund dump <id-or-alias>` |
 | Stop a run | `sigmund stop <id-or-alias>` |
 | Remove finished state | `sigmund prune <id-or-alias>` |
@@ -174,6 +176,8 @@ Most users only need this small set:
 | Start a saved command | `sigmund start <name>` |
 
 Advanced command forms, parser rules, exit codes, targeting rules, console mode, root/system behavior, and grant/revoke are documented in the [technical reference loop](docs/index.md#technical-reference-loop).
+
+Console attach is interactive. Press `Ctrl-]` to detach and return to your local shell without stopping the run. `Ctrl-C` is sent to the attached process.
 
 ## Documentation Map
 

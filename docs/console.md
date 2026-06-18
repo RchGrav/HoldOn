@@ -71,6 +71,12 @@ flowchart LR
 
 `run_native_console` checks that the socket path exists and is a socket, connects directly, and speaks Sigmund's console attach protocol. For an interactive TTY it saves the current terminal settings, switches to raw mode, enters the alternate screen, forwards window-size changes to the PTY, and restores the original terminal state on detach or exit. Ctrl-] detaches without stopping the run. Non-TTY attaches stream stdin/stdout without screen switching.
 
+## Detach Without Stopping
+
+Press `Ctrl-]` while attached with `sigmund console <target>` to release the console and return to your local shell. This closes only the attach client; the broker, PTY, and target process keep running so you can reattach later with the same command.
+
+Do not use `Ctrl-C` when you mean detach. `Ctrl-C` is delivered to the attached process and may interrupt or stop it. Typing `exit` exits the shell or program inside the console.
+
 `attach_console_record` handles user-facing outcomes:
 
 - If the run is not running, it reports that the run has exited and points to `sigmund dump <id>`.

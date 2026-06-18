@@ -53,6 +53,7 @@ Action:
 ```bash
 sigmund tail "$run_id"
 sigmund dump "$run_id"
+sigmund console "$run_id"   # only for runs started with --console
 sigmund stop "$run_id"
 sigmund prune "$run_id"
 ```
@@ -61,6 +62,7 @@ Expect:
 
 - `tail` follows the saved log.
 - `dump` prints the saved log and exits.
+- `console` attaches to a PTY-backed interactive run. Press `Ctrl-]` to detach without stopping it; `Ctrl-C` is sent to the attached process.
 - `stop` validates the recorded process identity before signaling.
 - `prune` removes state for finished or safe-to-remove runs.
 
