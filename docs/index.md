@@ -143,7 +143,7 @@ Every subsystem page links back here, names the quickstart step it explains, res
 6. [Target resolution](target-resolution.md): ID, prefix, alias, `user:`, `system:`, ambiguity, and action target expansion.
 7. [Profiles and aliases](profiles-and-aliases.md): reusable launch recipes, SHA-256 fingerprints, alias starts, and `--multi`.
 8. [Security and privilege boundaries](security.md): `--system`, sudo self-elevation, capability argv, and managed sudoers.
-9. [Console](console.md): PTY console starts, private sockets, `socat` attach, and log teeing.
+9. [Console](console.md): PTY console starts, private sockets, native attach, terminal sizing, and log teeing.
 10. [CLI contract](cli-contract.md): parser behavior, stdout/stderr, flags, no-op behavior, and exit codes.
 11. [Using Sigmund in CI](ci.md): copyable CI patterns for start, readiness, logs, teardown, exit codes, and multiple helpers.
 

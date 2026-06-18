@@ -165,6 +165,7 @@ struct public_index {
 };
 
 static volatile sig_atomic_t g_tail_interrupted = 0;
+static volatile sig_atomic_t g_console_resized = 0;
 static int write_all(int fd, const void *buf, size_t n);
 static void usage(void);
 static int show_help(const char *topic);
@@ -174,6 +175,11 @@ static int read_exec_handshake(int fd, int *child_errno);
 static void handle_tail_sigint(int signo) {
     (void)signo;
     g_tail_interrupted = 1;
+}
+
+static void handle_console_sigwinch(int signo) {
+    (void)signo;
+    g_console_resized = 1;
 }
 
 static void die_errno(const char *msg) {
@@ -908,36 +914,198 @@ static void sig_note(const struct invocation *inv, const char *fmt, ...) {
     va_end(ap);
 }
 
-static bool executable_available(const char *name) {
-    if (!name || !*name) {
-        return false;
+#define CONSOLE_ATTACH_MAGIC "SIGMUND1"
+#define CONSOLE_ATTACH_MAGIC_LEN 8
+#define CONSOLE_FRAME_DATA 'D'
+#define CONSOLE_FRAME_RESIZE 'W'
+#define CONSOLE_FRAME_HEADER_LEN 3
+#define CONSOLE_ATTACH_DETACH 0x1d
+
+struct console_client_state {
+    bool framed;
+    bool decided;
+    unsigned char pending[16384];
+    size_t pending_len;
+};
+
+static uint16_t load_be16(const unsigned char *p) {
+    return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
+}
+
+static void store_be16(unsigned char *p, uint16_t v) {
+    p[0] = (unsigned char)((v >> 8) & 0xff);
+    p[1] = (unsigned char)(v & 0xff);
+}
+
+static int write_console_frame(int fd, unsigned char type, const void *payload, uint16_t len) {
+    unsigned char header[CONSOLE_FRAME_HEADER_LEN];
+    header[0] = type;
+    store_be16(header + 1, len);
+    if (write_all(fd, header, sizeof(header)) != 0) {
+        return -1;
     }
-    if (strchr(name, '/')) {
-        return access(name, X_OK) == 0;
+    if (len > 0 && write_all(fd, payload, len) != 0) {
+        return -1;
     }
-    const char *path = getenv("PATH");
-    if (!path || !*path) {
-        path = "/usr/bin:/bin";
+    return 0;
+}
+
+static int send_console_resize(int fd, const struct winsize *ws) {
+    if (!ws || ws->ws_row == 0 || ws->ws_col == 0) {
+        return 0;
     }
-    char *copy = strdup(path);
-    if (!copy) {
-        return false;
+    unsigned char payload[4];
+    store_be16(payload, ws->ws_row);
+    store_be16(payload + 2, ws->ws_col);
+    return write_console_frame(fd, CONSOLE_FRAME_RESIZE, payload, sizeof(payload));
+}
+
+static int maybe_get_terminal_size(struct winsize *ws) {
+    memset(ws, 0, sizeof(*ws));
+    if (ioctl(STDIN_FILENO, TIOCGWINSZ, ws) == 0 && ws->ws_row > 0 && ws->ws_col > 0) {
+        return 0;
     }
-    bool found = false;
-    char *save = NULL;
-    for (char *dir = strtok_r(copy, ":", &save); dir; dir = strtok_r(NULL, ":", &save)) {
-        if (!*dir) {
-            dir = ".";
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, ws) == 0 && ws->ws_row > 0 && ws->ws_col > 0) {
+        return 0;
+    }
+    return -1;
+}
+
+static int apply_pty_size(int master, const unsigned char *payload, size_t len) {
+    if (len != 4) {
+        errno = EPROTO;
+        return -1;
+    }
+    struct winsize ws;
+    memset(&ws, 0, sizeof(ws));
+    ws.ws_row = load_be16(payload);
+    ws.ws_col = load_be16(payload + 2);
+    if (ws.ws_row == 0 || ws.ws_col == 0) {
+        return 0;
+    }
+    return ioctl(master, TIOCSWINSZ, &ws);
+}
+
+static int broker_process_framed_client(struct console_client_state *state, int master) {
+    while (state->pending_len >= CONSOLE_FRAME_HEADER_LEN) {
+        unsigned char type = state->pending[0];
+        uint16_t len = load_be16(state->pending + 1);
+        size_t frame_len = CONSOLE_FRAME_HEADER_LEN + (size_t)len;
+        if (state->pending_len < frame_len) {
+            return 0;
         }
-        char candidate[SIGMUND_PATH_MAX];
-        if (checked_snprintf(candidate, sizeof(candidate), "%s/%s", dir, name) == 0 &&
-            access(candidate, X_OK) == 0) {
-            found = true;
-            break;
+
+        const unsigned char *payload = state->pending + CONSOLE_FRAME_HEADER_LEN;
+        if (type == CONSOLE_FRAME_DATA) {
+            if (len > 0 && write_all(master, payload, len) != 0) {
+                return -1;
+            }
+        } else if (type == CONSOLE_FRAME_RESIZE) {
+            (void)apply_pty_size(master, payload, len);
         }
+
+        memmove(state->pending, state->pending + frame_len, state->pending_len - frame_len);
+        state->pending_len -= frame_len;
     }
-    free(copy);
-    return found;
+    return 0;
+}
+
+static int broker_process_client_input(struct console_client_state *state,
+                                       int master,
+                                       const unsigned char *buf,
+                                       size_t n) {
+    if (n == 0) {
+        return 0;
+    }
+    if (!state->decided && state->pending_len + n > sizeof(state->pending)) {
+        state->decided = true;
+        state->framed = false;
+        if (state->pending_len > 0 && write_all(master, state->pending, state->pending_len) != 0) {
+            return -1;
+        }
+        state->pending_len = 0;
+    }
+    if (state->decided && !state->framed) {
+        return write_all(master, buf, n);
+    }
+
+    if (state->pending_len + n > sizeof(state->pending)) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    memcpy(state->pending + state->pending_len, buf, n);
+    state->pending_len += n;
+
+    if (!state->decided) {
+        size_t cmp_len = state->pending_len < CONSOLE_ATTACH_MAGIC_LEN ? state->pending_len : CONSOLE_ATTACH_MAGIC_LEN;
+        if (memcmp(state->pending, CONSOLE_ATTACH_MAGIC, cmp_len) != 0) {
+            state->decided = true;
+            state->framed = false;
+            if (write_all(master, state->pending, state->pending_len) != 0) {
+                return -1;
+            }
+            state->pending_len = 0;
+            return 0;
+        }
+        if (state->pending_len < CONSOLE_ATTACH_MAGIC_LEN) {
+            return 0;
+        }
+        state->decided = true;
+        state->framed = true;
+        memmove(state->pending,
+                state->pending + CONSOLE_ATTACH_MAGIC_LEN,
+                state->pending_len - CONSOLE_ATTACH_MAGIC_LEN);
+        state->pending_len -= CONSOLE_ATTACH_MAGIC_LEN;
+    }
+
+    if (state->framed) {
+        return broker_process_framed_client(state, master);
+    }
+    return 0;
+}
+
+static size_t unix_socket_path_limit(void) {
+    struct sockaddr_un addr;
+    return sizeof(addr.sun_path);
+}
+
+static int format_console_sock_path(const struct invocation *inv,
+                                    const struct store_paths *store,
+                                    const char *id,
+                                    char *out,
+                                    size_t n) {
+    char preferred[SIGMUND_PATH_MAX];
+    if (checked_snprintf(preferred, sizeof(preferred), "%s/%s.sock", store->console_dir, id) != 0) {
+        return -1;
+    }
+    if (strlen(preferred) < unix_socket_path_limit()) {
+        return checked_snprintf(out, n, "%s", preferred);
+    }
+
+    uid_t owner_uid = geteuid();
+    gid_t owner_gid = getegid();
+    if (store->kind == STORE_USER_LOCAL && inv && inv->euid_root && inv->have_sudo_user) {
+        owner_uid = inv->invoking_uid;
+        owner_gid = inv->invoking_gid;
+    }
+
+    char dir[SIGMUND_PATH_MAX];
+    if (checked_snprintf(dir, sizeof(dir), "/tmp/sigmund-console-%llu", (unsigned long long)owner_uid) != 0) {
+        return -1;
+    }
+    if (mkdir_p0700(dir) != 0 ||
+        chmod(dir, 0700) != 0 ||
+        chown_if_root(dir, owner_uid, owner_gid) != 0) {
+        return -1;
+    }
+    if (checked_snprintf(out, n, "%s/%s.sock", dir, id) != 0) {
+        return -1;
+    }
+    if (strlen(out) >= unix_socket_path_limit()) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    return 0;
 }
 
 static int make_console_listener(const char *sock_path) {
@@ -1149,8 +1317,19 @@ static void run_console_broker(int parent_pipe,
     close(parent_pipe);
     parent_pipe = -1;
 
+    struct sigaction pipe_ign, old_pipe;
+    bool have_old_pipe = false;
+    memset(&pipe_ign, 0, sizeof(pipe_ign));
+    pipe_ign.sa_handler = SIG_IGN;
+    sigemptyset(&pipe_ign.sa_mask);
+    if (sigaction(SIGPIPE, &pipe_ign, &old_pipe) == 0) {
+        have_old_pipe = true;
+    }
+
     int client = -1;
     bool client_input_closed = false;
+    struct console_client_state client_state;
+    memset(&client_state, 0, sizeof(client_state));
     bool target_done = false;
     while (1) {
         if (!target_done) {
@@ -1183,17 +1362,6 @@ static void run_console_broker(int parent_pipe,
         }
         if (sr == 0) {
             if (target_done) {
-                char drain[4096];
-                ssize_t n = read(master, drain, sizeof(drain));
-                if (n > 0) {
-                    (void)write_all(logfd, drain, (size_t)n);
-                    if (client >= 0 && write_all(client, drain, (size_t)n) != 0) {
-                        close(client);
-                        client = -1;
-                        client_input_closed = false;
-                    }
-                    continue;
-                }
                 break;
             }
             continue;
@@ -1206,24 +1374,31 @@ static void run_console_broker(int parent_pipe,
                 } else {
                     client = next;
                     client_input_closed = false;
+                    memset(&client_state, 0, sizeof(client_state));
                 }
             }
         }
         if (client >= 0 && !client_input_closed && FD_ISSET(client, &rfds)) {
-            char buf[4096];
+            unsigned char buf[4096];
             ssize_t n = read(client, buf, sizeof(buf));
             if (n > 0) {
-                if (write_all(master, buf, (size_t)n) != 0) {
+                if (broker_process_client_input(&client_state, master, buf, (size_t)n) != 0) {
                     close(client);
                     client = -1;
                     client_input_closed = false;
+                    memset(&client_state, 0, sizeof(client_state));
                 }
             } else if (n == 0) {
+                if (!client_state.decided && client_state.pending_len > 0) {
+                    (void)write_all(master, client_state.pending, client_state.pending_len);
+                    client_state.pending_len = 0;
+                }
                 client_input_closed = true;
             } else {
                 close(client);
                 client = -1;
                 client_input_closed = false;
+                memset(&client_state, 0, sizeof(client_state));
             }
         }
         if (FD_ISSET(master, &rfds)) {
@@ -1243,6 +1418,9 @@ static void run_console_broker(int parent_pipe,
     }
 
     if (client >= 0) close(client);
+    if (have_old_pipe) {
+        sigaction(SIGPIPE, &old_pipe, NULL);
+    }
     broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, target, 0);
 }
 
@@ -2373,17 +2551,23 @@ static int json_get_args_alloc(const char *j, char ***argv_out, int *argc_out) {
     return json_get_string_array_alloc(j, "args", argv_out, argc_out);
 }
 
+static int realpath_copy(const char *path, char *out, size_t n) {
+    char *resolved = realpath(path, NULL);
+    if (!resolved) {
+        return -1;
+    }
+    int rc = checked_snprintf(out, n, "%s", resolved);
+    free(resolved);
+    return rc;
+}
+
 static int resolve_binary_path(const char *argv0, char *out, size_t n) {
     if (!argv0 || !*argv0) {
         errno = EINVAL;
         return -1;
     }
     if (strchr(argv0, '/')) {
-        char resolved[SIGMUND_PATH_MAX];
-        if (!realpath(argv0, resolved)) {
-            return -1;
-        }
-        return checked_snprintf(out, n, "%s", resolved);
+        return realpath_copy(argv0, out, n);
     }
     const char *path = getenv("PATH");
     if (!path || !*path) {
@@ -2408,7 +2592,7 @@ static int resolve_binary_path(const char *argv0, char *out, size_t n) {
         }
         char candidate[SIGMUND_PATH_MAX], resolved[SIGMUND_PATH_MAX];
         if (checked_snprintf(candidate, sizeof(candidate), "%s/%s", dir, argv0) == 0 &&
-            access(candidate, X_OK) == 0 && realpath(candidate, resolved)) {
+            access(candidate, X_OK) == 0 && realpath_copy(candidate, resolved, sizeof(resolved)) == 0) {
             return checked_snprintf(out, n, "%s", resolved);
         }
         if (!colon) {
@@ -3526,11 +3710,6 @@ static int perform_start(const struct invocation *inv,
         return 5;
     }
 
-    if (console_mode && !executable_available("socat")) {
-        fprintf(stderr, "sigmund: --console requires socat (not found in PATH)\n");
-        return 1;
-    }
-
     char resolved_exec_path[SIGMUND_PATH_MAX];
     const char *path_to_resolve = (exec_path && *exec_path) ? exec_path : argv[0];
     if (resolve_binary_path(path_to_resolve, resolved_exec_path, sizeof(resolved_exec_path)) != 0) {
@@ -3582,8 +3761,7 @@ static int perform_start(const struct invocation *inv,
         free_argv_alloc(launch_argv, argc);
         die_errno("sigmund: reserve path too long");
     }
-    if (console_mode &&
-        checked_snprintf(console_sock, sizeof(console_sock), "%s/%s.sock", store->console_dir, id) != 0) {
+    if (console_mode && format_console_sock_path(inv, store, id, console_sock, sizeof(console_sock)) != 0) {
         free_argv_alloc(launch_argv, argc);
         die_errno("sigmund: console socket path too long");
     }
@@ -5661,41 +5839,200 @@ static int cmd_dump_action(const struct invocation *inv,
     return 0;
 }
 
-static int run_socat_console(const char *sock_path) {
-    if (!executable_available("socat")) {
-        fprintf(stderr, "sigmund: console requires socat (not found in PATH)\n");
-        return 1;
-    }
+static int connect_console_socket(const char *sock_path) {
     struct stat st;
     if (stat(sock_path, &st) != 0 || !S_ISSOCK(st.st_mode)) {
         fprintf(stderr, "sigmund: console socket is not available\n");
-        return 5;
+        errno = ENOTSOCK;
+        return -1;
     }
-    char connect_arg[SIGMUND_PATH_MAX + 16];
-    if (checked_snprintf(connect_arg, sizeof(connect_arg), "UNIX-CONNECT:%s", sock_path) != 0) {
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    size_t len = strlen(sock_path);
+    if (len == 0 || len >= sizeof(addr.sun_path)) {
         fprintf(stderr, "sigmund: console socket path is too long\n");
-        return 5;
+        errno = ENAMETOOLONG;
+        return -1;
     }
-    const char *stdio_arg = isatty(STDIN_FILENO) ? "-,raw,echo=0" : "-";
-    pid_t pid = fork();
-    if (pid < 0) {
-        fprintf(stderr, "sigmund: failed to fork socat: %s\n", strerror(errno));
-        return 3;
+    memcpy(addr.sun_path, sock_path, len + 1);
+
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        return -1;
     }
-    if (pid == 0) {
-        execlp("socat", "socat", stdio_arg, connect_arg, (char *)NULL);
-        fprintf(stderr, "sigmund: failed to exec socat: %s\n", strerror(errno));
-        _exit(127);
+#ifdef SIGMUND_NEED_SOCKET_CLOEXEC
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
     }
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno == EINTR) {
-            continue;
+#endif
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    return fd;
+}
+
+static void make_raw_termios(const struct termios *in, struct termios *out) {
+    *out = *in;
+    out->c_iflag &= (tcflag_t)~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    out->c_oflag &= (tcflag_t)~OPOST;
+    out->c_cflag |= CS8;
+    out->c_lflag &= (tcflag_t)~(ECHO | ICANON | IEXTEN | ISIG);
+    out->c_cc[VMIN] = 1;
+    out->c_cc[VTIME] = 0;
+}
+
+static int run_native_console(const char *sock_path) {
+    int sock = connect_console_socket(sock_path);
+    if (sock < 0) {
+        return errno == ENOTSOCK || errno == ENAMETOOLONG ? 5 : 3;
+    }
+
+    bool interactive = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+    bool terminal_saved = false;
+    bool alt_screen = false;
+    struct termios old_termios;
+    if (interactive && tcgetattr(STDIN_FILENO, &old_termios) == 0) {
+        struct termios raw;
+        make_raw_termios(&old_termios, &raw);
+        if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0) {
+            terminal_saved = true;
+            if (write_all(STDOUT_FILENO, "\033[?1049h\033[H\033[2J", 15) == 0) {
+                alt_screen = true;
+            }
         }
-        fprintf(stderr, "sigmund: failed to wait for socat: %s\n", strerror(errno));
-        return 3;
     }
-    return child_status_to_exit_code(status);
+
+    struct sigaction sa, old_winch;
+    bool have_old_winch = false;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_console_sigwinch;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGWINCH, &sa, &old_winch) == 0) {
+        have_old_winch = true;
+    }
+    struct sigaction pipe_ign, old_pipe;
+    bool have_old_pipe = false;
+    memset(&pipe_ign, 0, sizeof(pipe_ign));
+    pipe_ign.sa_handler = SIG_IGN;
+    sigemptyset(&pipe_ign.sa_mask);
+    if (sigaction(SIGPIPE, &pipe_ign, &old_pipe) == 0) {
+        have_old_pipe = true;
+    }
+    g_console_resized = 1;
+
+    int rc = 0;
+    bool stdin_open = true;
+    if (write_all(sock, CONSOLE_ATTACH_MAGIC, CONSOLE_ATTACH_MAGIC_LEN) != 0) {
+        rc = 3;
+        goto out;
+    }
+
+    while (1) {
+        if (g_console_resized) {
+            struct winsize ws;
+            g_console_resized = 0;
+            if (maybe_get_terminal_size(&ws) == 0 && send_console_resize(sock, &ws) != 0) {
+                rc = 3;
+                break;
+            }
+        }
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(sock, &rfds);
+        int maxfd = sock;
+        if (stdin_open) {
+            FD_SET(STDIN_FILENO, &rfds);
+            if (STDIN_FILENO > maxfd) {
+                maxfd = STDIN_FILENO;
+            }
+        }
+
+        int sr = select(maxfd + 1, &rfds, NULL, NULL, NULL);
+        if (sr < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            rc = 3;
+            break;
+        }
+
+        if (stdin_open && FD_ISSET(STDIN_FILENO, &rfds)) {
+            unsigned char buf[4096];
+            ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
+            if (n > 0) {
+                if (interactive) {
+                    size_t write_start = 0;
+                    for (ssize_t i = 0; i < n; i++) {
+                        if (buf[i] != CONSOLE_ATTACH_DETACH) {
+                            continue;
+                        }
+                        if ((size_t)i > write_start &&
+                            write_console_frame(sock, CONSOLE_FRAME_DATA, buf + write_start, (uint16_t)((size_t)i - write_start)) != 0) {
+                            rc = 3;
+                        }
+                        goto out;
+                    }
+                    if (rc != 0) {
+                        break;
+                    }
+                    if (write_console_frame(sock, CONSOLE_FRAME_DATA, buf, (uint16_t)n) != 0) {
+                        rc = 3;
+                        break;
+                    }
+                } else if (write_console_frame(sock, CONSOLE_FRAME_DATA, buf, (uint16_t)n) != 0) {
+                    rc = 3;
+                    break;
+                }
+            } else if (n == 0) {
+                stdin_open = false;
+                shutdown(sock, SHUT_WR);
+            } else if (errno != EINTR) {
+                rc = 3;
+                break;
+            }
+        }
+
+        if (FD_ISSET(sock, &rfds)) {
+            char buf[4096];
+            ssize_t n = read(sock, buf, sizeof(buf));
+            if (n > 0) {
+                if (write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
+                    rc = 3;
+                    break;
+                }
+            } else if (n == 0) {
+                break;
+            } else if (errno != EINTR) {
+                rc = 3;
+                break;
+            }
+        }
+    }
+
+out:
+    if (have_old_winch) {
+        sigaction(SIGWINCH, &old_winch, NULL);
+    }
+    if (have_old_pipe) {
+        sigaction(SIGPIPE, &old_pipe, NULL);
+    }
+    if (alt_screen) {
+        (void)write_all(STDOUT_FILENO, "\033[?1049l", 8);
+    }
+    if (terminal_saved) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_termios);
+    }
+    close(sock);
+    return rc;
 }
 
 static int attach_console_record(const struct invocation *inv,
@@ -5709,7 +6046,7 @@ static int attach_console_record(const struct invocation *inv,
         sig_note(inv, "sigmund: %s has no console (start with --console)\n", r->id);
         return 0;
     }
-    return run_socat_console(r->console_sock);
+    return run_native_console(r->console_sock);
 }
 
 static int cmd_console_action(const struct invocation *inv,
@@ -7121,9 +7458,10 @@ static int help_console(void) {
            "  sigmund --console <cmd...>      start with an attachable console\n"
            "  sigmund start <alias> --console start an alias with a console\n"
            "  sigmund console <target>        attach to that console\n\n"
-           "Console attach uses socat. If socat is not available, --console refuses\n"
-           "before launching the command. Ctrl-] detaches from socat's raw terminal\n"
-           "session without asking Sigmund to stop the run.\n");
+           "Console attach is native: Sigmund saves your terminal, enters an alternate\n"
+           "screen for interactive attaches, forwards terminal size changes to the PTY,\n"
+           "and restores your original screen on exit. Ctrl-] detaches without asking\n"
+           "Sigmund to stop the run.\n");
     return 0;
 }
 

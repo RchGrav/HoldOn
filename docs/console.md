@@ -6,7 +6,7 @@ Outer loop bridge: optional deep dive for quickstart Step 2, Manage It Later.
 
 Console mode is for commands that need an interactive terminal after launch. `sigmund --console <cmd...>` starts the run behind a PTY broker, and a later `sigmund console <target>` attaches through a private Unix socket.
 
-It is optional, requires `socat`, and does not replace normal logging. The same run still has a log for `tail` and `dump`.
+It is optional and does not replace normal logging. The same run still has a log for `tail` and `dump`.
 
 ## Start and attach
 
@@ -26,23 +26,24 @@ sequenceDiagram
     participant Socket as Unix socket
     end
     box rgb(204, 251, 241) Attach client
-    participant Socat as socat attach
+    participant Attach as native attach
     end
 
     CLI->>Parent: start --console command
-    Parent->>Parent: require socat in PATH
     Parent->>Broker: fork and run broker
     Broker->>Socket: listen on private socket
     Broker->>Target: start command on PTY
     Target-->>Broker: PTY output
     Broker->>Log: tee output
-    CLI->>Socat: sigmund console target
-    Socat->>Socket: UNIX-CONNECT
+    CLI->>Attach: sigmund console target
+    Attach->>Attach: save terminal, enter alternate screen
+    Attach->>Socket: UNIX-CONNECT + resize frames
     Socket-->>Broker: attach stream
     Broker-->>Target: interactive input/output
+    Attach->>Attach: restore terminal on detach/exit
 ```
 
-`perform_start` refuses `--console` before generating a run ID if `socat` is not available in `PATH`. For console starts, the child path redirects stdio to `/dev/null` and calls `run_console_broker`. The broker owns the PTY and socket lifecycle.
+For console starts, the child path redirects stdio to `/dev/null` and calls `run_console_broker`. The broker owns the PTY and socket lifecycle.
 
 The run record stores `console_sock` only when console mode is active. That path is private state. The system public index never includes it.
 
@@ -50,8 +51,8 @@ The run record stores `console_sock` only when console mode is active. That path
 
 ```mermaid
 flowchart LR
-    User["Terminal"] --> Socat["socat"]
-    Socat --> Sock["Private Unix socket"]
+    User["Terminal"] --> Attach["sigmund console"]
+    Attach --> Sock["Private Unix socket"]
     Sock --> Broker["Console broker"]
     Broker --> Pty["PTY"]
     Pty --> Child["Target command"]
@@ -63,18 +64,18 @@ flowchart LR
     classDef console fill:#dcfce7,stroke:#15803d,color:#14532d
     classDef state fill:#fef3c7,stroke:#b45309,color:#78350f
     classDef script fill:#ccfbf1,stroke:#0f766e,color:#134e4a
-    class User,Socat,Tail,Dump user
+    class User,Attach,Tail,Dump user
     class Broker,Pty,Child console
     class Sock,Log state
 ```
 
-`run_socat_console` checks that the socket path exists and is a socket, builds `UNIX-CONNECT:<console_sock>`, and execs `socat`. If stdin is a TTY, it uses raw terminal mode through the `-,raw,echo=0` socat endpoint. Otherwise it uses `-`.
+`run_native_console` checks that the socket path exists and is a socket, connects directly, and speaks Sigmund's console attach protocol. For an interactive TTY it saves the current terminal settings, switches to raw mode, enters the alternate screen, forwards window-size changes to the PTY, and restores the original terminal state on detach or exit. Ctrl-] detaches without stopping the run. Non-TTY attaches stream stdin/stdout without screen switching.
 
 `attach_console_record` handles user-facing outcomes:
 
 - If the run is not running, it reports that the run has exited and points to `sigmund dump <id>`.
 - If the run has no `console_sock`, it reports that the run has no console.
-- Otherwise it attaches with `socat`.
+- Otherwise it attaches with the native console client.
 
 ## Resolution and authority
 
@@ -92,7 +93,7 @@ Sigmund remains daemonless by making the broker a per-run child, not a global se
 
 ## Implementation map
 
-For maintainers, the primary functions are `executable_available`, `make_console_listener`, `open_console_pty`, `broker_cleanup_and_exit`, `broker_fail_errno`, `run_console_broker`, `run_socat_console`, `attach_console_record`, `cmd_console_action`, and `record_matches_alias_intent`.
+For maintainers, the primary functions are `make_console_listener`, `open_console_pty`, `broker_cleanup_and_exit`, `broker_fail_errno`, `run_console_broker`, `run_native_console`, `attach_console_record`, `cmd_console_action`, and `record_matches_alias_intent`.
 
 ## Continue
 

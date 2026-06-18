@@ -373,6 +373,15 @@ pgid_terminated() {
   return 1
 }
 
+path_absent_soon() {
+  local path="$1" tries
+  for tries in $(seq 1 40); do
+    [ ! -e "$path" ] && return 0
+    sleep 0.05
+  done
+  return 1
+}
+
 test_lifecycle() {
   local out id lines sleep_bin
   sleep_bin="$(resolve_path "$(command -v sleep)")" || return 1
@@ -727,22 +736,30 @@ test_tail_finished_log_prints_existing_output() {
   printf '%s\n' "$tailed" | grep -q 'finished-tail-line'
 }
 
-test_console_requires_socat_before_launch() {
-  local fake_path rc count
-  fake_path="$TEST_ROOT/no-socat"
+test_console_does_not_require_external_attach_tool() {
+  local fake_path out id store record sock
+  fake_path="$TEST_ROOT/no-tools"
   mkdir -p "$fake_path" || return 1
-  set +e
-  as_user env PATH="$fake_path" "$SIGMUND_REAL_BIN" --console /bin/true >"$TEST_ROOT/console-nosocat.out" 2>"$TEST_ROOT/console-nosocat.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 1 ] || { cat "$TEST_ROOT/console-nosocat.out" "$TEST_ROOT/console-nosocat.err" >&2; return 1; }
-  grep -q -- '--console requires socat' "$TEST_ROOT/console-nosocat.err" || { cat "$TEST_ROOT/console-nosocat.err" >&2; return 1; }
-  if [ -d "$HOME/.local/state/sigmund" ]; then
-    count=$(find "$HOME/.local/state/sigmund" -maxdepth 1 -type f -name '*.json' | wc -l)
-  else
-    count=0
-  fi
-  [ "$count" -eq 0 ]
+  out=$(env PATH="$fake_path" "$SIGMUND_REAL_BIN" --console /bin/sh -c 'read line; echo "native:$line"' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  printf 'ping\n' | env PATH="$fake_path" "$SIGMUND_REAL_BIN" console "$id" >"$TEST_ROOT/console-native.out" 2>"$TEST_ROOT/console-native.err" || {
+    cat "$TEST_ROOT/console-native.out" "$TEST_ROOT/console-native.err" >&2
+    return 1
+  }
+  grep -q 'native:ping' "$TEST_ROOT/console-native.out" || { cat "$TEST_ROOT/console-native.out" >&2; return 1; }
+  store="$HOME/.local/state/sigmund"
+  record="$store/$id.json"
+  sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
+  [ -n "$sock" ] || { cat "$record" >&2; return 1; }
+  "$SIGMUND_REAL_BIN" prune "$id" >/dev/null || return 1
+  path_absent_soon "$sock" || {
+    ls -la "$store" "$store/console" "$(dirname "$sock")" >&2 || true
+    return 1
+  }
 }
 
 test_console_reports_non_console_run() {
@@ -758,24 +775,35 @@ test_console_reports_non_console_run() {
 }
 
 test_console_round_trip_and_log_tee() {
-  command -v socat >/dev/null 2>&1 || return 0
-  local out id store record
-  out=$("$SIGMUND_BIN" --console /bin/sh -c 'read line; echo "got:$line"' 2>&1) || return 1
+  local out id store record sock
+  out=$("$SIGMUND_REAL_BIN" --console /bin/sh -c 'read line; echo "got:$line"' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
   id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   store="$HOME/.local/state/sigmund"
   record="$store/$id.json"
   grep -q '"console_sock": "' "$record" || { cat "$record" >&2; return 1; }
-  "$SIGMUND_BIN" list | grep -Eq "^$id[[:space:]]+running[[:space:]]+.*[[:space:]]console[[:space:]]" || return 1
-  printf 'ping\n' | "$SIGMUND_BIN" console "$id" >"$TEST_ROOT/console.out" 2>"$TEST_ROOT/console.err" || {
+  sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
+  [ -n "$sock" ] || { cat "$record" >&2; return 1; }
+  "$SIGMUND_REAL_BIN" list >"$TEST_ROOT/console-list.out" || return 1
+  grep -Eq "^$id[[:space:]]+running[[:space:]]+.*[[:space:]]console[[:space:]]" "$TEST_ROOT/console-list.out" || {
+    cat "$TEST_ROOT/console-list.out" >&2
+    return 1
+  }
+  printf 'ping\n' | "$SIGMUND_REAL_BIN" console "$id" >"$TEST_ROOT/console.out" 2>"$TEST_ROOT/console.err" || {
     cat "$TEST_ROOT/console.out" "$TEST_ROOT/console.err" >&2
     return 1
   }
   grep -q 'got:ping' "$TEST_ROOT/console.out" || { cat "$TEST_ROOT/console.out" >&2; return 1; }
   sleep 0.2
   grep -q 'got:ping' "$store/$id.log" || { cat "$store/$id.log" >&2; return 1; }
-  "$SIGMUND_BIN" prune "$id" >/dev/null || return 1
-  [ ! -e "$store/console/$id.sock" ]
+  "$SIGMUND_REAL_BIN" prune "$id" >/dev/null || return 1
+  path_absent_soon "$sock" || {
+    ls -la "$store" "$store/console" "$(dirname "$sock")" >&2 || true
+    return 1
+  }
 }
 
 test_prune_by_id() {
@@ -1464,7 +1492,7 @@ run_test "persistent stale records remain visible and dumpable" test_persistent_
 run_test "missing boot source does not force stale" test_boot_unavailable_does_not_force_stale
 run_test "leader zombie with live group remains running" test_leader_zombie_group_still_running
 run_test "tail <id> prints finished log output" test_tail_finished_log_prints_existing_output
-run_test "--console refuses before launch when socat is missing" test_console_requires_socat_before_launch
+run_test "--console works without an external attach tool" test_console_does_not_require_external_attach_tool
 run_test "console reports a normal run has no console" test_console_reports_non_console_run
 run_test "console attach round-trips and tees to the log" test_console_round_trip_and_log_tee
 run_test "prune <id> removes exactly one run record/output" test_prune_by_id

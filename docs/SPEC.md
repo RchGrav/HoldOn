@@ -225,8 +225,6 @@ sigmund --console <cmd...>
 sigmund start <alias> --console
 ```
 
-Console starts require `socat`. If `socat` is not available in `PATH`, Sigmund refuses before generating a run ID or launching the command.
-
 A console run records a private `console_sock` path and starts the command behind a per-run PTY broker. Output is tee'd to the normal log, so `tail` and `dump` keep their normal behavior. Console sockets are private state and must not be exposed through the public root index.
 
 ## 5. Public root index and aliases
@@ -669,11 +667,7 @@ Root-managed prune follows the same resolver and elevation rules as other action
 
 ### 13.1 Console behavior
 
-`sigmund console <target>` attaches to a running console-enabled run through the recorded private socket:
-
-```text
-socat -,raw,echo=0 UNIX-CONNECT:<console_sock>
-```
+`sigmund console <target>` attaches to a running console-enabled run through the recorded private socket. Interactive attaches save the local terminal, enter an alternate screen, forward terminal resize events to the child PTY, and restore the original terminal state when the attach exits. Ctrl-] detaches without stopping the run. Non-interactive attaches stream stdin/stdout without changing screen state.
 
 A run ID targets that one run directly. An alias resolves by recorded alias label and the `console` verb intent-set: running runs with `console_sock`. More than one matching alias run exits 6 and prints candidates; zero candidates for a known alias exits 0. A finished run reports that it has exited and points the user to `sigmund dump <id>`. A non-console run reports that it has no console.
 

@@ -45,7 +45,7 @@ Phase 2 should anchor the docs to these source regions:
 - Profile fingerprinting and persistence: `profile_hash_for_argv`, `write_profile_atomic`, `load_profiles`, `write_profiles_atomic`, `alias_lookup_hash`, `alias_upsert_hash`, `alias_lookup_recipe`, and `alias_upsert_recipe`.
 - Record and public-index writes: `write_record_atomic` and `write_public_index_atomic`.
 - Process launch: `perform_start`, `perform_explicit_start`, `read_exec_handshake`, and `rollback_spawned_group`.
-- Console mode: `make_console_listener`, `open_console_pty`, `run_console_broker`, `run_socat_console`, `attach_console_record`, and `cmd_console_action`.
+- Console mode: `make_console_listener`, `open_console_pty`, `run_console_broker`, `run_native_console`, `attach_console_record`, and `cmd_console_action`.
 - Process identity and state validation: `get_boot_id`, `read_process_ids_state`, `group_session_liveness`, `count_session_escapees`, `read_proc_stat_tokens`, `read_proc_exe`, `eval_state`, `do_signal_action`, and `do_print_signal_command`.
 - Target resolution and actions: `parse_id_token`, `resolve_target`, `resolve_action_token`, `append_private_alias_targets`, `append_public_alias_elevation_target`, `cmd_signal_action`, `cmd_tail_action`, `cmd_dump_action`, and `cmd_prune_action`.
 - Sudo crossing and capability checks: `resolve_self_executable_path`, `elevate_with_sudo_canonical`, `elevate_with_sudo_parsed`, `elevate_with_sudo_targets`, `elevate_start_token`, `verify_system_alias_cap`, `ensure_run_recorded_under_alias`, and `cmd_elevated_capability_action`.
@@ -98,9 +98,9 @@ Planned diagrams: sequence diagram for non-root action self-elevation; sequence 
 
 ### `docs/console.md`
 
-Documents attachable console support as implemented: `--console` preflight for `socat`, PTY broker setup, private Unix socket path, log teeing, `sigmund console <target>`, root-managed console elevation, and the fact that public indexes do not expose socket paths. It should also explain that `tail` and `dump` keep using the normal log even for console runs.
+Documents attachable console support as implemented: PTY broker setup, native attach, private Unix socket path, terminal size forwarding, log teeing, `sigmund console <target>`, root-managed console elevation, and the fact that public indexes do not expose socket paths. It should also explain that `tail` and `dump` keep using the normal log even for console runs.
 
-Planned diagrams: sequence diagram for console start and attach; small component diagram for child, broker, PTY, log, socket, and `socat`.
+Planned diagrams: sequence diagram for console start and attach; small component diagram for child, broker, PTY, log, socket, and native attach.
 
 ### `docs/cli-contract.md`
 
