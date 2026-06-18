@@ -14,18 +14,33 @@ sigmund stop "$run_id"
 
 ## Install
 
-One-line installer for supported release targets:
+The one-line installer detects Linux or macOS, chooses the matching release artifact, verifies its SHA-256 checksum, and installs `sigmund`.
+
+Default install:
 
 ```sh
 curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh | sh
 ```
 
-The installer uses `/usr/local/bin/sigmund` when it can write there, and otherwise falls back to `$HOME/.local/bin/sigmund`. If the install directory is not on your current `PATH`, the installer prints the export command and still tells you the absolute binary path.
+By default, the installer uses `/usr/local/bin/sigmund` when it can write there, and otherwise falls back to `$HOME/.local/bin/sigmund`. If the install directory is not on your current `PATH`, the installer prints the export command and still tells you the absolute binary path.
 
-To force a system install, use `--system`; the installer prompts through `sudo` only if it cannot write `/usr/local/bin` directly:
+Force a system install to `/usr/local/bin`; this prompts through `sudo` only if needed:
 
 ```sh
 curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh | sh -s -- --system
+```
+
+Install into a custom directory:
+
+```sh
+curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh |
+  SIGMUND_INSTALL_DIR="$HOME/bin" sh
+```
+
+Install a pinned release:
+
+```sh
+curl -LsSf https://github.com/RchGrav/sigmund/releases/download/vX.Y.Z/install.sh | sh
 ```
 
 For scripts and CI, ask the installer to write an environment handoff file:
