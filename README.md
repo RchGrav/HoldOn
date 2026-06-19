@@ -1,30 +1,33 @@
 # sigmund
 
-**A tiny, daemonless process launcher and recorder.**
+What comes to mind when you hear the name _sigmund_?
 
-`sigmund` starts a command, gives you a durable run ID, captures its output, and lets you inspect or stop the recorded process group later. It is for CI jobs, integration-test harnesses, local development stacks, and any place where `nohup cmd &`, `setsid cmd &`, or hand-managed PID files are too fragile.
+Maybe a certain Viennese doctor. We won't dwell on him, though we'll concede that a man so fixated on what goes wrong between parents and children is oddly on-theme for a tool that keeps your child processes from being orphaned. Or maybe you land on Saturday mornings and Sid and Marty Krofft's _Sigmund and the Sea Monsters_, the little monster who couldn't bring himself to scare anyone. We'll take that one. We do keep track of `sid`s, session IDs, and we try hard not to become a C-monster. Pun intended.
 
-The short version:
+The real meaning is older than both. _Mund_ is Old English for guardianship: a protector's care over what's in its keeping. _Sig_ is the signals the kernel uses to start, stop, and watch over your processes. Together they're the whole job: a guardian for the things you launch.
+
+Today you do that job by hand: a `nohup`, a stray `&`, a PID written down somewhere, a `kill` you hope hits the right process. Or you reach for `systemd` and wind up authoring unit files and leaving a service resident on your box just to watch something behave in the background.
+
+`sigmund` is the small, daemonless middle. Point it at a command and it remembers exactly what it started, keeps the log for you, and when you tell it to stop, it confirms the thing still running is the thing it launched. If it cannot be sure, it refuses. It takes down the whole process group, so nothing is orphaned.
 
 ```bash
 run_id="$(sigmund ./your-server --port 9000)"
 sigmund tail "$run_id"
 sigmund stop "$run_id"
+sigmund prune "$run_id"
 ```
 
 ## Install
 
 The one-line installer detects Linux or macOS, chooses the matching release artifact, verifies its SHA-256 checksum, and installs `sigmund`.
 
-Default install:
-
 ```sh
 curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh | sh
 ```
 
-By default, the installer uses `/usr/local/bin/sigmund` when it can write there, and otherwise falls back to `$HOME/.local/bin/sigmund`. If the install directory is not on your current `PATH`, the installer prints the export command and still tells you the absolute binary path.
+By default, the installer uses `/usr/local/bin/sigmund` when it can write there, and otherwise falls back to `$HOME/.local/bin/sigmund`.
 
-Force a system install to `/usr/local/bin`; this prompts through `sudo` only if needed:
+Force a system install to `/usr/local/bin`:
 
 ```sh
 curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh | sh -s -- --system
@@ -37,12 +40,6 @@ curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.s
   SIGMUND_INSTALL_DIR="$HOME/bin" sh
 ```
 
-Install a pinned release:
-
-```sh
-curl -LsSf https://github.com/RchGrav/sigmund/releases/download/vX.Y.Z/install.sh | sh
-```
-
 For scripts and CI, ask the installer to write an environment handoff file:
 
 ```sh
@@ -53,73 +50,37 @@ curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.s
 "$SIGMUND_BIN" --version
 ```
 
-More install modes and platform-selection details are in [Installing Sigmund](docs/install.md).
+More install modes are in [Installing Sigmund](docs/install.md).
 
-## Why Sigmund?
+## Build From Source
 
-- It keeps helper processes alive after the shell or CI step that launched them exits.
-- It records a run ID, log, and process-group identity for later management.
-- It stops the recorded process group instead of relying on a hand-copied PID.
-- It refuses unsafe signals when the recorded process identity is stale or unclear.
-- It stays small: no daemon, no service manager, no D-Bus, no session multiplexer.
-
-```mermaid
-flowchart LR
-    Start["start command"] --> Id["run ID"]
-    Start --> Log["log"]
-    Start --> Record["record"]
-    Id --> Later["tail, dump, stop, prune"]
-    Log --> Later
-    Record --> Later
-    Later --> Safe["validate before signal"]
-
-    classDef action fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
-    classDef state fill:#fef3c7,stroke:#b45309,color:#78350f
-    classDef safe fill:#dcfce7,stroke:#15803d,color:#14532d
-    class Start,Id,Later action
-    class Log,Record state
-    class Safe safe
-```
-
-## First Run
-
-Build it:
+Requires a C11 compiler and POSIX process APIs. Linux and macOS are supported.
 
 ```bash
 make
 ./sigmund --help
 ```
 
-Start something:
+On Linux, `make` attempts to build a static standalone binary. On macOS, it builds a normal dynamically linked binary.
+
+## Useful Patterns
+
+Start a helper, inspect it, then clean it up:
 
 ```bash
-run_id="$(./sigmund python3 -m http.server 8765)"
+run_id="$(sigmund python3 -m http.server 8765)"
+sigmund list
+sigmund dump "$run_id"
+sigmund stop "$run_id"
+sigmund prune "$run_id"
 ```
 
-Look at it:
-
-```bash
-./sigmund list
-./sigmund dump "$run_id"
-```
-
-Stop it:
-
-```bash
-./sigmund stop "$run_id"
-./sigmund prune "$run_id"
-```
-
-That is the core workflow. The [quickstart](docs/quickstart.md) walks through this path step by step, including automatic choices, deterministic targeting, aliases, root-scoped delegation, and CI usage.
-
-## Common Workflows
-
-**CI helper process**
+Keep a CI helper alive across steps:
 
 ```yaml
 - name: Start helper
   run: |
-    run_id="$(./sigmund ./your-server --port 9000)"
+    run_id="$(sigmund ./your-server --port 9000)"
     echo "HELPER_RUN_ID=$run_id" >> "$GITHUB_ENV"
 
 - name: Run tests
@@ -127,16 +88,16 @@ That is the core workflow. The [quickstart](docs/quickstart.md) walks through th
 
 - name: Show helper log on failure
   if: failure()
-  run: ./sigmund dump "$HELPER_RUN_ID" || true
+  run: sigmund dump "$HELPER_RUN_ID" || true
 
 - name: Stop helper
   if: always()
-  run: ./sigmund stop "$HELPER_RUN_ID" || true
+  run: |
+    sigmund stop "$HELPER_RUN_ID" || true
+    sigmund prune "$HELPER_RUN_ID" || true
 ```
 
-More CI examples live in [Using Sigmund in CI](docs/ci.md).
-
-**Local development stack**
+Run a small local development stack:
 
 ```bash
 frontend_id="$(sigmund npm run dev:frontend)"
@@ -147,72 +108,34 @@ sigmund tail "$backend_id"
 sigmund stop "$frontend_id" "$backend_id"
 ```
 
-**Reusable aliases**
+Turn a recorded command into a reusable name:
 
 ```bash
 id="$(sigmund ./your-server --port 9000)"
 sigmund alias "$id" web
+
 sigmund start web
 sigmund stop web
 ```
 
-Aliases and root-managed profiles are explained in [Profiles and aliases](docs/profiles-and-aliases.md).
-
-## Command Surface
-
-Most users only need this small set:
-
-| Goal | Command |
-| --- | --- |
-| Start a command | `sigmund <cmd...>` |
-| List visible runs | `sigmund list` |
-| Follow output | `sigmund tail <id-or-alias>` |
-| Start with an attachable console | `sigmund --console <cmd...>` |
-| Attach to a console | `sigmund console <id-or-alias>` |
-| Print saved output | `sigmund dump <id-or-alias>` |
-| Stop a run | `sigmund stop <id-or-alias>` |
-| Remove finished state | `sigmund prune <id-or-alias>` |
-| Save a command as a name | `sigmund alias <id> <name>` |
-| Start a saved command | `sigmund start <name>` |
-
-Advanced command forms, parser rules, exit codes, targeting rules, console mode, root/system behavior, and grant/revoke are documented in the [technical reference loop](docs/index.md#technical-reference-loop).
-
-Console attach is interactive. Press `Ctrl-]` to detach and return to your local shell without stopping the run. `Ctrl-C` is sent to the attached process.
-
-## Documentation Map
-
-Start here:
-
-- [Installing Sigmund](docs/install.md): one-line install, CI handoff, platform detection, and checksums.
-- [Quickstart](docs/quickstart.md): the guided onboarding loop.
-- [Using Sigmund in CI](docs/ci.md): copyable CI recipes and workflow examples.
-- [Examples](examples/README.md): runnable scripts, including a Sigmund + uv alias demo.
-- [Documentation index](docs/index.md): the two-layer navigation model.
-
-Go deeper:
-
-- [Launcher](docs/launcher.md): how commands start and become recorded runs.
-- [Store](docs/store.md): where run IDs, logs, aliases, and public hints live.
-- [Identity and validation](docs/identity.md): why Sigmund validates before signaling.
-- [Target resolution](docs/target-resolution.md): IDs, aliases, `user:`, `system:`, and ambiguity.
-- [Profiles and aliases](docs/profiles-and-aliases.md): reusable launch recipes and profile hashes.
-- [Security and privilege boundaries](docs/security.md): root-managed runs, sudo, grants, and redaction.
-- [Console](docs/console.md): optional attachable PTY sessions.
-- [CLI contract](docs/cli-contract.md): stdout/stderr behavior, flags, and exit codes.
-- [Specification](docs/SPEC.md): current implementation contract.
-
-## Build Notes
-
-Requires a C11 compiler and POSIX process APIs. Linux and macOS are supported.
-
-On Linux, `make` attempts to produce a static standalone binary named `sigmund` by default. On macOS, `make` builds a normal dynamically linked Mach-O binary because fully static system linking is not supported there.
+Start something interactive with an attachable console:
 
 ```bash
-make
-
-# Optional on Linux: build a dynamically linked binary instead.
-make sigmund-dynamic
+id="$(sigmund --console bash)"
+sigmund console "$id"
 ```
+
+Press `Ctrl-]` to detach from a console without stopping the run.
+
+## Documentation
+
+The README is only the front door. The deeper material lives under [docs](docs/index.md):
+
+- [Quickstart](docs/quickstart.md): a guided walkthrough from first run to aliases and root-scoped delegation.
+- [Using Sigmund in CI](docs/ci.md): copyable workflow patterns.
+- [Installing Sigmund](docs/install.md): installer modes, checksums, and CI handoff.
+- [Documentation index](docs/index.md): the full map for command behavior, internals, security boundaries, console mode, and the implementation spec.
+- [Examples](examples/README.md): runnable scripts.
 
 ## What Sigmund Is Not
 

@@ -166,6 +166,10 @@ Every subsystem page links back here, names the quickstart step it explains, res
 - [Documentation plan and review notes](PLAN.md)
 - [Repository README](../README.md)
 
+## Future Work
+
+- [Future-work notes](future/README.md): proposals that are not current behavior.
+
 ## Implementation map
 
 For maintainers, the main source anchors for this overview are `main`, `perform_start`, `write_record_atomic`, `write_public_index_atomic`, `resolve_action_token`, `eval_state`, `do_signal_action`, `elevate_with_sudo_canonical`, and `cmd_elevated_capability_action` in `src/sigmund.c`.
