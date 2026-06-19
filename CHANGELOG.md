@@ -1,16 +1,5 @@
 # Changelog
 
-## 0.3.7 - Demo binary selection fix
-
-This point release fixes the published demo so it does not accidentally use an
-older `sigmund` already installed on the user's `PATH`.
-
-### Fixed
-
-- The demo now uses a local `sigmund` from `PATH` only when it matches the demo
-  release version. If the local binary is missing or older, the demo downloads
-  the matching release binary into its temporary sandbox.
-
 ## 0.3.6 - Self-contained demo and release refresh
 
 This point release refreshes the published binaries and adds a first-run demo
