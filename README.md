@@ -65,7 +65,7 @@ Run it:
 curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/demo.sh | bash
 ```
 
-What to expect: it creates a temporary directory, uses an existing `sigmund` if one is on `PATH` or downloads a release binary into that temporary directory, starts a tiny helper process, shows `list`, `dump`, `stop`, `prune`, creates an alias, starts from that alias, then removes the temporary directory. It does not install Sigmund, edit shell profiles, or write to `/etc`.
+What to expect: it creates a temporary directory, uses an existing matching `sigmund` if one is on `PATH` or downloads the matching release binary into that temporary directory, starts a tiny helper process, shows `list`, `dump`, `stop`, `prune`, creates an alias, starts from that alias, then removes the temporary directory. It does not install Sigmund, edit shell profiles, or write to `/etc`.
 
 ## Build From Source
 

@@ -14,7 +14,7 @@ The script is a narrated tutorial. It pulls in `sigmund` when needed, prints eac
 
 1. It creates one temporary directory under `${TMPDIR:-/tmp}`.
 2. It creates a temporary `HOME`, Sigmund state directory, boot-id file, helper script, and sandboxed `sigmund` binary inside that directory.
-3. It uses `sigmund` from `PATH` if available. If not, it downloads the matching release tarball and `SHA256SUMS`, verifies the checksum, and extracts only into the temporary directory.
+3. It uses `sigmund` from `PATH` when it matches this demo release. If not, it downloads the matching release tarball and `SHA256SUMS`, verifies the checksum, and extracts only into the temporary directory.
 4. It starts the helper process, shows the run ID and log, lists runs, dumps log output, prints the stop command, stops and prunes the run, creates an alias, starts from the alias, then stops and prunes again.
 5. It refuses to create sudoers entries because the demo binary is deliberately sandboxed, not a secured root-owned install.
 6. On exit or interruption, it tries to stop/prune demo runs and removes the temporary directory.

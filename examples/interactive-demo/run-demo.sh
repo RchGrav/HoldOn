@@ -9,10 +9,10 @@
 #   1. Creates one temporary directory under ${TMPDIR:-/tmp}.
 #   2. Creates a temporary HOME, Sigmund state directory, boot-id file,
 #      helper program, and sandboxed sigmund binary inside that directory.
-#   3. Uses an existing sigmund from PATH when available. If sigmund is not
-#      installed, downloads the matching release tarball plus SHA256SUMS,
-#      verifies the checksum, and extracts the binary into the temporary
-#      directory only.
+#   3. Uses an existing sigmund from PATH when it matches this demo release. If
+#      sigmund is missing or older, downloads the matching release tarball plus
+#      SHA256SUMS, verifies the checksum, and extracts the binary into the
+#      temporary directory only.
 #   4. Runs a narrated walkthrough: start a helper process, inspect it, dump
 #      its log, print the stop command, stop and prune it, create an alias,
 #      start from that alias, then stop and prune again.
@@ -235,7 +235,7 @@ download_sigmund_release() {
   fi
   artifact=$(select_artifact "$version_no_v" "$os" "$arch" "$libc") || return 1
 
-  say "Sigmund is not installed here, so the demo will download a release binary into the temporary sandbox."
+  say "The demo will download a matching Sigmund release binary into the temporary sandbox."
   say "Nothing is installed system-wide."
 
   archive="$WORK/$artifact"
@@ -277,9 +277,21 @@ find_repo_root() {
   return 1
 }
 
+# Check whether a local binary matches the release this demo was published for.
+# This keeps an older installed Sigmund from making the demo look broken.
+sigmund_matches_demo_version() {
+  bin=$1
+  if [ "$DEMO_VERSION" = latest ]; then
+    return 0
+  fi
+  expected=${DEMO_VERSION#v}
+  actual=$("$bin" --version 2>/dev/null | sed -n '1s/[[:space:]]*$//p')
+  [ "$actual" = "$expected" ]
+}
+
 # Choose the Sigmund binary for the walkthrough. The order is:
 #   1. a binary explicitly supplied by SIGMUND_BIN;
-#   2. sigmund already on PATH;
+#   2. sigmund already on PATH, when it matches this demo release;
 #   3. a local source build;
 #   4. a downloaded release artifact.
 # Whichever path wins, the demo runs the sandbox copy in WORK.
@@ -292,9 +304,12 @@ prepare_sigmund() {
 
   if command -v sigmund >/dev/null 2>&1; then
     src="$(command -v sigmund)"
-    cp "$src" "$SIGMUND" || return 1
-    chmod 0755 "$SIGMUND"
-    return 0
+    if sigmund_matches_demo_version "$src"; then
+      cp "$src" "$SIGMUND" || return 1
+      chmod 0755 "$SIGMUND"
+      return 0
+    fi
+    say "Found a different Sigmund on PATH, so the demo will use the matching release binary in its sandbox."
   fi
 
   repo_root="$(find_repo_root 2>/dev/null || true)"
