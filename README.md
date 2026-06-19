@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/RchGrav/sigmund/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/RchGrav/sigmund/actions/workflows/ci.yml)
 
+Every push runs the full suite on Linux (gcc + clang, user and root harnesses) and macOS (arm64 + x86_64), under ASan/UBSan and cppcheck.
+
 What comes to mind when you hear the name _sigmund_?
 
 Maybe a certain Viennese doctor. We won't dwell on him, though we'll concede that a man so fixated on what goes wrong between parents and children is oddly on-theme for a tool that keeps your child processes from being orphaned. Or maybe you land on Saturday mornings and Sid and Marty Krofft's _Sigmund and the Sea Monsters_, the little monster who couldn't bring himself to scare anyone. We'll take that one. We do keep track of `sid`s, session IDs, and we try hard not to become a C-monster. Pun intended.
