@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.7 - Cross-platform test-validated binaries
+
+This release uses the same Sigmund runtime implementation as 0.3.6. It is the
+preferred release because the binaries were rebuilt after the Linux and macOS
+test gates were expanded and verified on real build runners.
+
+### Added
+
+- Added a macOS-specific CI script that validates the macOS runner
+  architecture, Mach-O binary shape, macOS system-store documentation, the full
+  runtime suite, and installer artifact selection for both supported macOS
+  architectures.
+- Added the same macOS-specific checks to the release workflow before macOS
+  binaries are packaged.
+
+### Fixed
+
+- Fixed the Linux root-runner harness coverage for console tests so those tests
+  use the same non-root actor boundary as the rest of the suite.
+
+### Release notes
+
+The 0.3.7 binaries are preferred over 0.3.6 because they were created after the
+expanded test gates passed for Linux and for both macOS build boxes. No runtime
+behavior change beyond the release version string is intended.
+
+Full changelog:
+https://github.com/RchGrav/sigmund/compare/v0.3.6...v0.3.7
+
 ## 0.3.6 - Record-scan fix and demo asset
 
 This point release rebuilds the published binaries because the Sigmund runtime
