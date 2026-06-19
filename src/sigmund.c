@@ -221,6 +221,20 @@ static bool valid_id(const char *id) {
     return true;
 }
 
+static bool record_json_filename_id(const char *name, char *id, size_t n) {
+    if (!name || !has_suffix(name, ".json")) {
+        return false;
+    }
+    size_t len = strlen(name);
+    size_t id_len = len - 5;
+    if (id_len + 1 > n) {
+        return false;
+    }
+    memcpy(id, name, id_len);
+    id[id_len] = '\0';
+    return valid_id(id);
+}
+
 static bool valid_id_prefix(const char *id) {
     size_t len = strlen(id);
     if (len < 1 || len > ID_HEX_LEN) {
@@ -257,9 +271,6 @@ static bool valid_alias(const char *alias) {
     for (size_t i = 0; i < len; i++) {
         unsigned char c = (unsigned char)alias[i];
         if (!(isalnum(c) || c == '_' || c == '-')) {
-            return false;
-        }
-        if (c == '/' || c == '.') {
             return false;
         }
     }
@@ -4368,7 +4379,8 @@ static int collect_list_private(const struct store_paths *store,
     bool have_boot = current_boot_id(boot, sizeof(boot));
     const struct dirent *e;
     while ((e = readdir(d))) {
-        if (!has_suffix(e->d_name, ".json")) {
+        char file_id[ID_HEX_LEN + 1];
+        if (!record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
             continue;
         }
         char path[SIGMUND_PATH_MAX];
@@ -4380,7 +4392,7 @@ static int collect_list_private(const struct store_paths *store,
             fprintf(stderr, "sigmund: warning: skipping corrupt record %s\n", e->d_name);
             continue;
         }
-        if (!valid_record(&r)) {
+        if (!valid_record(&r) || strcmp(r.id, file_id) != 0) {
             fprintf(stderr, "sigmund: warning: skipping corrupt record %s\n", e->d_name);
             continue;
         }
@@ -4531,20 +4543,10 @@ static int resolve_run_id(const char *dir, const char *input, char *resolved, si
     int matches = 0;
     const struct dirent *e;
     while ((e = readdir(d))) {
-        if (!has_suffix(e->d_name, ".json")) {
+        char id[ID_HEX_LEN + 1];
+        if (!record_json_filename_id(e->d_name, id, sizeof(id))) {
             continue;
         }
-        size_t len = strlen(e->d_name);
-        if (len <= 5) {
-            continue;
-        }
-        char id[32];
-        size_t id_len = len - 5;
-        if (id_len >= sizeof(id)) {
-            continue;
-        }
-        memcpy(id, e->d_name, id_len);
-        id[id_len] = '\0';
         if (strncmp(id, input, strlen(input)) == 0) {
             matches++;
             if (checked_snprintf(resolved, n, "%s", id) != 0) {
@@ -4606,7 +4608,8 @@ static int cmd_prune_store_all(const struct store_paths *store, bool include_sta
 
     const struct dirent *e;
     while ((e = readdir(d))) {
-        if (!has_suffix(e->d_name, ".json")) {
+        char file_id[ID_HEX_LEN + 1];
+        if (!record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
             continue;
         }
         char path[SIGMUND_PATH_MAX];
@@ -4618,7 +4621,7 @@ static int cmd_prune_store_all(const struct store_paths *store, bool include_sta
             unlink(path);
             continue;
         }
-        if (!valid_record(&r)) {
+        if (!valid_record(&r) || strcmp(r.id, file_id) != 0) {
             unlink(path);
             continue;
         }
@@ -4951,7 +4954,8 @@ static int collect_private_alias_matches(const struct store_paths *store,
     bool have_boot = current_boot_id(boot, sizeof(boot));
     const struct dirent *e;
     while ((e = readdir(d))) {
-        if (!has_suffix(e->d_name, ".json")) {
+        char file_id[ID_HEX_LEN + 1];
+        if (!record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
             continue;
         }
         char path[SIGMUND_PATH_MAX];
@@ -4961,7 +4965,7 @@ static int collect_private_alias_matches(const struct store_paths *store,
         }
         struct record r;
         if (load_record(path, &r) != 0 || !valid_record(&r) ||
-            !r.has_alias || strcmp(r.alias, alias) != 0) {
+            strcmp(r.id, file_id) != 0 || !r.has_alias || strcmp(r.alias, alias) != 0) {
             continue;
         }
         list->alias_known = true;

@@ -474,13 +474,13 @@ test_exec_replacement_remains_controllable() {
 
 test_corrupt_record_handling() {
   ensure_user_fixture_store || return 1
-  printf 'garbage\n' > "$HOME/.local/state/sigmund/badbad.json" || return 1
+  printf 'garbage\n' > "$HOME/.local/state/sigmund/badbad00.json" || return 1
   "$SIGMUND_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
-  ! grep -q '^badbad' "$TEST_ROOT/list.out"
+  ! grep -q '^badbad00' "$TEST_ROOT/list.out"
   ! grep -Eq '^0[[:space:]]' "$TEST_ROOT/list.out"
-  grep -q 'warning: skipping corrupt record badbad.json' "$TEST_ROOT/list.err"
+  grep -q 'warning: skipping corrupt record badbad00.json' "$TEST_ROOT/list.err"
   "$SIGMUND_BIN" prune >/dev/null || return 1
-  [ ! -e "$HOME/.local/state/sigmund/badbad.json" ]
+  [ ! -e "$HOME/.local/state/sigmund/badbad00.json" ]
 }
 
 test_deep_json_record_rejected_not_crashed() {
@@ -1036,8 +1036,14 @@ test_alias_profile_map_start_and_stop() {
   grep -Fq "\"args\": [\"$sh_bin\", \"-c\", \"while :; do sleep 1; done\"]" "$store/aliases.json" || return 1
   "$SIGMUND_BIN" aliases >"$TEST_ROOT/aliases-list.out" || return 1
   grep -Eq "^web-test[[:space:]]+user[[:space:]]+.*[[:space:]]+-$" "$TEST_ROOT/aliases-list.out" || return 1
+  "$SIGMUND_BIN" list >"$TEST_ROOT/list-after-alias.out" 2>"$TEST_ROOT/list-after-alias.err" || return 1
+  ! grep -q 'aliases.json' "$TEST_ROOT/list-after-alias.err" || return 1
   "$SIGMUND_BIN" stop "$id" >/dev/null || return 1
   "$SIGMUND_BIN" prune "$id" >/dev/null || return 1
+
+  "$SIGMUND_BIN" prune >"$TEST_ROOT/prune-after-alias.out" 2>"$TEST_ROOT/prune-after-alias.err" || return 1
+  [ -f "$store/aliases.json" ] || return 1
+  ! grep -q 'aliases.json' "$TEST_ROOT/prune-after-alias.err" || return 1
 
   out2=$("$SIGMUND_BIN" start web-test 2>&1) || return 1
   id2=$(printf '%s\n' "$out2" | extract_id)

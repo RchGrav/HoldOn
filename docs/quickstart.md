@@ -235,6 +235,8 @@ sudo sigmund alias <run-id> cache
 sudo sigmund grant cache alice start,stop,tail,dump
 ```
 
+`grant` writes managed sudoers policy, so Sigmund intentionally refuses unless it resolves itself to a secured installed executable: a regular root-owned file, not group/world writable, with no whitespace in its path. A source-tree or temporary demo binary can still show starts, aliases, stops, dumps, and pruning, but not sudoers entry creation.
+
 Then Alice can run:
 
 ```bash

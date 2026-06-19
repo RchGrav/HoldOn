@@ -1,6 +1,16 @@
 # Sigmund examples
 
-These scripts are runnable examples for CI and automation patterns.
+These scripts are runnable examples for interactive learning, CI, and automation patterns.
+
+## `interactive-demo/run-demo.sh`
+
+A narrated sandbox demo that pulls in `sigmund` when needed, starts a helper process, captures logs, creates an alias, restarts from that alias, and cleans up. It uses temporary state and does not install Sigmund, edit shell profiles, or write to `/etc`.
+
+The script is written to be readable: [interactive-demo/run-demo.sh](interactive-demo/run-demo.sh).
+
+```sh
+curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/demo.sh | bash
+```
 
 ## `uv-webserver-alias.sh`
 
