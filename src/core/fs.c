@@ -2,9 +2,9 @@
 #include "sigmund/types.h"
 #include "sigmund/core.h"
 
-int mkdir_p0700(const char *dir) {
+int sigmund_mkdir_p0700(const char *dir) {
     char path[SIGMUND_PATH_MAX];
-    if (checked_snprintf(path, sizeof(path), "%s", dir) != 0) {
+    if (sigmund_checked_snprintf(path, sizeof(path), "%s", dir) != 0) {
         return -1;
     }
 
@@ -41,7 +41,7 @@ int mkdir_p0700(const char *dir) {
     return 0;
 }
 
-int read_file_trim(const char *path, char *buf, size_t n) {
+int sigmund_read_file_trim(const char *path, char *buf, size_t n) {
     if (n == 0) {
         errno = EINVAL;
         return -1;
@@ -68,14 +68,14 @@ int read_file_trim(const char *path, char *buf, size_t n) {
     return 0;
 }
 
-bool path_exists(const char *path) {
+bool sigmund_path_exists(const char *path) {
     struct stat st;
     return stat(path, &st) == 0;
 }
 
-int mkdir_p_mode(const char *dir, mode_t mode) {
+int sigmund_mkdir_p_mode(const char *dir, mode_t mode) {
     char path[SIGMUND_PATH_MAX];
-    if (checked_snprintf(path, sizeof(path), "%s", dir) != 0) {
+    if (sigmund_checked_snprintf(path, sizeof(path), "%s", dir) != 0) {
         return -1;
     }
 
@@ -110,7 +110,7 @@ int mkdir_p_mode(const char *dir, mode_t mode) {
     return 0;
 }
 
-int read_owned_file_no_symlink(const char *path, char **out) {
+int sigmund_read_owned_file_no_symlink(const char *path, char **out) {
     *out = NULL;
     int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
@@ -173,7 +173,7 @@ int read_owned_file_no_symlink(const char *path, char **out) {
     return 0;
 }
 
-int fsync_dir_path(const char *dir) {
+int sigmund_fsync_dir_path(const char *dir) {
     int dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (dfd < 0) {
         return -1;
@@ -185,6 +185,6 @@ int fsync_dir_path(const char *dir) {
     return rc;
 }
 
-int read_small_file(const char *path, char **out) {
-    return read_owned_file_no_symlink(path, out);
+int sigmund_read_small_file(const char *path, char **out) {
+    return sigmund_read_owned_file_no_symlink(path, out);
 }

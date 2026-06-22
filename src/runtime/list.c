@@ -116,44 +116,44 @@ static int collect_list_private(const struct sigmund_store *store,
         return 0;
     }
     char boot[128] = {0};
-    bool have_boot = current_boot_id(boot, sizeof(boot));
+    bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
     const struct dirent *e;
     while ((e = readdir(d))) {
         char file_id[ID_HEX_LEN + 1];
-        if (!record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
+        if (!sigmund_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
             continue;
         }
         char path[SIGMUND_PATH_MAX];
-        if (checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
+        if (sigmund_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
             continue;
         }
         struct sigmund_run_record r;
-        if (load_record(path, &r) != 0) {
+        if (sigmund_load_record(path, &r) != 0) {
             fprintf(stderr, "sigmund: warning: skipping corrupt record %s\n", e->d_name);
             continue;
         }
-        if (!valid_record(&r) || strcmp(r.id, file_id) != 0) {
+        if (!sigmund_valid_record(&r) || strcmp(r.id, file_id) != 0) {
             fprintf(stderr, "sigmund: warning: skipping corrupt record %s\n", e->d_name);
             continue;
         }
         if (alias_filter && (!r.has_alias || strcmp(r.alias, alias_filter) != 0)) {
             continue;
         }
-        enum run_state st = eval_state(&r, have_boot ? boot : NULL);
+        enum run_state st = sigmund_eval_state(&r, have_boot ? boot : NULL);
         struct list_row row;
         memset(&row, 0, sizeof(row));
         snprintf(row.id, sizeof(row.id), "%s", r.id);
-        snprintf(row.state, sizeof(row.state), "%s", state_str(st));
+        snprintf(row.state, sizeof(row.state), "%s", sigmund_state_str(st));
         row.start_unix_ns = r.start_unix_ns;
         row.running = st == STATE_RUNNING;
         if (iso) {
             if (r.has_started_at && r.started_at[0]) {
                 snprintf(row.started, sizeof(row.started), "%s", r.started_at);
             } else {
-                format_rfc3339_utc_from_ns(r.start_unix_ns, row.started, sizeof(row.started));
+                sigmund_format_rfc3339_utc_from_ns(r.start_unix_ns, row.started, sizeof(row.started));
             }
         } else {
-            format_relative_age(r.start_unix_ns, row.started, sizeof(row.started));
+            sigmund_format_relative_age(r.start_unix_ns, row.started, sizeof(row.started));
         }
         format_result(&r, st, row.result, sizeof(row.result));
         snprintf(row.cmd, sizeof(row.cmd), "%s", r.cmdline[0] ? r.cmdline : "?");
@@ -176,7 +176,7 @@ static int collect_list_public(const struct sigmund_store *store,
     }
     const struct dirent *e;
     while ((e = readdir(d))) {
-        if (!has_suffix(e->d_name, ".json")) {
+        if (!sigmund_has_suffix(e->d_name, ".json")) {
             continue;
         }
         size_t len = strlen(e->d_name);
@@ -186,15 +186,15 @@ static int collect_list_public(const struct sigmund_store *store,
         char file_id[16];
         memcpy(file_id, e->d_name, len - 5);
         file_id[len - 5] = '\0';
-        if (!valid_id(file_id)) {
+        if (!sigmund_valid_id(file_id)) {
             continue;
         }
         char path[SIGMUND_PATH_MAX];
-        if (checked_snprintf(path, sizeof(path), "%s/%s", store->public_dir, e->d_name) != 0) {
+        if (sigmund_checked_snprintf(path, sizeof(path), "%s/%s", store->public_dir, e->d_name) != 0) {
             continue;
         }
         struct sigmund_public_index pi;
-        if (load_public_index(path, &pi) != 0 || strcmp(pi.id, file_id) != 0) {
+        if (sigmund_load_public_index(path, &pi) != 0 || strcmp(pi.id, file_id) != 0) {
             continue;
         }
         if (alias_filter && (!pi.has_alias || strcmp(pi.alias, alias_filter) != 0)) {
@@ -233,7 +233,7 @@ static int print_collected_list(struct list_rows *rows, bool iso) {
     return 0;
 }
 
-int cmd_list_normal(const struct sigmund_store *user_store,
+int sigmund_cmd_list_normal(const struct sigmund_store *user_store,
                            const struct sigmund_store *system_store,
                            const char *alias_filter,
                            bool iso) {
@@ -249,7 +249,7 @@ int cmd_list_normal(const struct sigmund_store *user_store,
     return rc;
 }
 
-int cmd_list_system(const struct sigmund_store *system_store,
+int sigmund_cmd_list_system(const struct sigmund_store *system_store,
                            const char *alias_filter,
                            bool iso) {
     struct list_rows rows = {0};
@@ -268,21 +268,21 @@ static void unlink_public_index(const struct sigmund_store *store, const char *i
         return;
     }
     char path[SIGMUND_PATH_MAX];
-    if (checked_snprintf(path, sizeof(path), "%s/%s.json", store->public_dir, id) == 0) {
+    if (sigmund_checked_snprintf(path, sizeof(path), "%s/%s.json", store->public_dir, id) == 0) {
         unlink(path);
     }
 }
 
-int prune_one_run(const struct sigmund_store *store, const char *id, const char *boot, bool allow_stale, bool *removed) {
+int sigmund_prune_one_run(const struct sigmund_store *store, const char *id, const char *boot, bool allow_stale, bool *removed) {
     struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX];
-    if (load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
+    if (sigmund_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
         return 5;
     }
-    enum run_state st = eval_state(&r, boot ? boot : NULL);
+    enum run_state st = sigmund_eval_state(&r, boot ? boot : NULL);
     bool prunable = (st == STATE_EXITED || st == STATE_FAILED || (allow_stale && st == STATE_STALE));
     if (!prunable) {
-        fprintf(stderr, "sigmund: error: run %s is %s and cannot be pruned\n", id, state_str(st));
+        fprintf(stderr, "sigmund: error: run %s is %s and cannot be pruned\n", id, sigmund_state_str(st));
         return 2;
     }
     unlink(path);
@@ -308,28 +308,28 @@ static int cmd_prune_store_all(const struct sigmund_store *store, bool include_s
         return 0;
     }
     char boot[128] = {0};
-    bool have_boot = current_boot_id(boot, sizeof(boot));
+    bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
 
     const struct dirent *e;
     while ((e = readdir(d))) {
         char file_id[ID_HEX_LEN + 1];
-        if (!record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
+        if (!sigmund_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
             continue;
         }
         char path[SIGMUND_PATH_MAX];
-        if (checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
+        if (sigmund_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
             continue;
         }
         struct sigmund_run_record r;
-        if (load_record(path, &r) != 0) {
+        if (sigmund_load_record(path, &r) != 0) {
             unlink(path);
             continue;
         }
-        if (!valid_record(&r) || strcmp(r.id, file_id) != 0) {
+        if (!sigmund_valid_record(&r) || strcmp(r.id, file_id) != 0) {
             unlink(path);
             continue;
         }
-        enum run_state st = eval_state(&r, have_boot ? boot : NULL);
+        enum run_state st = sigmund_eval_state(&r, have_boot ? boot : NULL);
         if (st == STATE_EXITED || st == STATE_FAILED || (include_stale && st == STATE_STALE)) {
             unlink(path);
             if (r.has_log) {
@@ -351,7 +351,7 @@ static int cmd_prune_store_all(const struct sigmund_store *store, bool include_s
         return 0;
     }
     while ((e = readdir(d))) {
-        if (!has_suffix(e->d_name, ".log")) {
+        if (!sigmund_has_suffix(e->d_name, ".log")) {
             continue;
         }
         size_t len = strlen(e->d_name);
@@ -365,14 +365,14 @@ static int cmd_prune_store_all(const struct sigmund_store *store, bool include_s
         }
         memcpy(id, e->d_name, id_len);
         id[id_len] = '\0';
-        if (!valid_id(id)) {
+        if (!sigmund_valid_id(id)) {
             continue;
         }
         char json_path[SIGMUND_PATH_MAX], log_path[SIGMUND_PATH_MAX];
-        if (checked_snprintf(json_path, sizeof(json_path), "%s/%s.json", store->record_dir, id) != 0) {
+        if (sigmund_checked_snprintf(json_path, sizeof(json_path), "%s/%s.json", store->record_dir, id) != 0) {
             continue;
         }
-        if (checked_snprintf(log_path, sizeof(log_path), "%s/%s", store->log_dir, e->d_name) != 0) {
+        if (sigmund_checked_snprintf(log_path, sizeof(log_path), "%s/%s", store->log_dir, e->d_name) != 0) {
             continue;
         }
         if (access(json_path, F_OK) != 0) {
@@ -388,7 +388,7 @@ static int cmd_prune_store_all(const struct sigmund_store *store, bool include_s
         return 0;
     }
     while ((e = readdir(d))) {
-        if (!has_suffix(e->d_name, ".sock")) {
+        if (!sigmund_has_suffix(e->d_name, ".sock")) {
             continue;
         }
         size_t len = strlen(e->d_name);
@@ -402,12 +402,12 @@ static int cmd_prune_store_all(const struct sigmund_store *store, bool include_s
         }
         memcpy(id, e->d_name, id_len);
         id[id_len] = '\0';
-        if (!valid_id(id)) {
+        if (!sigmund_valid_id(id)) {
             continue;
         }
         char json_path[SIGMUND_PATH_MAX], sock_path[SIGMUND_PATH_MAX];
-        if (checked_snprintf(json_path, sizeof(json_path), "%s/%s.json", store->record_dir, id) != 0 ||
-            checked_snprintf(sock_path, sizeof(sock_path), "%s/%s", store->console_dir, e->d_name) != 0) {
+        if (sigmund_checked_snprintf(json_path, sizeof(json_path), "%s/%s.json", store->record_dir, id) != 0 ||
+            sigmund_checked_snprintf(sock_path, sizeof(sock_path), "%s/%s", store->console_dir, e->d_name) != 0) {
             continue;
         }
         if (access(json_path, F_OK) != 0) {
@@ -421,7 +421,7 @@ static int cmd_prune_store_all(const struct sigmund_store *store, bool include_s
     return 0;
 }
 
-int cmd_prune_action(const struct sigmund_invocation *inv,
+int sigmund_cmd_prune_action(const struct sigmund_invocation *inv,
                             const struct sigmund_store *user_store,
                             const struct sigmund_store *system_store,
                             const char *program,
@@ -433,23 +433,23 @@ int cmd_prune_action(const struct sigmund_invocation *inv,
         int rc = cmd_prune_store_all(store, target_token && strcmp(target_token, "all") == 0, &removed);
         if (rc == 0) {
             if (removed > 0) {
-                sig_note(inv, "sigmund: pruned %d past run%s\n", removed, removed == 1 ? "" : "s");
+                sigmund_sig_note(inv, "sigmund: pruned %d past run%s\n", removed, removed == 1 ? "" : "s");
             } else {
-                sig_note(inv, "sigmund: nothing to prune\n");
+                sigmund_sig_note(inv, "sigmund: nothing to prune\n");
             }
         }
         return rc;
     }
     struct sigmund_resolved_target *targets = NULL;
     int ntargets = 0;
-    int rc = resolve_action_token(inv, user_store, system_store, "prune", target_token, all, &targets, &ntargets);
+    int rc = sigmund_resolve_action_token(inv, user_store, system_store, "prune", target_token, all, &targets, &ntargets);
     if (rc != 0) {
         free(targets);
         return rc;
     }
     if (ntargets == 0) {
         free(targets);
-        sig_note(inv, "sigmund: nothing to prune\n");
+        sigmund_sig_note(inv, "sigmund: nothing to prune\n");
         return 0;
     }
     bool need_elevation = false;
@@ -457,17 +457,17 @@ int cmd_prune_action(const struct sigmund_invocation *inv,
         need_elevation = need_elevation || targets[i].needs_elevation;
     }
     if (need_elevation) {
-        rc = elevate_with_sudo_targets(program, "prune", NULL, targets, ntargets, all, false);
+        rc = sigmund_elevate_with_sudo_targets(program, "prune", NULL, targets, ntargets, all, false);
         free(targets);
         return rc;
     }
     char boot[128] = {0};
-    bool have_boot = current_boot_id(boot, sizeof(boot));
+    bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
     int worst = 0;
     int removed_count = 0;
     for (int i = 0; i < ntargets; i++) {
         bool removed = false;
-        rc = prune_one_run(&targets[i].store, targets[i].id, have_boot ? boot : NULL, true, &removed);
+        rc = sigmund_prune_one_run(&targets[i].store, targets[i].id, have_boot ? boot : NULL, true, &removed);
         if (removed) {
             removed_count++;
         }
@@ -478,17 +478,17 @@ int cmd_prune_action(const struct sigmund_invocation *inv,
     if (worst == 0) {
         if (removed_count > 0) {
             const char *atom = NULL;
-            enum id_token_scope token_scope = parse_id_token(target_token, &atom);
+            enum id_token_scope token_scope = sigmund_parse_id_token(target_token, &atom);
             bool target_looks_like_alias = (token_scope != ID_TOKEN_INVALID && atom &&
-                                            valid_alias(atom) && !valid_id_prefix(atom));
+                                            sigmund_valid_alias(atom) && !sigmund_valid_id_prefix(atom));
             if (target_looks_like_alias) {
-                sig_note(inv, "sigmund: pruned %d past run%s for '%s'\n",
+                sigmund_sig_note(inv, "sigmund: pruned %d past run%s for '%s'\n",
                          removed_count, removed_count == 1 ? "" : "s", atom);
             } else {
-                sig_note(inv, "sigmund: pruned %d past run%s\n", removed_count, removed_count == 1 ? "" : "s");
+                sigmund_sig_note(inv, "sigmund: pruned %d past run%s\n", removed_count, removed_count == 1 ? "" : "s");
             }
         } else {
-            sig_note(inv, "sigmund: nothing to prune\n");
+            sigmund_sig_note(inv, "sigmund: nothing to prune\n");
         }
     }
     free(targets);

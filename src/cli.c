@@ -133,9 +133,9 @@ static int help_action(const char *action) {
     return 0;
 }
 
-int show_help(const char *topic) {
+int sigmund_show_help(const char *topic) {
     if (!topic || !*topic) {
-        usage();
+        sigmund_usage();
         return 0;
     }
     if (!strcmp(topic, "profiles")) return help_profiles();
@@ -149,7 +149,7 @@ int show_help(const char *topic) {
     return 5;
 }
 
-bool is_sigmund_owned_command(const char *s) {
+bool sigmund_is_sigmund_owned_command(const char *s) {
     return s && (!strcmp(s, "list") || !strcmp(s, "stop") || !strcmp(s, "kill") ||
                  !strcmp(s, "tail") || !strcmp(s, "dump") || !strcmp(s, "prune") ||
                  !strcmp(s, "console") ||
@@ -159,7 +159,7 @@ bool is_sigmund_owned_command(const char *s) {
                  !strcmp(s, "help"));
 }
 
-bool parse_positive_count(const char *s, int *out) {
+bool sigmund_parse_positive_count(const char *s, int *out) {
     if (!s || !*s) {
         return false;
     }

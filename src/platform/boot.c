@@ -8,9 +8,9 @@ static int get_boot_id(char *buf, size_t n);
 static int get_boot_id(char *buf, size_t n) {
     const char *path = getenv("SIGMUND_BOOT_ID_PATH");
     if (path && *path) {
-        return read_file_trim(path, buf, n);
+        return sigmund_read_file_trim(path, buf, n);
     }
-    if (read_file_trim(SIGMUND_BOOT_ID_PATH, buf, n) == 0) {
+    if (sigmund_read_file_trim(SIGMUND_BOOT_ID_PATH, buf, n) == 0) {
         return 0;
     }
 #if defined(__APPLE__)
@@ -24,7 +24,7 @@ static int get_boot_id(char *buf, size_t n) {
     return -1;
 }
 
-bool current_boot_id(char *buf, size_t n) {
+bool sigmund_current_boot_id(char *buf, size_t n) {
     if (n == 0) {
         return false;
     }

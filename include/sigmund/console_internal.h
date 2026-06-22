@@ -33,19 +33,19 @@ struct console_replay_buffer {
 extern volatile sig_atomic_t g_console_resized;
 
 /* Cross-file console internals (frame/replay/broker/attach share these). */
-void handle_console_sigwinch(int signo);
-void console_replay_init(struct console_replay_buffer *replay);
-void console_replay_free(struct console_replay_buffer *replay);
-void console_replay_append(struct console_replay_buffer *replay, const void *buf, size_t n);
-int console_replay_write(const struct console_replay_buffer *replay, int fd);
-int write_console_frame(int fd, unsigned char type, const void *payload, uint16_t len);
-int send_console_resize(int fd, const struct winsize *ws);
-int maybe_get_terminal_size(struct winsize *ws);
-int broker_process_client_input(struct console_client_state *state, int master,
+void sigmund_handle_console_sigwinch(int signo);
+void sigmund_console_replay_init(struct console_replay_buffer *replay);
+void sigmund_console_replay_free(struct console_replay_buffer *replay);
+void sigmund_console_replay_append(struct console_replay_buffer *replay, const void *buf, size_t n);
+int sigmund_console_replay_write(const struct console_replay_buffer *replay, int fd);
+int sigmund_write_console_frame(int fd, unsigned char type, const void *payload, uint16_t len);
+int sigmund_send_console_resize(int fd, const struct winsize *ws);
+int sigmund_maybe_get_terminal_size(struct winsize *ws);
+int sigmund_broker_process_client_input(struct console_client_state *state, int master,
                                 const unsigned char *buf, size_t n);
-int make_console_listener(const char *sock_path);
-int open_console_pty(int *master_out, int *slave_out);
-int connect_console_socket(const char *sock_path);
-void make_raw_termios(const struct termios *in, struct termios *out);
+int sigmund_make_console_listener(const char *sock_path);
+int sigmund_open_console_pty(int *master_out, int *slave_out);
+int sigmund_connect_console_socket(const char *sock_path);
+void sigmund_make_raw_termios(const struct termios *in, struct termios *out);
 
 #endif /* SIGMUND_CONSOLE_INTERNAL_H */

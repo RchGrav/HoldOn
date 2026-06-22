@@ -7,44 +7,44 @@
 static int parse_alias_recipe_object(const char *j, struct sigmund_alias *entry);
 static int write_aliases_atomic(const struct sigmund_store *store, const struct sigmund_alias *entries, size_t count);
 
-void free_aliases(struct sigmund_alias *entries, size_t count) {
+void sigmund_free_aliases(struct sigmund_alias *entries, size_t count) {
     if (!entries) {
         return;
     }
     for (size_t i = 0; i < count; i++) {
-        free_argv_alloc(entries[i].argv, entries[i].argc);
+        sigmund_free_argv_alloc(entries[i].argv, entries[i].argc);
     }
     free(entries);
 }
 
 static int parse_alias_recipe_object(const char *j, struct sigmund_alias *entry) {
-    if (json_get_str(j, "bin", entry->binary_path, sizeof(entry->binary_path)) != 0 &&
-        json_get_str(j, "binary_path", entry->binary_path, sizeof(entry->binary_path)) != 0) {
+    if (sigmund_json_get_str(j, "bin", entry->binary_path, sizeof(entry->binary_path)) != 0 &&
+        sigmund_json_get_str(j, "binary_path", entry->binary_path, sizeof(entry->binary_path)) != 0) {
         return -1;
     }
     if (entry->binary_path[0] != '/') {
         errno = EINVAL;
         return -1;
     }
-    if (json_get_args_alloc(j, &entry->argv, &entry->argc) != 0 &&
-        json_get_argv_alloc(j, &entry->argv, &entry->argc) != 0) {
+    if (sigmund_json_get_args_alloc(j, &entry->argv, &entry->argc) != 0 &&
+        sigmund_json_get_argv_alloc(j, &entry->argv, &entry->argc) != 0) {
         return -1;
     }
     entry->has_recipe = true;
     return 0;
 }
 
-int load_aliases(const struct sigmund_store *store, struct sigmund_alias **entries_out, size_t *count_out) {
+int sigmund_load_aliases(const struct sigmund_store *store, struct sigmund_alias **entries_out, size_t *count_out) {
     *entries_out = NULL;
     *count_out = 0;
     char *j = NULL;
-    if (read_owned_file_no_symlink(store->alias_path, &j) != 0) {
+    if (sigmund_read_owned_file_no_symlink(store->alias_path, &j) != 0) {
         if (errno == ENOENT) {
             return 0;
         }
         return -1;
     }
-    const char *p = skip_ws(j);
+    const char *p = sigmund_skip_ws(j);
     if (*p != '{') {
         free(j);
         errno = EINVAL;
@@ -54,31 +54,31 @@ int load_aliases(const struct sigmund_store *store, struct sigmund_alias **entri
     size_t cap = 0, count = 0;
     struct sigmund_alias *entries = NULL;
     while (1) {
-        p = skip_ws(p);
+        p = sigmund_skip_ws(p);
         if (*p == '}') {
             break;
         }
         char name[ALIAS_MAX_LEN + 1], hash[PROFILE_HASH_STR_LEN];
-        if (parse_json_string(p, name, sizeof(name), &p) != 0 || !valid_alias(name)) {
+        if (sigmund_parse_json_string(p, name, sizeof(name), &p) != 0 || !sigmund_valid_alias(name)) {
             free(j);
-            free_aliases(entries, count);
+            sigmund_free_aliases(entries, count);
             errno = EINVAL;
             return -1;
         }
-        p = skip_ws(p);
+        p = sigmund_skip_ws(p);
         if (*p != ':') {
             free(j);
-            free_aliases(entries, count);
+            sigmund_free_aliases(entries, count);
             errno = EINVAL;
             return -1;
         }
-        p = skip_ws(p + 1);
+        p = sigmund_skip_ws(p + 1);
         if (count == cap) {
             size_t next_cap = cap ? cap * 2 : 8;
             struct sigmund_alias *next = realloc(entries, next_cap * sizeof(*entries));
             if (!next) {
                 free(j);
-                free_aliases(entries, count);
+                sigmund_free_aliases(entries, count);
                 return -1;
             }
             entries = next;
@@ -88,9 +88,9 @@ int load_aliases(const struct sigmund_store *store, struct sigmund_alias **entri
         snprintf(entries[count].name, sizeof(entries[count].name), "%s", name);
         const char *value = p;
         if (*value == '"') {
-            if (parse_json_string(value, hash, sizeof(hash), NULL) != 0 || !valid_profile_hash(hash)) {
+            if (sigmund_parse_json_string(value, hash, sizeof(hash), NULL) != 0 || !sigmund_valid_profile_hash(hash)) {
                 free(j);
-                free_aliases(entries, count);
+                sigmund_free_aliases(entries, count);
                 errno = EINVAL;
                 return -1;
             }
@@ -99,23 +99,23 @@ int load_aliases(const struct sigmund_store *store, struct sigmund_alias **entri
         } else if (*value == '{') {
             if (parse_alias_recipe_object(value, &entries[count]) != 0) {
                 free(j);
-                free_aliases(entries, count + 1);
+                sigmund_free_aliases(entries, count + 1);
                 return -1;
             }
         } else {
             free(j);
-            free_aliases(entries, count);
+            sigmund_free_aliases(entries, count);
             errno = EINVAL;
             return -1;
         }
         p = value;
-        if (skip_json_value(&p) != 0) {
+        if (sigmund_skip_json_value(&p) != 0) {
             free(j);
-            free_aliases(entries, count + 1);
+            sigmund_free_aliases(entries, count + 1);
             return -1;
         }
         count++;
-        p = skip_ws(p);
+        p = sigmund_skip_ws(p);
         if (*p == ',') {
             p++;
             continue;
@@ -124,7 +124,7 @@ int load_aliases(const struct sigmund_store *store, struct sigmund_alias **entri
             break;
         }
         free(j);
-        free_aliases(entries, count);
+        sigmund_free_aliases(entries, count);
         errno = EINVAL;
         return -1;
     }
@@ -138,7 +138,7 @@ static int write_aliases_atomic(const struct sigmund_store *store, const struct 
     const char *dir = store->kind == STORE_SYSTEM_MANAGED ? store->public_dir : store->base;
     char tmp[SIGMUND_PATH_MAX];
     mode_t mode = store->kind == STORE_SYSTEM_MANAGED ? 0644 : 0600;
-    if (checked_snprintf(tmp, sizeof(tmp), "%s/.aliases.tmp", dir) != 0) {
+    if (sigmund_checked_snprintf(tmp, sizeof(tmp), "%s/.aliases.tmp", dir) != 0) {
         return -1;
     }
     int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
@@ -164,16 +164,16 @@ static int write_aliases_atomic(const struct sigmund_store *store, const struct 
     fprintf(f, "{\n");
     for (size_t i = 0; i < count; i++) {
         fprintf(f, "  \"");
-        json_escape(f, entries[i].name);
+        sigmund_json_escape(f, entries[i].name);
         if (store->kind == STORE_SYSTEM_MANAGED) {
-            if (!entries[i].has_hash || !valid_profile_hash(entries[i].hash)) {
+            if (!entries[i].has_hash || !sigmund_valid_profile_hash(entries[i].hash)) {
                 fclose(f);
                 unlink(tmp);
                 errno = EINVAL;
                 return -1;
             }
             fprintf(f, "\": \"");
-            json_escape(f, entries[i].hash);
+            sigmund_json_escape(f, entries[i].hash);
             fprintf(f, "\"%s\n", i + 1 == count ? "" : ",");
         } else {
             if (!entries[i].has_recipe || entries[i].binary_path[0] != '/' || entries[i].argc <= 0 || !entries[i].argv) {
@@ -183,9 +183,9 @@ static int write_aliases_atomic(const struct sigmund_store *store, const struct 
                 return -1;
             }
             fprintf(f, "\": {\"bin\": \"");
-            json_escape(f, entries[i].binary_path);
+            sigmund_json_escape(f, entries[i].binary_path);
             fprintf(f, "\", \"args\": ");
-            write_json_argv(f, entries[i].argc, entries[i].argv);
+            sigmund_write_json_argv(f, entries[i].argc, entries[i].argv);
             fprintf(f, "}%s\n", i + 1 == count ? "" : ",");
         }
     }
@@ -205,17 +205,17 @@ static int write_aliases_atomic(const struct sigmund_store *store, const struct 
         errno = saved;
         return -1;
     }
-    (void)fsync_dir_path(dir);
+    (void)sigmund_fsync_dir_path(dir);
     return 0;
 }
 
-int alias_lookup_hash(const struct sigmund_store *store, const char *alias, char hash[PROFILE_HASH_STR_LEN]) {
-    if (!valid_alias(alias)) {
+int sigmund_alias_lookup_hash(const struct sigmund_store *store, const char *alias, char hash[PROFILE_HASH_STR_LEN]) {
+    if (!sigmund_valid_alias(alias)) {
         return -1;
     }
     struct sigmund_alias *entries = NULL;
     size_t count = 0;
-    if (load_aliases(store, &entries, &count) != 0) {
+    if (sigmund_load_aliases(store, &entries, &count) != 0) {
         return -1;
     }
     int rc = -1;
@@ -226,18 +226,18 @@ int alias_lookup_hash(const struct sigmund_store *store, const char *alias, char
             break;
         }
     }
-    free_aliases(entries, count);
+    sigmund_free_aliases(entries, count);
     return rc;
 }
 
-int alias_upsert_hash(const struct sigmund_store *store, const char *alias, const char *hash) {
-    if (!valid_alias(alias) || !valid_profile_hash(hash)) {
+int sigmund_alias_upsert_hash(const struct sigmund_store *store, const char *alias, const char *hash) {
+    if (!sigmund_valid_alias(alias) || !sigmund_valid_profile_hash(hash)) {
         errno = EINVAL;
         return -1;
     }
     struct sigmund_alias *entries = NULL;
     size_t count = 0;
-    if (load_aliases(store, &entries, &count) != 0) {
+    if (sigmund_load_aliases(store, &entries, &count) != 0) {
         return -1;
     }
     for (size_t i = 0; i < count; i++) {
@@ -245,13 +245,13 @@ int alias_upsert_hash(const struct sigmund_store *store, const char *alias, cons
             snprintf(entries[i].hash, sizeof(entries[i].hash), "%s", hash);
             entries[i].has_hash = true;
             int rc = write_aliases_atomic(store, entries, count);
-            free_aliases(entries, count);
+            sigmund_free_aliases(entries, count);
             return rc;
         }
     }
     struct sigmund_alias *next = realloc(entries, (count + 1) * sizeof(*entries));
     if (!next) {
-        free_aliases(entries, count);
+        sigmund_free_aliases(entries, count);
         return -1;
     }
     entries = next;
@@ -261,19 +261,19 @@ int alias_upsert_hash(const struct sigmund_store *store, const char *alias, cons
     entries[count].has_hash = true;
     count++;
     int rc = write_aliases_atomic(store, entries, count);
-    free_aliases(entries, count);
+    sigmund_free_aliases(entries, count);
     return rc;
 }
 
-int alias_lookup_recipe(const struct sigmund_store *store, const char *alias, struct sigmund_profile *recipe) {
+int sigmund_alias_lookup_recipe(const struct sigmund_store *store, const char *alias, struct sigmund_profile *recipe) {
     memset(recipe, 0, sizeof(*recipe));
-    if (!valid_alias(alias)) {
+    if (!sigmund_valid_alias(alias)) {
         errno = EINVAL;
         return -1;
     }
     struct sigmund_alias *entries = NULL;
     size_t count = 0;
-    if (load_aliases(store, &entries, &count) != 0) {
+    if (sigmund_load_aliases(store, &entries, &count) != 0) {
         return -1;
     }
     int rc = -1;
@@ -282,44 +282,44 @@ int alias_lookup_recipe(const struct sigmund_store *store, const char *alias, st
             continue;
         }
         if (entries[i].has_recipe) {
-            if (checked_snprintf(recipe->binary_path, sizeof(recipe->binary_path), "%s", entries[i].binary_path) == 0 &&
-                copy_argv(&recipe->argv, entries[i].argc, entries[i].argv) == 0) {
+            if (sigmund_checked_snprintf(recipe->binary_path, sizeof(recipe->binary_path), "%s", entries[i].binary_path) == 0 &&
+                sigmund_copy_argv(&recipe->argv, entries[i].argc, entries[i].argv) == 0) {
                 recipe->argc = entries[i].argc;
                 rc = 0;
             }
             break;
         }
-        if (entries[i].has_hash && load_profile_by_hash(store, entries[i].hash, recipe) == 0) {
+        if (entries[i].has_hash && sigmund_load_profile_by_hash(store, entries[i].hash, recipe) == 0) {
             rc = 0;
             break;
         }
     }
-    free_aliases(entries, count);
+    sigmund_free_aliases(entries, count);
     return rc;
 }
 
-int alias_upsert_recipe(const struct sigmund_store *store,
+int sigmund_alias_upsert_recipe(const struct sigmund_store *store,
                                const char *alias,
                                const char *binary_path,
                                int argc,
                                char **argv) {
-    if (!valid_alias(alias) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv) {
+    if (!sigmund_valid_alias(alias) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv) {
         errno = EINVAL;
         return -1;
     }
     struct sigmund_alias *entries = NULL;
     size_t count = 0;
-    if (load_aliases(store, &entries, &count) != 0) {
+    if (sigmund_load_aliases(store, &entries, &count) != 0) {
         return -1;
     }
     for (size_t i = 0; i < count; i++) {
         if (strcmp(entries[i].name, alias) == 0) {
-            free_argv_alloc(entries[i].argv, entries[i].argc);
+            sigmund_free_argv_alloc(entries[i].argv, entries[i].argc);
             entries[i].argv = NULL;
             entries[i].argc = 0;
-            if (checked_snprintf(entries[i].binary_path, sizeof(entries[i].binary_path), "%s", binary_path) != 0 ||
-                copy_argv(&entries[i].argv, argc, argv) != 0) {
-                free_aliases(entries, count);
+            if (sigmund_checked_snprintf(entries[i].binary_path, sizeof(entries[i].binary_path), "%s", binary_path) != 0 ||
+                sigmund_copy_argv(&entries[i].argv, argc, argv) != 0) {
+                sigmund_free_aliases(entries, count);
                 return -1;
             }
             entries[i].argc = argc;
@@ -327,32 +327,32 @@ int alias_upsert_recipe(const struct sigmund_store *store,
             entries[i].has_hash = false;
             entries[i].hash[0] = '\0';
             int rc = write_aliases_atomic(store, entries, count);
-            free_aliases(entries, count);
+            sigmund_free_aliases(entries, count);
             return rc;
         }
     }
     struct sigmund_alias *next = realloc(entries, (count + 1) * sizeof(*entries));
     if (!next) {
-        free_aliases(entries, count);
+        sigmund_free_aliases(entries, count);
         return -1;
     }
     entries = next;
     memset(&entries[count], 0, sizeof(entries[count]));
     snprintf(entries[count].name, sizeof(entries[count].name), "%s", alias);
-    if (checked_snprintf(entries[count].binary_path, sizeof(entries[count].binary_path), "%s", binary_path) != 0 ||
-        copy_argv(&entries[count].argv, argc, argv) != 0) {
-        free_aliases(entries, count + 1);
+    if (sigmund_checked_snprintf(entries[count].binary_path, sizeof(entries[count].binary_path), "%s", binary_path) != 0 ||
+        sigmund_copy_argv(&entries[count].argv, argc, argv) != 0) {
+        sigmund_free_aliases(entries, count + 1);
         return -1;
     }
     entries[count].argc = argc;
     entries[count].has_recipe = true;
     count++;
     int rc = write_aliases_atomic(store, entries, count);
-    free_aliases(entries, count);
+    sigmund_free_aliases(entries, count);
     return rc;
 }
 
-int parse_alias_cap_atom(const char *atom,
+int sigmund_parse_alias_cap_atom(const char *atom,
                                 char alias[ALIAS_MAX_LEN + 1],
                                 char hash[PROFILE_HASH_STR_LEN]) {
     const char *sep = atom ? strchr(atom, '@') : NULL;
@@ -366,7 +366,7 @@ int parse_alias_cap_atom(const char *atom,
     char alias_tmp[ALIAS_MAX_LEN + 1];
     memcpy(alias_tmp, atom, alias_len);
     alias_tmp[alias_len] = '\0';
-    if (!valid_alias(alias_tmp) || !valid_profile_hash(sep + 1)) {
+    if (!sigmund_valid_alias(alias_tmp) || !sigmund_valid_profile_hash(sep + 1)) {
         return -1;
     }
     snprintf(alias, ALIAS_MAX_LEN + 1, "%s", alias_tmp);
@@ -374,25 +374,25 @@ int parse_alias_cap_atom(const char *atom,
     return 0;
 }
 
-int verify_system_alias_cap(const struct sigmund_store *system_store,
+int sigmund_verify_system_alias_cap(const struct sigmund_store *system_store,
                                    const char *alias,
                                    const char *hash) {
     char current[PROFILE_HASH_STR_LEN];
     struct sigmund_profile p;
-    if (!valid_alias(alias) || !valid_profile_hash(hash) ||
-        alias_lookup_hash(system_store, alias, current) != 0 ||
+    if (!sigmund_valid_alias(alias) || !sigmund_valid_profile_hash(hash) ||
+        sigmund_alias_lookup_hash(system_store, alias, current) != 0 ||
         strcmp(current, hash) != 0 ||
-        load_profile_by_hash(system_store, hash, &p) != 0) {
+        sigmund_load_profile_by_hash(system_store, hash, &p) != 0) {
         return -1;
     }
-    free_profile(&p);
+    sigmund_free_profile(&p);
     return 0;
 }
 
-bool alias_exists_in_store(const struct sigmund_store *store, const char *alias) {
+bool sigmund_alias_exists_in_store(const struct sigmund_store *store, const char *alias) {
     struct sigmund_alias *entries = NULL;
     size_t count = 0;
-    if (!valid_alias(alias) || load_aliases(store, &entries, &count) != 0) {
+    if (!sigmund_valid_alias(alias) || sigmund_load_aliases(store, &entries, &count) != 0) {
         return false;
     }
     bool found = false;
@@ -402,6 +402,6 @@ bool alias_exists_in_store(const struct sigmund_store *store, const char *alias)
             break;
         }
     }
-    free_aliases(entries, count);
+    sigmund_free_aliases(entries, count);
     return found;
 }

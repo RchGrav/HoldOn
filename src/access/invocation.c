@@ -5,7 +5,7 @@
 #include "sigmund/platform.h"
 #include "sigmund/store.h"
 
-int detect_invocation(struct sigmund_invocation *inv, bool requested_system, bool elevated) {
+int sigmund_detect_invocation(struct sigmund_invocation *inv, bool requested_system, bool elevated) {
     memset(inv, 0, sizeof(*inv));
     inv->euid_root = (geteuid() == 0);
     inv->requested_system = requested_system;
@@ -24,7 +24,7 @@ int detect_invocation(struct sigmund_invocation *inv, bool requested_system, boo
     const char *sn = getenv("SUDO_USER");
     uid_t uid = 0;
     gid_t gid = 0;
-    if (parse_uid_env(su, &uid) == 0 && parse_gid_env(sg, &gid) == 0 && sn && *sn) {
+    if (sigmund_parse_uid_env(su, &uid) == 0 && sigmund_parse_gid_env(sg, &gid) == 0 && sn && *sn) {
         struct passwd *pw = getpwuid(uid);
         if (pw && pw->pw_dir && *pw->pw_dir) {
             const char *home = pw->pw_dir;
@@ -37,8 +37,8 @@ int detect_invocation(struct sigmund_invocation *inv, bool requested_system, boo
             inv->have_sudo_user = true;
             inv->invoking_uid = uid;
             inv->invoking_gid = gid;
-            if (checked_snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", sn) != 0 ||
-                checked_snprintf(inv->invoking_home, sizeof(inv->invoking_home), "%s", home) != 0) {
+            if (sigmund_checked_snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", sn) != 0 ||
+                sigmund_checked_snprintf(inv->invoking_home, sizeof(inv->invoking_home), "%s", home) != 0) {
                 return -1;
             }
             return 0;
@@ -48,16 +48,16 @@ int detect_invocation(struct sigmund_invocation *inv, bool requested_system, boo
     inv->have_sudo_user = false;
     inv->invoking_uid = 0;
     inv->invoking_gid = 0;
-    if (checked_snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", "root") != 0) {
+    if (sigmund_checked_snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", "root") != 0) {
         return -1;
     }
     return 0;
 }
 
-int init_invoking_user_store(const struct sigmund_invocation *inv, struct sigmund_store *store) {
+int sigmund_init_invoking_user_store(const struct sigmund_invocation *inv, struct sigmund_store *store) {
     if (!inv || !inv->have_sudo_user || !inv->invoking_home[0]) {
         errno = EINVAL;
         return -1;
     }
-    return init_user_store_from_home(inv->invoking_home, store);
+    return sigmund_init_user_store_from_home(inv->invoking_home, store);
 }

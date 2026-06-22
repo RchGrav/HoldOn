@@ -49,7 +49,7 @@ static int parse_grant_subject(const char *input, char *out, size_t n) {
         return -1;
     }
     if (strcmp(input, "all") == 0 || strcmp(input, "ALL") == 0) {
-        return checked_snprintf(out, n, "%s", "ALL");
+        return sigmund_checked_snprintf(out, n, "%s", "ALL");
     }
     const char *name = input;
     bool group = false;
@@ -70,7 +70,7 @@ static int parse_grant_subject(const char *input, char *out, size_t n) {
             return -1;
         }
     }
-    return checked_snprintf(out, n, "%s%s", group ? "%" : "", name);
+    return sigmund_checked_snprintf(out, n, "%s%s", group ? "%" : "", name);
 }
 
 static int grant_action_index(const char *name) {
@@ -114,7 +114,7 @@ static int parse_grant_actions(const char *input, bool selected[GRANT_ACTION_COU
 }
 
 static int validate_sigmund_self_for_sudoers(const char *program, char *abs_sigmund, size_t n) {
-    if (resolve_self_executable_path(program, abs_sigmund, n) != 0) {
+    if (sigmund_resolve_self_executable_path(program, abs_sigmund, n) != 0) {
         fprintf(stderr, "sigmund: error: cannot determine executable path for sudoers grant\n");
         return -1;
     }
@@ -151,13 +151,13 @@ static const char *sudoers_dir_path(void) {
 static int resolve_system_alias_hash_for_grant(const struct sigmund_store *system_store,
                                                const char *alias,
                                                char hash[PROFILE_HASH_STR_LEN]) {
-    if (!valid_alias(alias)) {
+    if (!sigmund_valid_alias(alias)) {
         return -1;
     }
-    if (alias_lookup_hash(system_store, alias, hash) != 0) {
+    if (sigmund_alias_lookup_hash(system_store, alias, hash) != 0) {
         return -1;
     }
-    return profile_exists_in_store(system_store, hash);
+    return sigmund_profile_exists_in_store(system_store, hash);
 }
 
 static int build_action_alternation(const bool selected[GRANT_ACTION_COUNT], char *out, size_t n) {
@@ -225,7 +225,7 @@ static int build_sudoers_line(char *out,
     if (build_action_alternation(selected, verb_alt, sizeof(verb_alt)) != 0) {
         return -1;
     }
-    return checked_snprintf(out, n,
+    return sigmund_checked_snprintf(out, n,
                             "%s ALL=(root) NOPASSWD: %s ^--system --elevated (%s) [0-9a-f]{8} %s %s$",
                             subject, abs_sigmund, verb_alt, alias, hash);
 }
@@ -243,10 +243,10 @@ static int find_visudo(char *out, size_t n) {
 #ifdef SIGMUND_TESTING
     const char *override = getenv("SIGMUND_TEST_VISUDO_PROG");
     if (override && *override) {
-        return checked_snprintf(out, n, "%s", override);
+        return sigmund_checked_snprintf(out, n, "%s", override);
     }
 #endif
-    return resolve_binary_path("visudo", out, n);
+    return sigmund_resolve_binary_path("visudo", out, n);
 }
 
 static int validate_sudoers_candidate(const char *path) {
@@ -278,12 +278,12 @@ static int validate_sudoers_candidate(const char *path) {
 
 static int subject_file_label_for_grant(const char *subject, char *out, size_t n) {
     if (strcmp(subject, "ALL") == 0) {
-        return checked_snprintf(out, n, "%s", "all");
+        return sigmund_checked_snprintf(out, n, "%s", "all");
     }
     if (subject[0] == '%') {
-        return checked_snprintf(out, n, "group_%s", subject + 1);
+        return sigmund_checked_snprintf(out, n, "group_%s", subject + 1);
     }
-    return checked_snprintf(out, n, "%s", subject);
+    return sigmund_checked_snprintf(out, n, "%s", subject);
 }
 
 static void actions_from_existing_sudoers(const char *existing,
@@ -307,7 +307,7 @@ static void actions_from_existing_sudoers(const char *existing,
         return;
     }
     p += strlen("# actions-list:");
-    p = skip_ws(p);
+    p = sigmund_skip_ws(p);
     char buf[256];
     size_t len = 0;
     while (p[len] && p[len] != '\n' && len + 1 < sizeof(buf)) {
@@ -317,7 +317,7 @@ static void actions_from_existing_sudoers(const char *existing,
     buf[len] = '\0';
     char *save = NULL;
     for (char *tok = strtok_r(buf, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
-        tok = (char *)skip_ws(tok);
+        tok = (char *)sigmund_skip_ws(tok);
         char *end = tok + strlen(tok);
         while (end > tok && isspace((unsigned char)end[-1])) {
             *--end = '\0';
@@ -345,7 +345,7 @@ static int write_sudoers_template_file(const char *sudoers_path,
     }
     *slash = '\0';
     char tmp[SIGMUND_PATH_MAX];
-    if (checked_snprintf(tmp, sizeof(tmp), "%s.tmp", sudoers_path) != 0) {
+    if (sigmund_checked_snprintf(tmp, sizeof(tmp), "%s.tmp", sudoers_path) != 0) {
         return -1;
     }
     int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0440);
@@ -365,10 +365,10 @@ static int write_sudoers_template_file(const char *sudoers_path,
     }
     fputs("# sigmund managed sudoers; use sigmund grant/revoke\n", f);
     fprintf(f, "# target: ");
-    json_escape(f, target_label);
+    sigmund_json_escape(f, target_label);
     fputc('\n', f);
     fprintf(f, "# hash: ");
-    json_escape(f, hash);
+    sigmund_json_escape(f, hash);
     fputc('\n', f);
     fprintf(f, "# actions: %s\n", all_scope ? "ALL" : "explicit");
     char actions_csv[256];
@@ -405,7 +405,7 @@ static int write_sudoers_template_file(const char *sudoers_path,
         errno = saved;
         return -1;
     }
-    (void)fsync_dir_path(dir);
+    (void)sigmund_fsync_dir_path(dir);
     return 0;
 }
 
@@ -418,12 +418,12 @@ static int unlink_sudoers_template_file(const char *sudoers_path) {
     char *slash = strrchr(dir, '/');
     if (slash) {
         *slash = '\0';
-        (void)fsync_dir_path(dir);
+        (void)sigmund_fsync_dir_path(dir);
     }
     return 0;
 }
 
-int cmd_grant_revoke_action(const struct sigmund_invocation *inv,
+int sigmund_cmd_grant_revoke_action(const struct sigmund_invocation *inv,
                                    const struct sigmund_store *system_store,
                                    const char *program,
                                    bool grant,
@@ -466,26 +466,26 @@ int cmd_grant_revoke_action(const struct sigmund_invocation *inv,
     }
     const char *dir = sudoers_dir_path();
     char sudoers_path[SIGMUND_PATH_MAX];
-    if (checked_snprintf(sudoers_path, sizeof(sudoers_path), "%s/sigmund_%s_%s", dir, target_label, subject_label) != 0) {
+    if (sigmund_checked_snprintf(sudoers_path, sizeof(sudoers_path), "%s/sigmund_%s_%s", dir, target_label, subject_label) != 0) {
         return 3;
     }
 
     if (!grant) {
         if (all_scope) {
             if (unlink_sudoers_template_file(sudoers_path) != 0) {
-                die_errno("sigmund: failed to remove managed sudoers file");
+                sigmund_die_errno("sigmund: failed to remove managed sudoers file");
             }
-            sig_note(inv, "sigmund: revoked sudoers entries for %s %s\n", subject, hash);
+            sigmund_sig_note(inv, "sigmund: revoked sudoers entries for %s %s\n", subject, hash);
             return 0;
         }
         char *existing = NULL;
         bool remaining[GRANT_ACTION_COUNT];
-        if (read_owned_file_no_symlink(sudoers_path, &existing) != 0) {
+        if (sigmund_read_owned_file_no_symlink(sudoers_path, &existing) != 0) {
             if (errno == ENOENT) {
-                sig_note(inv, "sigmund: revoked sudoers entries for %s %s\n", subject, hash);
+                sigmund_sig_note(inv, "sigmund: revoked sudoers entries for %s %s\n", subject, hash);
                 return 0;
             }
-            die_errno("sigmund: failed to read managed sudoers file");
+            sigmund_die_errno("sigmund: failed to read managed sudoers file");
         }
         actions_from_existing_sudoers(existing, subject, abs_sigmund, target_label, hash, remaining);
         free(existing);
@@ -496,12 +496,12 @@ int cmd_grant_revoke_action(const struct sigmund_invocation *inv,
         }
         if (!any_grant_action_selected(remaining)) {
             if (unlink_sudoers_template_file(sudoers_path) != 0) {
-                die_errno("sigmund: failed to remove managed sudoers file");
+                sigmund_die_errno("sigmund: failed to remove managed sudoers file");
             }
         } else if (write_sudoers_template_file(sudoers_path, target_label, subject, abs_sigmund, hash, remaining, false) != 0) {
-            die_errno("sigmund: failed to update managed sudoers file");
+            sigmund_die_errno("sigmund: failed to update managed sudoers file");
         }
-        sig_note(inv, "sigmund: revoked sudoers entries for %s %s\n", subject, hash);
+        sigmund_sig_note(inv, "sigmund: revoked sudoers entries for %s %s\n", subject, hash);
         return 0;
     }
 
@@ -511,7 +511,7 @@ int cmd_grant_revoke_action(const struct sigmund_invocation *inv,
         for (int i = 0; i < GRANT_ACTION_COUNT; i++) {
             merged[i] = selected[i];
         }
-        if (read_owned_file_no_symlink(sudoers_path, &existing) == 0) {
+        if (sigmund_read_owned_file_no_symlink(sudoers_path, &existing) == 0) {
             bool existing_actions[GRANT_ACTION_COUNT];
             actions_from_existing_sudoers(existing, subject, abs_sigmund, target_label, hash, existing_actions);
             for (int i = 0; i < GRANT_ACTION_COUNT; i++) {
@@ -519,7 +519,7 @@ int cmd_grant_revoke_action(const struct sigmund_invocation *inv,
             }
             free(existing);
         } else if (errno != ENOENT) {
-            die_errno("sigmund: failed to read managed sudoers file");
+            sigmund_die_errno("sigmund: failed to read managed sudoers file");
         }
         for (int i = 0; i < GRANT_ACTION_COUNT; i++) {
             selected[i] = merged[i];
@@ -527,8 +527,8 @@ int cmd_grant_revoke_action(const struct sigmund_invocation *inv,
     }
 
     if (write_sudoers_template_file(sudoers_path, target_label, subject, abs_sigmund, hash, selected, all_scope) != 0) {
-        die_errno("sigmund: failed to update managed sudoers file");
+        sigmund_die_errno("sigmund: failed to update managed sudoers file");
     }
-    sig_note(inv, "sigmund: granted sudoers entries for %s %s\n", subject, hash);
+    sigmund_sig_note(inv, "sigmund: granted sudoers entries for %s %s\n", subject, hash);
     return 0;
 }

@@ -24,7 +24,7 @@ static void broker_fail_errno(int parent_pipe,
                               pid_t target,
                               int err);
 
-void handle_console_sigwinch(int signo) {
+void sigmund_handle_console_sigwinch(int signo) {
     (void)signo;
     g_console_resized = 1;
 }
@@ -64,11 +64,11 @@ static void broker_fail_errno(int parent_pipe,
     if (err == 0) {
         err = EIO;
     }
-    (void)write_all(parent_pipe, &err, sizeof(err));
+    (void)sigmund_write_all(parent_pipe, &err, sizeof(err));
     broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, target, 127);
 }
 
-void run_console_broker(int parent_pipe,
+void sigmund_run_console_broker(int parent_pipe,
                                const char *log_path,
                                const char *sock_path,
                                int argc,
@@ -84,7 +84,7 @@ void run_console_broker(int parent_pipe,
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, EINVAL);
     }
 
-    listener = make_console_listener(sock_path);
+    listener = sigmund_make_console_listener(sock_path);
     if (listener < 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
     }
@@ -92,7 +92,7 @@ void run_console_broker(int parent_pipe,
     if (logfd < 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
     }
-    if (open_console_pty(&master, &slave) != 0) {
+    if (sigmund_open_console_pty(&master, &slave) != 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
     }
 
@@ -129,7 +129,7 @@ void run_console_broker(int parent_pipe,
             dup2(slave, STDOUT_FILENO) < 0 ||
             dup2(slave, STDERR_FILENO) < 0) {
             int e = errno;
-            (void)write_all(exec_pipe[1], &e, sizeof(e));
+            (void)sigmund_write_all(exec_pipe[1], &e, sizeof(e));
             _exit(127);
         }
         if (slave > STDERR_FILENO) {
@@ -141,13 +141,13 @@ void run_console_broker(int parent_pipe,
             execvp(argv[0], argv);
         }
         int e = errno;
-        (void)write_all(exec_pipe[1], &e, sizeof(e));
+        (void)sigmund_write_all(exec_pipe[1], &e, sizeof(e));
         _exit(127);
     }
 
     close(exec_pipe[1]);
     int child_errno = 0;
-    int handshake = read_exec_handshake(exec_pipe[0], &child_errno);
+    int handshake = sigmund_read_exec_handshake(exec_pipe[0], &child_errno);
     int handshake_errno = errno;
     close(exec_pipe[0]);
     close(slave);
@@ -175,7 +175,7 @@ void run_console_broker(int parent_pipe,
     struct console_client_state client_state;
     memset(&client_state, 0, sizeof(client_state));
     struct console_replay_buffer replay;
-    console_replay_init(&replay);
+    sigmund_console_replay_init(&replay);
     bool target_done = false;
     while (1) {
         if (!target_done) {
@@ -217,7 +217,7 @@ void run_console_broker(int parent_pipe,
             if (next >= 0) {
                 if (client >= 0) {
                     close(next);
-                } else if (console_replay_write(&replay, next) != 0) {
+                } else if (sigmund_console_replay_write(&replay, next) != 0) {
                     close(next);
                 } else {
                     client = next;
@@ -230,7 +230,7 @@ void run_console_broker(int parent_pipe,
             unsigned char buf[4096];
             ssize_t n = read(client, buf, sizeof(buf));
             if (n > 0) {
-                int input_rc = broker_process_client_input(&client_state, master, buf, (size_t)n);
+                int input_rc = sigmund_broker_process_client_input(&client_state, master, buf, (size_t)n);
                 if (input_rc != 0) {
                     close(client);
                     client = -1;
@@ -239,7 +239,7 @@ void run_console_broker(int parent_pipe,
                 }
             } else if (n == 0) {
                 if (!client_state.decided && client_state.pending_len > 0) {
-                    (void)write_all(master, client_state.pending, client_state.pending_len);
+                    (void)sigmund_write_all(master, client_state.pending, client_state.pending_len);
                     client_state.pending_len = 0;
                 }
                 client_input_closed = true;
@@ -254,9 +254,9 @@ void run_console_broker(int parent_pipe,
             char buf[4096];
             ssize_t n = read(master, buf, sizeof(buf));
             if (n > 0) {
-                (void)write_all(logfd, buf, (size_t)n);
-                console_replay_append(&replay, buf, (size_t)n);
-                if (client >= 0 && write_all(client, buf, (size_t)n) != 0) {
+                (void)sigmund_write_all(logfd, buf, (size_t)n);
+                sigmund_console_replay_append(&replay, buf, (size_t)n);
+                if (client >= 0 && sigmund_write_all(client, buf, (size_t)n) != 0) {
                     close(client);
                     client = -1;
                     client_input_closed = false;
@@ -268,7 +268,7 @@ void run_console_broker(int parent_pipe,
     }
 
     if (client >= 0) close(client);
-    console_replay_free(&replay);
+    sigmund_console_replay_free(&replay);
     if (have_old_pipe) {
         sigaction(SIGPIPE, &old_pipe, NULL);
     }

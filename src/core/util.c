@@ -5,7 +5,7 @@
 static int append_cmd_escaped(char *dst, size_t n, size_t *off, const char *arg);
 static bool cmd_arg_needs_quotes(const char *arg);
 
-void sig_note(const struct sigmund_invocation *inv, const char *fmt, ...) {
+void sigmund_sig_note(const struct sigmund_invocation *inv, const char *fmt, ...) {
     if (inv && inv->quiet) {
         return;
     }
@@ -15,13 +15,13 @@ void sig_note(const struct sigmund_invocation *inv, const char *fmt, ...) {
     va_end(ap);
 }
 
-void die_errno(const char *msg) {
+void sigmund_die_errno(const char *msg) {
     int e = errno;
     fprintf(stderr, "%s: %s\n", msg, strerror(e));
     exit(1);
 }
 
-int checked_snprintf(char *dst, size_t n, const char *fmt, ...) {
+int sigmund_checked_snprintf(char *dst, size_t n, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     int r = vsnprintf(dst, n, fmt, ap);
@@ -33,12 +33,12 @@ int checked_snprintf(char *dst, size_t n, const char *fmt, ...) {
     return 0;
 }
 
-bool has_suffix(const char *s, const char *suffix) {
+bool sigmund_has_suffix(const char *s, const char *suffix) {
     size_t sl = strlen(s), sufl = strlen(suffix);
     return sl >= sufl && strcmp(s + (sl - sufl), suffix) == 0;
 }
 
-int write_all(int fd, const void *buf, size_t n) {
+int sigmund_write_all(int fd, const void *buf, size_t n) {
     const char *p = buf;
     while (n > 0) {
         ssize_t w = write(fd, p, n);
@@ -99,7 +99,7 @@ static bool cmd_arg_needs_quotes(const char *arg) {
     return false;
 }
 
-int append_cmd_human(char *dst, size_t n, size_t *off, const char *arg) {
+int sigmund_append_cmd_human(char *dst, size_t n, size_t *off, const char *arg) {
     if (!arg) {
         arg = "";
     }
@@ -116,7 +116,7 @@ int append_cmd_human(char *dst, size_t n, size_t *off, const char *arg) {
     return append_cmd_escaped(dst, n, off, arg);
 }
 
-int format_argv_human(char *dst, size_t n, int argc, char **argv) {
+int sigmund_format_argv_human(char *dst, size_t n, int argc, char **argv) {
     if (!dst || n == 0 || argc <= 0 || !argv) {
         errno = EINVAL;
         return -1;
@@ -131,14 +131,14 @@ int format_argv_human(char *dst, size_t n, int argc, char **argv) {
             dst[off++] = ' ';
             dst[off] = '\0';
         }
-        if (append_cmd_human(dst, n, &off, argv[i]) != 0) {
+        if (sigmund_append_cmd_human(dst, n, &off, argv[i]) != 0) {
             return -1;
         }
     }
     return 0;
 }
 
-int read_exec_handshake(int fd, int *child_errno) {
+int sigmund_read_exec_handshake(int fd, int *child_errno) {
     unsigned char *p = (unsigned char *)child_errno;
     size_t got = 0;
     *child_errno = 0;
@@ -163,7 +163,7 @@ int read_exec_handshake(int fd, int *child_errno) {
     return 1;
 }
 
-void format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n) {
+void sigmund_format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n) {
     time_t sec = (time_t)(unix_ns / 1000000000LL);
     struct tm tm_utc;
     if (!gmtime_r(&sec, &tm_utc)) {
@@ -175,7 +175,7 @@ void format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n) {
     }
 }
 
-void format_relative_age(int64_t start_unix_ns, char *out, size_t n) {
+void sigmund_format_relative_age(int64_t start_unix_ns, char *out, size_t n) {
     struct timespec now;
     if (clock_gettime(CLOCK_REALTIME, &now) != 0 || start_unix_ns <= 0) {
         snprintf(out, n, "-");

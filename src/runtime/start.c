@@ -64,7 +64,7 @@ static const char *explicit_start_argv0(bool owned, const char *command, int arg
     return NULL;
 }
 
-bool start_target_is_within_invoking_home(const struct sigmund_invocation *inv,
+bool sigmund_start_target_is_within_invoking_home(const struct sigmund_invocation *inv,
                                                  bool owned,
                                                  const char *command,
                                                  int argc,
@@ -85,13 +85,13 @@ bool start_target_is_within_invoking_home(const struct sigmund_invocation *inv,
     }
 
     char resolved[SIGMUND_PATH_MAX];
-    if (resolve_binary_path(target, resolved, sizeof(resolved)) != 0) {
+    if (sigmund_resolve_binary_path(target, resolved, sizeof(resolved)) != 0) {
         return false;
     }
-    return path_is_within_dir(resolved, home);
+    return sigmund_path_is_within_dir(resolved, home);
 }
 
-int perform_start(const struct sigmund_invocation *inv,
+int sigmund_perform_start(const struct sigmund_invocation *inv,
                          const struct sigmund_store *store,
                          bool tail,
                          bool console_mode,
@@ -100,13 +100,13 @@ int perform_start(const struct sigmund_invocation *inv,
                          const char *exec_path,
                          const char *run_alias) {
     if (argc <= 0 || !argv || !argv[0]) {
-        usage();
+        sigmund_usage();
         return 5;
     }
 
     char resolved_exec_path[SIGMUND_PATH_MAX];
     const char *path_to_resolve = (exec_path && *exec_path) ? exec_path : argv[0];
-    if (resolve_binary_path(path_to_resolve, resolved_exec_path, sizeof(resolved_exec_path)) != 0) {
+    if (sigmund_resolve_binary_path(path_to_resolve, resolved_exec_path, sizeof(resolved_exec_path)) != 0) {
         if (errno == ENOENT) {
             fprintf(stderr, "sigmund: cannot start '%s': command not found\n", argv[0]);
         } else {
@@ -116,48 +116,48 @@ int perform_start(const struct sigmund_invocation *inv,
     }
 
     char **launch_argv = NULL;
-    if (copy_argv(&launch_argv, argc, argv) != 0) {
-        die_errno("sigmund: failed to prepare argv");
+    if (sigmund_copy_argv(&launch_argv, argc, argv) != 0) {
+        sigmund_die_errno("sigmund: failed to prepare argv");
     }
     free(launch_argv[0]);
     launch_argv[0] = strdup(resolved_exec_path);
     if (!launch_argv[0]) {
-        die_errno("sigmund: failed to prepare argv");
+        sigmund_die_errno("sigmund: failed to prepare argv");
     }
 
     char id[16], log_path[SIGMUND_PATH_MAX], reserve_path[SIGMUND_PATH_MAX], console_sock[SIGMUND_PATH_MAX], boot_id[128] = {0};
     console_sock[0] = '\0';
-    bool has_boot = current_boot_id(boot_id, sizeof(boot_id));
+    bool has_boot = sigmund_current_boot_id(boot_id, sizeof(boot_id));
     struct sigmund_store system_hint;
     struct sigmund_store invoking_user_store;
     const struct sigmund_store *avoid_public_store = NULL;
     const struct sigmund_store *avoid_user_store = NULL;
 
     if (store->kind == STORE_USER_LOCAL) {
-        if (init_system_store(&system_hint) == 0) {
+        if (sigmund_init_system_store(&system_hint) == 0) {
             avoid_public_store = &system_hint;
         }
     } else if (inv && inv->have_sudo_user && inv->invoking_home[0]) {
-        if (init_user_store_from_home(inv->invoking_home, &invoking_user_store) == 0) {
+        if (sigmund_init_user_store_from_home(inv->invoking_home, &invoking_user_store) == 0) {
             avoid_user_store = &invoking_user_store;
         }
     }
 
-    if (gen_id_for_store(store, avoid_public_store, avoid_user_store, id, sizeof(id)) != 0) {
-        free_argv_alloc(launch_argv, argc);
-        die_errno("sigmund: failed to generate id");
+    if (sigmund_gen_id_for_store(store, avoid_public_store, avoid_user_store, id, sizeof(id)) != 0) {
+        sigmund_free_argv_alloc(launch_argv, argc);
+        sigmund_die_errno("sigmund: failed to generate id");
     }
-    if (checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) != 0) {
-        free_argv_alloc(launch_argv, argc);
-        die_errno("sigmund: log path too long");
+    if (sigmund_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) != 0) {
+        sigmund_free_argv_alloc(launch_argv, argc);
+        sigmund_die_errno("sigmund: log path too long");
     }
-    if (checked_snprintf(reserve_path, sizeof(reserve_path), "%s/.%s.reserve", store->record_dir, id) != 0) {
-        free_argv_alloc(launch_argv, argc);
-        die_errno("sigmund: reserve path too long");
+    if (sigmund_checked_snprintf(reserve_path, sizeof(reserve_path), "%s/.%s.reserve", store->record_dir, id) != 0) {
+        sigmund_free_argv_alloc(launch_argv, argc);
+        sigmund_die_errno("sigmund: reserve path too long");
     }
-    if (console_mode && format_console_sock_path(store, id, console_sock, sizeof(console_sock)) != 0) {
-        free_argv_alloc(launch_argv, argc);
-        die_errno("sigmund: console socket path too long");
+    if (console_mode && sigmund_format_console_sock_path(store, id, console_sock, sizeof(console_sock)) != 0) {
+        sigmund_free_argv_alloc(launch_argv, argc);
+        sigmund_die_errno("sigmund: console socket path too long");
     }
 
     int pipefd[2];
@@ -168,9 +168,9 @@ int perform_start(const struct sigmund_invocation *inv,
         if (pipe(pipefd) != 0) {
             int saved = errno;
             unlink(reserve_path);
-            free_argv_alloc(launch_argv, argc);
+            sigmund_free_argv_alloc(launch_argv, argc);
             errno = saved;
-            die_errno("sigmund: pipe failed");
+            sigmund_die_errno("sigmund: pipe failed");
         }
         if (fcntl(pipefd[0], F_SETFD, FD_CLOEXEC) != 0 ||
             fcntl(pipefd[1], F_SETFD, FD_CLOEXEC) != 0) {
@@ -178,9 +178,9 @@ int perform_start(const struct sigmund_invocation *inv,
             close(pipefd[0]);
             close(pipefd[1]);
             unlink(reserve_path);
-            free_argv_alloc(launch_argv, argc);
+            sigmund_free_argv_alloc(launch_argv, argc);
             errno = saved;
-            die_errno("sigmund: pipe setup failed");
+            sigmund_die_errno("sigmund: pipe setup failed");
         }
     }
     pid_t pid = fork();
@@ -189,15 +189,15 @@ int perform_start(const struct sigmund_invocation *inv,
         close(pipefd[0]);
         close(pipefd[1]);
         unlink(reserve_path);
-        free_argv_alloc(launch_argv, argc);
+        sigmund_free_argv_alloc(launch_argv, argc);
         errno = saved;
-        die_errno("sigmund: fork failed");
+        sigmund_die_errno("sigmund: fork failed");
     }
     if (pid == 0) {
         close(pipefd[0]);
         if (setsid() < 0) {
             int e = errno;
-            write_all(pipefd[1], &e, sizeof(e));
+            sigmund_write_all(pipefd[1], &e, sizeof(e));
             _exit(127);
         }
         if (console_mode) {
@@ -207,19 +207,19 @@ int perform_start(const struct sigmund_invocation *inv,
                 dup2(nullfd, STDOUT_FILENO) < 0 ||
                 dup2(nullfd, STDERR_FILENO) < 0) {
                 int e = errno;
-                write_all(pipefd[1], &e, sizeof(e));
+                sigmund_write_all(pipefd[1], &e, sizeof(e));
                 _exit(127);
             }
             if (nullfd > STDERR_FILENO) {
                 close(nullfd);
             }
-            run_console_broker(pipefd[1], log_path, console_sock, argc, launch_argv, resolved_exec_path);
+            sigmund_run_console_broker(pipefd[1], log_path, console_sock, argc, launch_argv, resolved_exec_path);
             _exit(127);
         }
         int nullfd = open("/dev/null", O_RDONLY);
         if (nullfd < 0 || dup2(nullfd, STDIN_FILENO) < 0) {
             int e = errno;
-            write_all(pipefd[1], &e, sizeof(e));
+            sigmund_write_all(pipefd[1], &e, sizeof(e));
             _exit(127);
         }
         if (nullfd > 2) {
@@ -229,7 +229,7 @@ int perform_start(const struct sigmund_invocation *inv,
         int lfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
         if (lfd < 0 || dup2(lfd, STDOUT_FILENO) < 0 || dup2(lfd, STDERR_FILENO) < 0) {
             int e = errno;
-            write_all(pipefd[1], &e, sizeof(e));
+            sigmund_write_all(pipefd[1], &e, sizeof(e));
             _exit(127);
         }
         if (lfd > 2) {
@@ -238,25 +238,25 @@ int perform_start(const struct sigmund_invocation *inv,
         execv(resolved_exec_path, launch_argv);
         /* No envp variant here: children intentionally inherit Sigmund's environment. */
         int e = errno;
-        write_all(pipefd[1], &e, sizeof(e));
+        sigmund_write_all(pipefd[1], &e, sizeof(e));
         _exit(127);
     }
 
     close(pipefd[1]);
     int child_errno = 0;
-    int handshake = read_exec_handshake(pipefd[0], &child_errno);
+    int handshake = sigmund_read_exec_handshake(pipefd[0], &child_errno);
     int handshake_errno = errno;
     close(pipefd[0]);
     if (handshake < 0) {
-        rollback_spawned_group(pid, pid);
+        sigmund_rollback_spawned_group(pid, pid);
         unlink(reserve_path);
         unlink(log_path);
         if (console_sock[0]) {
             unlink(console_sock);
         }
-        free_argv_alloc(launch_argv, argc);
+        sigmund_free_argv_alloc(launch_argv, argc);
         errno = handshake_errno;
-        die_errno("sigmund: exec handshake failed");
+        sigmund_die_errno("sigmund: exec handshake failed");
     }
     if (handshake > 0) {
         int st;
@@ -273,17 +273,17 @@ int perform_start(const struct sigmund_invocation *inv,
         if (console_sock[0]) {
             unlink(console_sock);
         }
-        free_argv_alloc(launch_argv, argc);
+        sigmund_free_argv_alloc(launch_argv, argc);
         return 1;
     }
 
     struct sigmund_run_record r = {0};
     r.version = 1;
-    if (checked_snprintf(r.id, sizeof(r.id), "%s", id) != 0) {
-        die_errno("sigmund: id too long");
+    if (sigmund_checked_snprintf(r.id, sizeof(r.id), "%s", id) != 0) {
+        sigmund_die_errno("sigmund: id too long");
     }
-    if (checked_snprintf(r.run_id, sizeof(r.run_id), "%s", id) != 0) {
-        die_errno("sigmund: id too long");
+    if (sigmund_checked_snprintf(r.run_id, sizeof(r.run_id), "%s", id) != 0) {
+        sigmund_die_errno("sigmund: id too long");
     }
     r.pid = pid;
     r.pgid = pid;
@@ -291,7 +291,7 @@ int perform_start(const struct sigmund_invocation *inv,
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     r.start_unix_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-    format_rfc3339_utc_from_ns(r.start_unix_ns, r.started_at, sizeof(r.started_at));
+    sigmund_format_rfc3339_utc_from_ns(r.start_unix_ns, r.started_at, sizeof(r.started_at));
     r.has_started_at = true;
     snprintf(r.state, sizeof(r.state), "running");
     r.has_state = true;
@@ -302,42 +302,42 @@ int perform_start(const struct sigmund_invocation *inv,
         if (inv && inv->have_sudo_user) {
             r.invoked_by_uid = inv->invoking_uid;
             r.invoked_by_gid = inv->invoking_gid;
-            if (checked_snprintf(r.invoked_by_user, sizeof(r.invoked_by_user), "%s", inv->invoking_user) != 0) {
-                die_errno("sigmund: invoking user too long");
+            if (sigmund_checked_snprintf(r.invoked_by_user, sizeof(r.invoked_by_user), "%s", inv->invoking_user) != 0) {
+                sigmund_die_errno("sigmund: invoking user too long");
             }
             r.invoked_via_sudo = true;
         } else {
             r.invoked_by_uid = 0;
             r.invoked_by_gid = 0;
-            if (checked_snprintf(r.invoked_by_user, sizeof(r.invoked_by_user), "%s", "root") != 0) {
-                die_errno("sigmund: invoking user too long");
+            if (sigmund_checked_snprintf(r.invoked_by_user, sizeof(r.invoked_by_user), "%s", "root") != 0) {
+                sigmund_die_errno("sigmund: invoking user too long");
             }
             r.invoked_via_sudo = false;
         }
     }
-    if (run_alias && valid_alias(run_alias)) {
+    if (run_alias && sigmund_valid_alias(run_alias)) {
         r.has_alias = true;
-        if (checked_snprintf(r.alias, sizeof(r.alias), "%s", run_alias) != 0) {
-            die_errno("sigmund: alias too long");
+        if (sigmund_checked_snprintf(r.alias, sizeof(r.alias), "%s", run_alias) != 0) {
+            sigmund_die_errno("sigmund: alias too long");
         }
     }
     if (console_sock[0]) {
         r.has_console = true;
-        if (checked_snprintf(r.console_sock, sizeof(r.console_sock), "%s", console_sock) != 0) {
-            die_errno("sigmund: console socket path too long");
+        if (sigmund_checked_snprintf(r.console_sock, sizeof(r.console_sock), "%s", console_sock) != 0) {
+            sigmund_die_errno("sigmund: console socket path too long");
         }
     }
     r.has_log = true;
-    if (checked_snprintf(r.log_path, sizeof(r.log_path), "%s", log_path) != 0) {
-        die_errno("sigmund: log path too long");
+    if (sigmund_checked_snprintf(r.log_path, sizeof(r.log_path), "%s", log_path) != 0) {
+        sigmund_die_errno("sigmund: log path too long");
     }
     r.has_boot = has_boot;
     if (r.has_boot) {
         snprintf(r.boot_id, sizeof(r.boot_id), "%s", boot_id);
     }
-    read_proc_stat_tokens(pid, NULL, &r.proc_starttime_ticks);
-    read_proc_exe(pid, &r.exe_dev, &r.exe_ino);
-    if (format_argv_human(r.cmdline, sizeof(r.cmdline), argc, launch_argv) != 0) {
+    sigmund_read_proc_stat_tokens(pid, NULL, &r.proc_starttime_ticks);
+    sigmund_read_proc_exe(pid, &r.exe_dev, &r.exe_ino);
+    if (sigmund_format_argv_human(r.cmdline, sizeof(r.cmdline), argc, launch_argv) != 0) {
         snprintf(r.cmdline, sizeof(r.cmdline), "?");
     }
 
@@ -345,7 +345,7 @@ int perform_start(const struct sigmund_invocation *inv,
     bool chown_user_local_artifacts = store->kind == STORE_USER_LOCAL && inv && inv->euid_root && inv->have_sudo_user;
     if (getenv("SIGMUND_TEST_FAIL_RECORD_WRITE")) {
         errno = EIO;
-    } else if (write_record_atomic(store->record_dir, &r, argc, launch_argv, record_path, sizeof(record_path)) == 0) {
+    } else if (sigmund_write_record_atomic(store->record_dir, &r, argc, launch_argv, record_path, sizeof(record_path)) == 0) {
         if (chown_user_local_artifacts) {
             int chown_rc = 0;
             if (record_path[0] &&
@@ -355,13 +355,13 @@ int perform_start(const struct sigmund_invocation *inv,
             if (chown(log_path, inv->invoking_uid, inv->invoking_gid) != 0) {
                 chown_rc = -1;
             }
-            if (console_sock[0] && path_exists(console_sock) &&
+            if (console_sock[0] && sigmund_path_exists(console_sock) &&
                 chown(console_sock, inv->invoking_uid, inv->invoking_gid) != 0) {
                 chown_rc = -1;
             }
             if (chown_rc != 0) {
                 int saved = errno ? errno : EIO;
-                rollback_spawned_group(pid, pid);
+                sigmund_rollback_spawned_group(pid, pid);
                 if (record_path[0]) {
                     unlink(record_path);
                 }
@@ -370,9 +370,9 @@ int perform_start(const struct sigmund_invocation *inv,
                     unlink(console_sock);
                 }
                 unlink(reserve_path);
-                free_argv_alloc(launch_argv, argc);
+                sigmund_free_argv_alloc(launch_argv, argc);
                 errno = saved;
-                die_errno("sigmund: failed to set user-local ownership");
+                sigmund_die_errno("sigmund: failed to set user-local ownership");
             }
         }
         if (store->kind == STORE_SYSTEM_MANAGED) {
@@ -380,7 +380,7 @@ int perform_start(const struct sigmund_invocation *inv,
             if (getenv("SIGMUND_TEST_FAIL_PUBLIC_INDEX_WRITE")) {
                 errno = EIO;
                 public_rc = -1;
-            } else if (write_public_index_atomic(store, &r) != 0) {
+            } else if (sigmund_write_public_index_atomic(store, &r) != 0) {
                 public_rc = -1;
             }
             if (public_rc != 0) {
@@ -388,7 +388,7 @@ int perform_start(const struct sigmund_invocation *inv,
                 if (saved == 0) {
                     saved = EIO;
                 }
-                rollback_spawned_group(pid, pid);
+                sigmund_rollback_spawned_group(pid, pid);
                 if (record_path[0]) {
                     unlink(record_path);
                 }
@@ -397,17 +397,17 @@ int perform_start(const struct sigmund_invocation *inv,
                     unlink(console_sock);
                 }
                 unlink(reserve_path);
-                free_argv_alloc(launch_argv, argc);
+                sigmund_free_argv_alloc(launch_argv, argc);
                 char public_path[SIGMUND_PATH_MAX];
-                if (checked_snprintf(public_path, sizeof(public_path), "%s/%s.json", store->public_dir, r.id) == 0) {
+                if (sigmund_checked_snprintf(public_path, sizeof(public_path), "%s/%s.json", store->public_dir, r.id) == 0) {
                     unlink(public_path);
                 }
                 errno = saved;
-                die_errno("sigmund: failed to write public index");
+                sigmund_die_errno("sigmund: failed to write public index");
             }
         }
         printf("%s\n", r.id);
-        sig_note(inv,
+        sigmund_sig_note(inv,
                  "sigmund  started  %s   %s\n"
                  "         log      %s\n"
                  "         tail     sigmund tail %s\n"
@@ -424,23 +424,23 @@ int perform_start(const struct sigmund_invocation *inv,
         fflush(stdout);
 
         if (tail) {
-            free_argv_alloc(launch_argv, argc);
-            return tail_log_until_exit(&r, false, true);
+            sigmund_free_argv_alloc(launch_argv, argc);
+            return sigmund_tail_log_until_exit(&r, false, true);
         }
-        free_argv_alloc(launch_argv, argc);
+        sigmund_free_argv_alloc(launch_argv, argc);
         return 0;
     }
     {
         int saved = errno;
-        rollback_spawned_group(pid, pid);
+        sigmund_rollback_spawned_group(pid, pid);
         unlink(reserve_path);
         unlink(log_path);
         if (console_sock[0]) {
             unlink(console_sock);
         }
-        free_argv_alloc(launch_argv, argc);
+        sigmund_free_argv_alloc(launch_argv, argc);
         errno = saved;
-        die_errno("sigmund: failed to write record");
+        sigmund_die_errno("sigmund: failed to write record");
     }
     return 1;
 }
@@ -450,20 +450,20 @@ static int private_start_hash_for_token(const struct sigmund_store *store,
                                         char hash[PROFILE_HASH_STR_LEN],
                                         bool *matched) {
     *matched = false;
-    if (valid_profile_hash(token)) {
+    if (sigmund_valid_profile_hash(token)) {
         *matched = true;
-        if (profile_exists_in_store(store, token) != 0) {
+        if (sigmund_profile_exists_in_store(store, token) != 0) {
             return -1;
         }
         snprintf(hash, PROFILE_HASH_STR_LEN, "%s", token);
         return 1;
     }
-    if (valid_alias(token)) {
-        if (alias_lookup_hash(store, token, hash) != 0) {
+    if (sigmund_valid_alias(token)) {
+        if (sigmund_alias_lookup_hash(store, token, hash) != 0) {
             return 0;
         }
         *matched = true;
-        if (profile_exists_in_store(store, hash) != 0) {
+        if (sigmund_profile_exists_in_store(store, hash) != 0) {
             return -1;
         }
         return 1;
@@ -477,10 +477,10 @@ static int private_start_recipe_for_token(const struct sigmund_store *store,
                                           bool *matched) {
     *matched = false;
     memset(recipe, 0, sizeof(*recipe));
-    if (!valid_alias(token)) {
+    if (!sigmund_valid_alias(token)) {
         return 0;
     }
-    if (alias_lookup_recipe(store, token, recipe) != 0) {
+    if (sigmund_alias_lookup_recipe(store, token, recipe) != 0) {
         return 0;
     }
     *matched = true;
@@ -489,14 +489,14 @@ static int private_start_recipe_for_token(const struct sigmund_store *store,
 
 static void free_start_profile_target(struct start_profile_target *target) {
     if (target && target->has_recipe) {
-        free_profile(&target->recipe);
+        sigmund_free_profile(&target->recipe);
         target->has_recipe = false;
     }
 }
 
 static void start_target_set_alias(struct start_profile_target *target, const char *alias) {
-    if (valid_alias(alias)) {
-        if (checked_snprintf(target->alias, sizeof(target->alias), "%s", alias) == 0) {
+    if (sigmund_valid_alias(alias)) {
+        if (sigmund_checked_snprintf(target->alias, sizeof(target->alias), "%s", alias) == 0) {
             target->has_alias = true;
         }
     }
@@ -516,12 +516,12 @@ static int start_target_set_hash(struct start_profile_target *target,
                                  const char *hash,
                                  const char *alias,
                                  bool needs_elevation) {
-    if (!valid_profile_hash(hash)) {
+    if (!sigmund_valid_profile_hash(hash)) {
         errno = EINVAL;
         return -1;
     }
     target->store = *store;
-    if (checked_snprintf(target->hash, sizeof(target->hash), "%s", hash) != 0) {
+    if (sigmund_checked_snprintf(target->hash, sizeof(target->hash), "%s", hash) != 0) {
         return -1;
     }
     target->has_hash = true;
@@ -532,11 +532,11 @@ static int start_target_set_hash(struct start_profile_target *target,
 
 static int count_running_alias(const struct sigmund_store *store, const char *alias, size_t *count_out) {
     struct alias_match_list matches;
-    if (collect_private_alias_matches(store, alias, "start", &matches) != 0) {
+    if (sigmund_collect_private_alias_matches(store, alias, "start", &matches) != 0) {
         return -1;
     }
     *count_out = matches.count;
-    free_alias_match_list(&matches);
+    sigmund_free_alias_match_list(&matches);
     return 0;
 }
 
@@ -547,12 +547,12 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
                                         struct start_profile_target *out) {
     memset(out, 0, sizeof(*out));
     const char *atom = NULL;
-    enum id_token_scope scope = parse_id_token(token, &atom);
+    enum id_token_scope scope = sigmund_parse_id_token(token, &atom);
     char cap_alias[ALIAS_MAX_LEN + 1];
     char cap_hash[PROFILE_HASH_STR_LEN];
     bool cap_token = false;
-    if (scope == ID_TOKEN_SYSTEM && parse_alias_cap_atom(atom, cap_alias, cap_hash) == 0) {
-        if (!inv->euid_root || verify_system_alias_cap(system_store, cap_alias, cap_hash) != 0) {
+    if (scope == ID_TOKEN_SYSTEM && sigmund_parse_alias_cap_atom(atom, cap_alias, cap_hash) == 0) {
+        if (!inv->euid_root || sigmund_verify_system_alias_cap(system_store, cap_alias, cap_hash) != 0) {
             fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
             return -1;
         }
@@ -562,14 +562,14 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
     if (scope == ID_TOKEN_INVALID) {
         return 0;
     }
-    if (!valid_profile_hash(atom) && !valid_alias(atom)) {
+    if (!sigmund_valid_profile_hash(atom) && !sigmund_valid_alias(atom)) {
         return 0;
     }
 
     if (inv->euid_root) {
         if (scope == ID_TOKEN_USER) {
             struct sigmund_store user_store;
-            if (init_invoking_user_store(inv, &user_store) != 0) {
+            if (sigmund_init_invoking_user_store(inv, &user_store) != 0) {
                 fprintf(stderr, "sigmund: error: user:%s requires sudo provenance\n", atom);
                 return -1;
             }
@@ -580,7 +580,7 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
             }
             rc = private_start_hash_for_token(&user_store, atom, out->hash, &matched);
             if (rc == 1) {
-                return start_target_set_hash(out, &user_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+                return start_target_set_hash(out, &user_store, out->hash, sigmund_valid_alias(atom) ? atom : NULL, false);
             }
             if (rc < 0 && matched) {
                 fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
@@ -601,7 +601,7 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
             bool matched = false;
             int rc = private_start_hash_for_token(system_store, atom, out->hash, &matched);
             if (rc == 1) {
-                return start_target_set_hash(out, system_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+                return start_target_set_hash(out, system_store, out->hash, sigmund_valid_alias(atom) ? atom : NULL, false);
             }
             if (rc < 0 && matched) {
                 fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
@@ -613,7 +613,7 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
         bool matched = false;
         int rc = private_start_hash_for_token(system_store, atom, out->hash, &matched);
         if (rc == 1) {
-            return start_target_set_hash(out, system_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+            return start_target_set_hash(out, system_store, out->hash, sigmund_valid_alias(atom) ? atom : NULL, false);
         }
         if (rc < 0 && matched) {
             fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
@@ -621,7 +621,7 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
         }
         if (inv->have_sudo_user) {
             struct sigmund_store user_store;
-            if (init_invoking_user_store(inv, &user_store) == 0) {
+            if (sigmund_init_invoking_user_store(inv, &user_store) == 0) {
                 matched = false;
                 rc = private_start_recipe_for_token(&user_store, atom, &out->recipe, &matched);
                 if (rc == 1) {
@@ -629,7 +629,7 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
                 }
                 rc = private_start_hash_for_token(&user_store, atom, out->hash, &matched);
                 if (rc == 1) {
-                    return start_target_set_hash(out, &user_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+                    return start_target_set_hash(out, &user_store, out->hash, sigmund_valid_alias(atom) ? atom : NULL, false);
                 }
                 if (rc < 0 && matched) {
                     fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
@@ -648,7 +648,7 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
         }
         rc = private_start_hash_for_token(current_user_store, atom, out->hash, &matched);
         if (rc == 1) {
-            return start_target_set_hash(out, current_user_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+            return start_target_set_hash(out, current_user_store, out->hash, sigmund_valid_alias(atom) ? atom : NULL, false);
         }
         if (rc < 0 && matched) {
             fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
@@ -660,15 +660,15 @@ static int resolve_start_profile_target(const struct sigmund_invocation *inv,
     }
 
     if (scope == ID_TOKEN_SYSTEM || scope == ID_TOKEN_PLAIN) {
-        int rc = resolve_public_profile_token(system_store, atom, out->hash);
+        int rc = sigmund_resolve_public_profile_token(system_store, atom, out->hash);
         if (rc == 1) {
-            return start_target_set_hash(out, system_store, out->hash, valid_alias(atom) ? atom : NULL, true);
+            return start_target_set_hash(out, system_store, out->hash, sigmund_valid_alias(atom) ? atom : NULL, true);
         }
     }
     return 0;
 }
 
-int elevate_start_token(const char *program,
+int sigmund_elevate_start_token(const char *program,
                                bool tail,
                                bool console_mode,
                                const char *token_atom,
@@ -686,12 +686,12 @@ int elevate_start_token(const char *program,
     if (console_mode) {
         canon[n++] = "--console";
     }
-    if (hash && valid_alias(token_atom) && valid_profile_hash(hash)) {
+    if (hash && sigmund_valid_alias(token_atom) && sigmund_valid_profile_hash(hash)) {
         canon[n++] = "00000000";
         canon[n++] = (char *)token_atom;
         canon[n++] = (char *)hash;
-        return elevate_with_sudo_canonical(program, n, canon);
-    } else if (checked_snprintf(token, sizeof(token), "system:%s", token_atom) != 0) {
+        return sigmund_elevate_with_sudo_canonical(program, n, canon);
+    } else if (sigmund_checked_snprintf(token, sizeof(token), "system:%s", token_atom) != 0) {
         return 3;
     }
     canon[n++] = token;
@@ -702,26 +702,26 @@ int elevate_start_token(const char *program,
             canon[n++] = count_buf;
         }
     }
-    return elevate_with_sudo_canonical(program, n, canon);
+    return sigmund_elevate_with_sudo_canonical(program, n, canon);
 }
 
-int perform_profile_start(const struct sigmund_invocation *inv,
+int sigmund_perform_profile_start(const struct sigmund_invocation *inv,
                                  const struct sigmund_store *store,
                                  bool tail,
                                  bool console_mode,
                                  const char *hash,
                                  const char *alias) {
     struct sigmund_profile p;
-    if (load_profile_by_hash(store, hash, &p) != 0) {
+    if (sigmund_load_profile_by_hash(store, hash, &p) != 0) {
         fprintf(stderr, "sigmund: error: profile %s is unavailable\n", hash);
         return 5;
     }
-    int rc = perform_start(inv, store, tail, console_mode, p.argc, p.argv, p.binary_path, alias);
-    free_profile(&p);
+    int rc = sigmund_perform_start(inv, store, tail, console_mode, p.argc, p.argv, p.binary_path, alias);
+    sigmund_free_profile(&p);
     return rc;
 }
 
-int cmd_start_action(const struct sigmund_invocation *inv,
+int sigmund_cmd_start_action(const struct sigmund_invocation *inv,
                             const struct sigmund_store *user_store,
                             const struct sigmund_store *system_store,
                             const char *program,
@@ -749,7 +749,7 @@ int cmd_start_action(const struct sigmund_invocation *inv,
             if (target.needs_elevation) {
                 start_rc = 0;
                 for (int i = 0; i < starts; i++) {
-                    start_rc = elevate_start_token(program,
+                    start_rc = sigmund_elevate_start_token(program,
                                                    tail,
                                                    console_mode,
                                                    target.has_alias ? target.alias : target.hash,
@@ -778,7 +778,7 @@ int cmd_start_action(const struct sigmund_invocation *inv,
                 start_rc = 0;
                 for (int i = 0; i < starts; i++) {
                     if (target.has_recipe) {
-                        start_rc = perform_start(inv,
+                        start_rc = sigmund_perform_start(inv,
                                                  &target.store,
                                                  tail,
                                                  console_mode,
@@ -787,7 +787,7 @@ int cmd_start_action(const struct sigmund_invocation *inv,
                                                  target.recipe.binary_path,
                                                  target.has_alias ? target.alias : NULL);
                     } else {
-                        start_rc = perform_profile_start(inv,
+                        start_rc = sigmund_perform_profile_start(inv,
                                                          &target.store,
                                                          tail,
                                                          console_mode,
@@ -811,7 +811,7 @@ int cmd_start_action(const struct sigmund_invocation *inv,
     return perform_explicit_start(inv, fallback_store, tail, console_mode, argc, argv);
 }
 
-int ensure_start_store_for_command(const struct sigmund_invocation *inv,
+int sigmund_ensure_start_store_for_command(const struct sigmund_invocation *inv,
                                           bool requested_system,
                                           bool owned,
                                           const char *command,
@@ -821,17 +821,17 @@ int ensure_start_store_for_command(const struct sigmund_invocation *inv,
     bool wants_system_store = (inv && inv->euid_root) || requested_system;
 
     if (wants_system_store &&
-        start_target_is_within_invoking_home(inv, owned, command, argc, argv)) {
+        sigmund_start_target_is_within_invoking_home(inv, owned, command, argc, argv)) {
         if (inv && inv->euid_root && inv->have_sudo_user) {
-            return ensure_invoking_user_store(inv, store);
+            return sigmund_ensure_invoking_user_store(inv, store);
         }
-        return ensure_user_store_for_current_user(store);
+        return sigmund_ensure_user_store_for_current_user(store);
     }
 
     if (wants_system_store) {
-        return ensure_system_store(store);
+        return sigmund_ensure_system_store(store);
     }
-    return ensure_user_store_for_current_user(store);
+    return sigmund_ensure_user_store_for_current_user(store);
 }
 
 static int perform_explicit_start(const struct sigmund_invocation *inv,
@@ -850,7 +850,7 @@ static int perform_explicit_start(const struct sigmund_invocation *inv,
         shell_argv[1] = "-c";
         shell_argv[2] = argv[0];
         shell_argv[3] = NULL;
-        return perform_start(inv, store, tail, console_mode, 3, shell_argv, NULL, NULL);
+        return sigmund_perform_start(inv, store, tail, console_mode, 3, shell_argv, NULL, NULL);
     }
-    return perform_start(inv, store, tail, console_mode, argc, argv, NULL, NULL);
+    return sigmund_perform_start(inv, store, tail, console_mode, argc, argv, NULL, NULL);
 }

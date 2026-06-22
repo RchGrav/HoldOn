@@ -9,7 +9,7 @@ static int console_addr_relative(const char *sock_path,
                                  char *dir,
                                  size_t dirn);
 
-int format_console_sock_path(const struct sigmund_store *store,
+int sigmund_format_console_sock_path(const struct sigmund_store *store,
                                     const char *id,
                                     char *out,
                                     size_t n) {
@@ -19,7 +19,7 @@ int format_console_sock_path(const struct sigmund_store *store,
      * console_addr_relative), so the directory's absolute length does not
      * count against the AF_UNIX sun_path limit. There is therefore no need to
      * fall back to a world-writable location such as /tmp. */
-    return checked_snprintf(out, n, "%s/%s.sock", store->console_dir, id);
+    return sigmund_checked_snprintf(out, n, "%s/%s.sock", store->console_dir, id);
 }
 
 /* AF_UNIX paths are limited to sun_path bytes (104 on macOS, 108 on Linux),
@@ -58,7 +58,7 @@ static int console_addr_relative(const char *sock_path,
     return 0;
 }
 
-int make_console_listener(const char *sock_path) {
+int sigmund_make_console_listener(const char *sock_path) {
     struct sockaddr_un addr;
     char dir[SIGMUND_PATH_MAX];
     if (console_addr_relative(sock_path, &addr, dir, sizeof(dir)) != 0) {
@@ -128,7 +128,7 @@ int make_console_listener(const char *sock_path) {
     return fd;
 }
 
-int open_console_pty(int *master_out, int *slave_out) {
+int sigmund_open_console_pty(int *master_out, int *slave_out) {
     int master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (master < 0) {
         return -1;
@@ -162,7 +162,7 @@ int open_console_pty(int *master_out, int *slave_out) {
     return 0;
 }
 
-int connect_console_socket(const char *sock_path) {
+int sigmund_connect_console_socket(const char *sock_path) {
     struct stat st;
     if (stat(sock_path, &st) != 0 || !S_ISSOCK(st.st_mode)) {
         fprintf(stderr, "sigmund: console socket is not available\n");

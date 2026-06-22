@@ -10,12 +10,12 @@ static int realpath_copy(const char *path, char *out, size_t n) {
     if (!resolved) {
         return -1;
     }
-    int rc = checked_snprintf(out, n, "%s", resolved);
+    int rc = sigmund_checked_snprintf(out, n, "%s", resolved);
     free(resolved);
     return rc;
 }
 
-int resolve_binary_path(const char *argv0, char *out, size_t n) {
+int sigmund_resolve_binary_path(const char *argv0, char *out, size_t n) {
     if (!argv0 || !*argv0) {
         errno = EINVAL;
         return -1;
@@ -33,7 +33,7 @@ int resolve_binary_path(const char *argv0, char *out, size_t n) {
         size_t len = colon ? (size_t)(colon - p) : strlen(p);
         char dir[SIGMUND_PATH_MAX];
         if (len == 0) {
-            if (checked_snprintf(dir, sizeof(dir), ".") != 0) {
+            if (sigmund_checked_snprintf(dir, sizeof(dir), ".") != 0) {
                 return -1;
             }
         } else {
@@ -45,9 +45,9 @@ int resolve_binary_path(const char *argv0, char *out, size_t n) {
             dir[len] = '\0';
         }
         char candidate[SIGMUND_PATH_MAX], resolved[SIGMUND_PATH_MAX];
-        if (checked_snprintf(candidate, sizeof(candidate), "%s/%s", dir, argv0) == 0 &&
+        if (sigmund_checked_snprintf(candidate, sizeof(candidate), "%s/%s", dir, argv0) == 0 &&
             access(candidate, X_OK) == 0 && realpath_copy(candidate, resolved, sizeof(resolved)) == 0) {
-            return checked_snprintf(out, n, "%s", resolved);
+            return sigmund_checked_snprintf(out, n, "%s", resolved);
         }
         if (!colon) {
             break;
@@ -58,7 +58,7 @@ int resolve_binary_path(const char *argv0, char *out, size_t n) {
     return -1;
 }
 
-bool path_is_within_dir(const char *path, const char *dir) {
+bool sigmund_path_is_within_dir(const char *path, const char *dir) {
     if (!path || !*path || !dir || !*dir) {
         return false;
     }
@@ -74,7 +74,7 @@ bool path_is_within_dir(const char *path, const char *dir) {
            (strncmp(path, resolved_dir, len) == 0 && path[len] == '/');
 }
 
-int resolve_self_executable_path(const char *argv0, char *out, size_t n) {
+int sigmund_resolve_self_executable_path(const char *argv0, char *out, size_t n) {
     if (!out || n == 0) {
         errno = EINVAL;
         return -1;
@@ -85,7 +85,7 @@ int resolve_self_executable_path(const char *argv0, char *out, size_t n) {
     ssize_t got = readlink("/proc/self/exe", proc_path, sizeof(proc_path) - 1);
     if (got > 0) {
         proc_path[got] = '\0';
-        return checked_snprintf(out, n, "%s", proc_path);
+        return sigmund_checked_snprintf(out, n, "%s", proc_path);
     }
 #endif
 #if defined(__APPLE__)
@@ -94,14 +94,14 @@ int resolve_self_executable_path(const char *argv0, char *out, size_t n) {
     if (_NSGetExecutablePath(mac_path, &mac_size) == 0) {
         char resolved[SIGMUND_PATH_MAX];
         if (realpath(mac_path, resolved)) {
-            return checked_snprintf(out, n, "%s", resolved);
+            return sigmund_checked_snprintf(out, n, "%s", resolved);
         }
     }
 #endif
     if (argv0 && strchr(argv0, '/')) {
         char resolved[SIGMUND_PATH_MAX];
         if (realpath(argv0, resolved)) {
-            return checked_snprintf(out, n, "%s", resolved);
+            return sigmund_checked_snprintf(out, n, "%s", resolved);
         }
     }
     errno = ENOENT;

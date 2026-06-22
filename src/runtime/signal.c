@@ -18,14 +18,14 @@ static void handle_tail_sigint(int signo) {
     g_tail_interrupted = 1;
 }
 
-int tail_log_until_exit(const struct sigmund_run_record *r, bool from_end, bool follow_until_exit) {
+int sigmund_tail_log_until_exit(const struct sigmund_run_record *r, bool from_end, bool follow_until_exit) {
     int fd = open(r->log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
-        die_errno("sigmund: failed to open log for tail");
+        sigmund_die_errno("sigmund: failed to open log for tail");
     }
 
     char boot[128] = {0};
-    bool have_boot = r->has_boot && current_boot_id(boot, sizeof(boot));
+    bool have_boot = r->has_boot && sigmund_current_boot_id(boot, sizeof(boot));
     if (from_end) {
         lseek(fd, 0, SEEK_END);
     }
@@ -41,10 +41,10 @@ int tail_log_until_exit(const struct sigmund_run_record *r, bool from_end, bool 
     while (!g_tail_interrupted) {
         ssize_t n = read(fd, buf, sizeof(buf));
         if (n > 0) {
-            if (write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
+            if (sigmund_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
                 close(fd);
                 sigaction(SIGINT, &old_sa, NULL);
-                die_errno("sigmund: failed writing tailed output");
+                sigmund_die_errno("sigmund: failed writing tailed output");
             }
             continue;
         }
@@ -54,7 +54,7 @@ int tail_log_until_exit(const struct sigmund_run_record *r, bool from_end, bool 
             }
             close(fd);
             sigaction(SIGINT, &old_sa, NULL);
-            die_errno("sigmund: failed while tailing log");
+            sigmund_die_errno("sigmund: failed while tailing log");
         }
         if (!follow_until_exit) {
             break;
@@ -63,7 +63,7 @@ int tail_log_until_exit(const struct sigmund_run_record *r, bool from_end, bool 
         nanosleep(&sl, NULL);
         sleep_polls++;
         if (sleep_polls % 10 == 0) {
-            enum run_state st = eval_state(r, have_boot ? boot : NULL);
+            enum run_state st = sigmund_eval_state(r, have_boot ? boot : NULL);
             if (st != STATE_RUNNING) {
                 break;
             }
@@ -75,14 +75,14 @@ int tail_log_until_exit(const struct sigmund_run_record *r, bool from_end, bool 
     return 0;
 }
 
-int do_signal_action(const struct sigmund_store *store, const char *id, int sig, bool graceful, bool *already_done) {
+int sigmund_do_signal_action(const struct sigmund_store *store, const char *id, int sig, bool graceful, bool *already_done) {
     struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX], boot[128] = {0};
-    bool have_boot = current_boot_id(boot, sizeof(boot));
+    bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
     if (already_done) {
         *already_done = false;
     }
-    if (load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
+    if (sigmund_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
         return 5;
     }
     if (r.pgid <= 1) {
@@ -94,7 +94,7 @@ int do_signal_action(const struct sigmund_store *store, const char *id, int sig,
         return 2;
     }
 
-    enum run_state st = eval_state(&r, have_boot ? boot : NULL);
+    enum run_state st = sigmund_eval_state(&r, have_boot ? boot : NULL);
     if (st == STATE_STALE) {
         fprintf(stderr, "sigmund: error: run %s is stale and cannot be signaled\n", id);
         return 2;
@@ -124,8 +124,8 @@ int do_signal_action(const struct sigmund_store *store, const char *id, int sig,
     }
 
     if (graceful) {
-        if (wait_target_group_gone(&r, STOP_TIMEOUT_MS)) {
-            report_session_escapees(&r);
+        if (sigmund_wait_target_group_gone(&r, STOP_TIMEOUT_MS)) {
+            sigmund_report_session_escapees(&r);
             return 0;
         }
         if (kill(-r.pgid, SIGKILL) != 0 && errno != ESRCH) {
@@ -134,28 +134,28 @@ int do_signal_action(const struct sigmund_store *store, const char *id, int sig,
             }
             return 4;
         }
-        if (wait_target_group_gone(&r, 1000)) {
-            report_session_escapees(&r);
+        if (sigmund_wait_target_group_gone(&r, 1000)) {
+            sigmund_report_session_escapees(&r);
             return 0;
         }
         return 4;
     }
-    report_session_escapees(&r);
+    sigmund_report_session_escapees(&r);
     return 0;
 }
 
 static int do_print_signal_command(const struct sigmund_store *store, const char *id, int sig) {
     struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX], boot[128] = {0};
-    bool have_boot = current_boot_id(boot, sizeof(boot));
-    if (load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
+    bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
+    if (sigmund_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
         return 5;
     }
     if (r.pgid <= 1) {
         fprintf(stderr, "sigmund: error: invalid pgid %ld in record file\n", (long)r.pgid);
         return 5;
     }
-    enum run_state st = eval_state(&r, have_boot ? boot : NULL);
+    enum run_state st = sigmund_eval_state(&r, have_boot ? boot : NULL);
     if (r.has_boot && have_boot && strcmp(r.boot_id, boot) != 0) {
         fprintf(stderr, "sigmund: error: run %s is stale and cannot be signaled\n", id);
         return 2;
@@ -172,7 +172,7 @@ static int do_print_signal_command(const struct sigmund_store *store, const char
     return 0;
 }
 
-int cmd_signal_action(const struct sigmund_invocation *inv,
+int sigmund_cmd_signal_action(const struct sigmund_invocation *inv,
                              const struct sigmund_store *user_store,
                              const struct sigmund_store *system_store,
                              const char *program,
@@ -192,7 +192,7 @@ int cmd_signal_action(const struct sigmund_invocation *inv,
     for (int i = 0; i < argc; i++) {
         struct sigmund_resolved_target *one = NULL;
         int none = 0;
-        int rc = resolve_action_token(inv, user_store, system_store, command, argv[i], all, &one, &none);
+        int rc = sigmund_resolve_action_token(inv, user_store, system_store, command, argv[i], all, &one, &none);
         if (rc != 0) {
             free(one);
             free(targets);
@@ -213,7 +213,7 @@ int cmd_signal_action(const struct sigmund_invocation *inv,
     }
     if (ntargets == 0) {
         free(targets);
-        sig_note(inv, "sigmund: nothing to %s\n", command);
+        sigmund_sig_note(inv, "sigmund: nothing to %s\n", command);
         return 0;
     }
     bool need_elevation = false;
@@ -221,7 +221,7 @@ int cmd_signal_action(const struct sigmund_invocation *inv,
         need_elevation = need_elevation || targets[i].needs_elevation;
     }
     if (need_elevation) {
-        int rc = elevate_with_sudo_targets(program, command, NULL, targets, ntargets, all, print_cmd);
+        int rc = sigmund_elevate_with_sudo_targets(program, command, NULL, targets, ntargets, all, print_cmd);
         free(targets);
         return rc;
     }
@@ -229,12 +229,12 @@ int cmd_signal_action(const struct sigmund_invocation *inv,
     for (int i = 0; i < ntargets; i++) {
         bool already_done = false;
         int rc = print_cmd ? do_print_signal_command(&targets[i].store, targets[i].id, sig)
-                           : do_signal_action(&targets[i].store, targets[i].id, sig, graceful, &already_done);
+                           : sigmund_do_signal_action(&targets[i].store, targets[i].id, sig, graceful, &already_done);
         if (!print_cmd && rc == 0) {
             if (already_done) {
-                sig_note(inv, "sigmund: %s already exited\n", targets[i].id);
+                sigmund_sig_note(inv, "sigmund: %s already exited\n", targets[i].id);
             } else {
-                sig_note(inv, "sigmund: %s %s\n", !strcmp(command, "kill") ? "killed" : "stopped", targets[i].id);
+                sigmund_sig_note(inv, "sigmund: %s %s\n", !strcmp(command, "kill") ? "killed" : "stopped", targets[i].id);
             }
         }
         if (rc > worst) {
@@ -245,32 +245,32 @@ int cmd_signal_action(const struct sigmund_invocation *inv,
     return worst;
 }
 
-int cmd_tail_action(const struct sigmund_invocation *inv,
+int sigmund_cmd_tail_action(const struct sigmund_invocation *inv,
                            const struct sigmund_store *user_store,
                            const struct sigmund_store *system_store,
                            const char *program,
                            const char *id_token) {
     struct sigmund_resolved_target *targets = NULL;
     int ntargets = 0;
-    int rc = resolve_action_token(inv, user_store, system_store, "tail", id_token, false, &targets, &ntargets);
+    int rc = sigmund_resolve_action_token(inv, user_store, system_store, "tail", id_token, false, &targets, &ntargets);
     if (rc != 0) {
         free(targets);
         return rc;
     }
     if (ntargets == 0) {
         free(targets);
-        sig_note(inv, "sigmund: nothing to tail\n");
+        sigmund_sig_note(inv, "sigmund: nothing to tail\n");
         return 0;
     }
     struct sigmund_resolved_target target = targets[0];
     if (target.needs_elevation) {
-        rc = elevate_with_sudo_targets(program, "tail", NULL, &target, 1, false, false);
+        rc = sigmund_elevate_with_sudo_targets(program, "tail", NULL, &target, 1, false, false);
         free(targets);
         return rc;
     }
     struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX];
-    if (load_record_by_id(target.store.record_dir, target.id, &r, path, sizeof(path)) != 0) {
+    if (sigmund_load_record_by_id(target.store.record_dir, target.id, &r, path, sizeof(path)) != 0) {
         free(targets);
         return 5;
     }
@@ -280,39 +280,39 @@ int cmd_tail_action(const struct sigmund_invocation *inv,
         return 5;
     }
     char boot[128] = {0};
-    bool have_boot = current_boot_id(boot, sizeof(boot));
-    enum run_state st = eval_state(&r, have_boot ? boot : NULL);
-    rc = tail_log_until_exit(&r, st == STATE_RUNNING, st == STATE_RUNNING);
+    bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
+    enum run_state st = sigmund_eval_state(&r, have_boot ? boot : NULL);
+    rc = sigmund_tail_log_until_exit(&r, st == STATE_RUNNING, st == STATE_RUNNING);
     free(targets);
     return rc;
 }
 
-int cmd_dump_action(const struct sigmund_invocation *inv,
+int sigmund_cmd_dump_action(const struct sigmund_invocation *inv,
                            const struct sigmund_store *user_store,
                            const struct sigmund_store *system_store,
                            const char *program,
                            const char *id_token) {
     struct sigmund_resolved_target *targets = NULL;
     int ntargets = 0;
-    int rc = resolve_action_token(inv, user_store, system_store, "dump", id_token, false, &targets, &ntargets);
+    int rc = sigmund_resolve_action_token(inv, user_store, system_store, "dump", id_token, false, &targets, &ntargets);
     if (rc != 0) {
         free(targets);
         return rc;
     }
     if (ntargets == 0) {
         free(targets);
-        sig_note(inv, "sigmund: nothing to dump\n");
+        sigmund_sig_note(inv, "sigmund: nothing to dump\n");
         return 0;
     }
     struct sigmund_resolved_target target = targets[0];
     if (target.needs_elevation) {
-        rc = elevate_with_sudo_targets(program, "dump", NULL, &target, 1, false, false);
+        rc = sigmund_elevate_with_sudo_targets(program, "dump", NULL, &target, 1, false, false);
         free(targets);
         return rc;
     }
     struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX];
-    if (load_record_by_id(target.store.record_dir, target.id, &r, path, sizeof(path)) != 0) {
+    if (sigmund_load_record_by_id(target.store.record_dir, target.id, &r, path, sizeof(path)) != 0) {
         free(targets);
         return 5;
     }
@@ -324,7 +324,7 @@ int cmd_dump_action(const struct sigmund_invocation *inv,
     int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         free(targets);
-        die_errno("sigmund: failed to open log for dump");
+        sigmund_die_errno("sigmund: failed to open log for dump");
     }
     char buf[4096];
     while (1) {
@@ -336,12 +336,12 @@ int cmd_dump_action(const struct sigmund_invocation *inv,
             if (errno == EINTR) continue;
             close(fd);
             free(targets);
-            die_errno("sigmund: failed while dumping log");
+            sigmund_die_errno("sigmund: failed while dumping log");
         }
-        if (write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
+        if (sigmund_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
             close(fd);
             free(targets);
-            die_errno("sigmund: failed writing dumped output");
+            sigmund_die_errno("sigmund: failed writing dumped output");
         }
     }
     close(fd);

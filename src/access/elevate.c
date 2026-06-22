@@ -17,9 +17,9 @@ static int child_status_to_exit_code(int status) {
     return 3;
 }
 
-int elevate_with_sudo_canonical(const char *program, int canonical_argc, char **canonical_argv) {
+int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc, char **canonical_argv) {
     char abs_sigmund[SIGMUND_PATH_MAX];
-    if (resolve_self_executable_path(program, abs_sigmund, sizeof(abs_sigmund)) != 0) {
+    if (sigmund_resolve_self_executable_path(program, abs_sigmund, sizeof(abs_sigmund)) != 0) {
         fprintf(stderr, "sigmund: cannot determine executable path for sudo self-elevation\n");
         return 3;
     }
@@ -103,7 +103,7 @@ int elevate_with_sudo_canonical(const char *program, int canonical_argc, char **
     return child_status_to_exit_code(status);
 }
 
-int elevate_with_sudo_parsed(const char *program,
+int sigmund_elevate_with_sudo_parsed(const char *program,
                                     bool owned,
                                     const char *command,
                                     bool tail,
@@ -186,7 +186,7 @@ int elevate_with_sudo_parsed(const char *program,
     for (int i = 0; i < argc; i++) {
         canon[n++] = argv[i];
     }
-    int rc = elevate_with_sudo_canonical(program, n, canon);
+    int rc = sigmund_elevate_with_sudo_canonical(program, n, canon);
     free(canon);
     return rc;
 }

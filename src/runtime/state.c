@@ -10,8 +10,8 @@
 
 static bool target_group_gone(const struct sigmund_run_record *r);
 
-void report_session_escapees(const struct sigmund_run_record *r) {
-    int escaped = count_session_escapees(r->sid, r->pgid);
+void sigmund_report_session_escapees(const struct sigmund_run_record *r) {
+    int escaped = sigmund_count_session_escapees(r->sid, r->pgid);
     if (escaped > 0) {
         fprintf(stderr,
                 "sigmund: warning: %d process(es) escaped process-group %ld but remain in session %ld\n",
@@ -19,7 +19,7 @@ void report_session_escapees(const struct sigmund_run_record *r) {
     }
 }
 
-enum run_state eval_state(const struct sigmund_run_record *r, const char *current_boot) {
+enum run_state sigmund_eval_state(const struct sigmund_run_record *r, const char *current_boot) {
     if ((r->has_state && strcmp(r->state, "failed") == 0) || (r->has_launch_error && r->launch_error[0] != '\0')) {
         return STATE_FAILED;
     }
@@ -32,9 +32,9 @@ enum run_state eval_state(const struct sigmund_run_record *r, const char *curren
 
     char state = 0;
     uint64_t now_starttime = 0;
-    bool has_stat = read_proc_stat_tokens(r->pid, &state, &now_starttime) == 0;
-    bool present = has_stat || leader_present(r->pid);
-    enum group_liveness gl = group_session_liveness(r->pgid, r->sid);
+    bool has_stat = sigmund_read_proc_stat_tokens(r->pid, &state, &now_starttime) == 0;
+    bool present = has_stat || sigmund_leader_present(r->pid);
+    enum group_liveness gl = sigmund_group_session_liveness(r->pgid, r->sid);
 
     if (has_stat && state == 'Z') {
         if (gl == GROUP_LIVE) {
@@ -53,7 +53,7 @@ enum run_state eval_state(const struct sigmund_run_record *r, const char *curren
             }
         } else if (r->exe_dev && r->exe_ino) {
             uint64_t d, i;
-            if (read_proc_exe(r->pid, &d, &i) == 0 && (d != r->exe_dev || i != r->exe_ino)) {
+            if (sigmund_read_proc_exe(r->pid, &d, &i) == 0 && (d != r->exe_dev || i != r->exe_ino)) {
                 return STATE_STALE;
             }
         }
@@ -67,14 +67,14 @@ enum run_state eval_state(const struct sigmund_run_record *r, const char *curren
         return STATE_EXITED;
     }
 
-    int g = group_exists(r->pgid);
+    int g = sigmund_group_exists(r->pgid);
     if (g == 0) {
         return STATE_EXITED;
     }
     return STATE_UNKNOWN;
 }
 
-void rollback_spawned_group(pid_t pid, pid_t pgid) {
+void sigmund_rollback_spawned_group(pid_t pid, pid_t pgid) {
     if (pgid > 1) {
         kill(-pgid, SIGKILL);
     }
@@ -87,17 +87,17 @@ void rollback_spawned_group(pid_t pid, pid_t pgid) {
 }
 
 static bool target_group_gone(const struct sigmund_run_record *r) {
-    enum group_liveness gl = group_session_liveness(r->pgid, r->sid);
+    enum group_liveness gl = sigmund_group_session_liveness(r->pgid, r->sid);
     if (gl == GROUP_EMPTY || gl == GROUP_ZOMBIE_ONLY) {
         return true;
     }
     if (gl == GROUP_LIVE) {
         return false;
     }
-    return group_exists(r->pgid) == 0;
+    return sigmund_group_exists(r->pgid) == 0;
 }
 
-bool wait_target_group_gone(const struct sigmund_run_record *r, int timeout_ms) {
+bool sigmund_wait_target_group_gone(const struct sigmund_run_record *r, int timeout_ms) {
     int waited = 0;
     while (waited <= timeout_ms) {
         if (target_group_gone(r)) {
@@ -115,7 +115,7 @@ bool wait_target_group_gone(const struct sigmund_run_record *r, int timeout_ms) 
     return false;
 }
 
-const char *state_str(enum run_state s) {
+const char *sigmund_state_str(enum run_state s) {
     switch (s) {
     case STATE_RUNNING:
         return "running";
