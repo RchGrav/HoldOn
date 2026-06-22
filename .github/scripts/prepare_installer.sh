@@ -19,7 +19,3 @@ mkdir -p "$output_dir"
 sed "s/^INSTALLER_VERSION=.*/INSTALLER_VERSION=\"\${SIGMUND_INSTALLER_VERSION:-${tag}}\"/" \
   install.sh >"${output_dir}/install.sh"
 chmod 0755 "${output_dir}/install.sh"
-
-sed "s/^DEMO_VERSION=.*/DEMO_VERSION=\"\${SIGMUND_DEMO_VERSION:-${tag}}\"/" \
-  examples/interactive-demo/run-demo.sh >"${output_dir}/demo.sh"
-chmod 0755 "${output_dir}/demo.sh"

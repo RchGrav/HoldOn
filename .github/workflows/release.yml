@@ -234,7 +234,7 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd dist
-          sha256sum sigmund-*.tar.gz install.sh demo.sh > SHA256SUMS
+          sha256sum sigmund-*.tar.gz install.sh > SHA256SUMS
 
       - name: Remove existing release
         env:
@@ -249,7 +249,6 @@ jobs:
           overwrite_files: true
           files: |
             dist/install.sh
-            dist/demo.sh
             dist/sigmund-*.tar.gz
             dist/SHA256SUMS
 

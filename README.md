@@ -53,21 +53,6 @@ curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.s
 
 More install modes are in [Installing Sigmund](docs/install.md).
 
-## Try The Demo
-
-The demo is self-contained so you can see how Sigmund works without installing it to your system. It is a small shell script, and it is worth reading if you want to see exactly what it will do:
-
-- [examples/interactive-demo/run-demo.sh](examples/interactive-demo/run-demo.sh)
-- [demo README](examples/interactive-demo/README.md)
-
-Run it:
-
-```sh
-curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/demo.sh | bash
-```
-
-What to expect: it creates a temporary directory, uses an existing `sigmund` if one is on `PATH` or downloads a release binary into that temporary directory, starts a tiny helper process, shows `list`, `dump`, `stop`, `prune`, creates an alias, starts from that alias, then removes the temporary directory. It does not install Sigmund, edit shell profiles, or write to `/etc`.
-
 ## Build From Source
 
 Requires a C11 compiler and POSIX process APIs. Linux and macOS are supported.
@@ -151,7 +136,7 @@ The README is only the front door. The deeper material lives under [docs](docs/i
 - [Using Sigmund in CI](docs/ci.md): copyable workflow patterns.
 - [Installing Sigmund](docs/install.md): installer modes, checksums, and CI handoff.
 - [Documentation index](docs/index.md): the full map for command behavior, internals, security boundaries, console mode, and the implementation spec.
-- [Examples](examples/README.md): runnable scripts, including the isolated interactive demo.
+- [Examples](examples/README.md): runnable scripts and automation patterns.
 
 ## What Sigmund Is Not
 
