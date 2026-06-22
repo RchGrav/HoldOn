@@ -4,7 +4,7 @@
 #include "sigmund/core.h"
 #include "sigmund/platform.h"
 
-int write_record_atomic(const char *dir, const struct record *r, int argc, char **argv, char *out_json_path, size_t out_n) {
+int write_record_atomic(const char *dir, const struct sigmund_run_record *r, int argc, char **argv, char *out_json_path, size_t out_n) {
     char tmp[SIGMUND_PATH_MAX], fin[SIGMUND_PATH_MAX], reserve[SIGMUND_PATH_MAX];
     int rc = -1;
     int fd = -1;
@@ -149,7 +149,7 @@ out:
     return rc;
 }
 
-int write_public_index_atomic(const struct store_paths *store, const struct record *r) {
+int write_public_index_atomic(const struct sigmund_store *store, const struct sigmund_run_record *r) {
     char tmp[SIGMUND_PATH_MAX], fin[SIGMUND_PATH_MAX];
     int rc = -1;
     int fd = -1;
@@ -229,7 +229,7 @@ out:
     return rc;
 }
 
-int load_record(const char *path, struct record *r) {
+int load_record(const char *path, struct sigmund_run_record *r) {
     memset(r, 0, sizeof(*r));
     char *j = NULL;
     if (read_owned_file_no_symlink(path, &j) != 0) {
@@ -339,7 +339,7 @@ int load_record(const char *path, struct record *r) {
     return 0;
 }
 
-int load_public_index(const char *path, struct public_index *pi) {
+int load_public_index(const char *path, struct sigmund_public_index *pi) {
     memset(pi, 0, sizeof(*pi));
     char *j = NULL;
     if (read_small_file(path, &j) != 0) {
@@ -368,7 +368,7 @@ int load_public_index(const char *path, struct public_index *pi) {
     return 0;
 }
 
-int load_public_index_by_id(const struct store_paths *store, const char *id, struct public_index *pi) {
+int load_public_index_by_id(const struct sigmund_store *store, const char *id, struct sigmund_public_index *pi) {
     if (!valid_id(id)) {
         return -1;
     }
@@ -382,7 +382,7 @@ int load_public_index_by_id(const struct store_paths *store, const char *id, str
     return 0;
 }
 
-int load_record_by_id(const char *dir, const char *id, struct record *r, char *path, size_t n) {
+int load_record_by_id(const char *dir, const char *id, struct sigmund_run_record *r, char *path, size_t n) {
     if (!valid_id(id)) {
         return -1;
     }

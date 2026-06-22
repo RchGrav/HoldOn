@@ -7,7 +7,7 @@
 
 /* Public console entry points used by the runtime/CLI layers. The frame, replay
  * and broker internals live in console_internal.h. */
-int format_console_sock_path(const struct store_paths *store,
+int format_console_sock_path(const struct sigmund_store *store,
                              const char *id,
                              char *out,
                              size_t n);

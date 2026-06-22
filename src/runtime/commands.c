@@ -8,13 +8,13 @@
 #include "sigmund/console.h"
 #include "sigmund/access.h"
 
-static int attach_console_record(const struct invocation *inv,
-                                 const struct record *r,
+static int attach_console_record(const struct sigmund_invocation *inv,
+                                 const struct sigmund_run_record *r,
                                  enum run_state st);
-static int print_aliases_for_store(const char *scope, const struct store_paths *store, bool verbose);
+static int print_aliases_for_store(const char *scope, const struct sigmund_store *store, bool verbose);
 
-static int attach_console_record(const struct invocation *inv,
-                                 const struct record *r,
+static int attach_console_record(const struct sigmund_invocation *inv,
+                                 const struct sigmund_run_record *r,
                                  enum run_state st) {
     if (st != STATE_RUNNING) {
         sig_note(inv, "sigmund: %s has exited - see 'sigmund dump %s'\n", r->id, r->id);
@@ -27,12 +27,12 @@ static int attach_console_record(const struct invocation *inv,
     return run_native_console(r->console_sock);
 }
 
-int cmd_console_action(const struct invocation *inv,
-                              const struct store_paths *user_store,
-                              const struct store_paths *system_store,
+int cmd_console_action(const struct sigmund_invocation *inv,
+                              const struct sigmund_store *user_store,
+                              const struct sigmund_store *system_store,
                               const char *program,
                               const char *id_token) {
-    struct resolved_target *targets = NULL;
+    struct sigmund_resolved_target *targets = NULL;
     int ntargets = 0;
     int rc = resolve_action_token(inv, user_store, system_store, "console", id_token, false, &targets, &ntargets);
     if (rc != 0) {
@@ -44,13 +44,13 @@ int cmd_console_action(const struct invocation *inv,
         sig_note(inv, "sigmund: nothing to console\n");
         return 0;
     }
-    struct resolved_target target = targets[0];
+    struct sigmund_resolved_target target = targets[0];
     if (target.needs_elevation) {
         rc = elevate_with_sudo_targets(program, "console", NULL, &target, 1, false, false);
         free(targets);
         return rc;
     }
-    struct record r;
+    struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX];
     if (load_record_by_id(target.store.record_dir, target.id, &r, path, sizeof(path)) != 0) {
         free(targets);
@@ -64,9 +64,9 @@ int cmd_console_action(const struct invocation *inv,
     return rc;
 }
 
-int cmd_alias_action(const struct invocation *inv,
-                            const struct store_paths *user_store,
-                            const struct store_paths *system_store,
+int cmd_alias_action(const struct sigmund_invocation *inv,
+                            const struct sigmund_store *user_store,
+                            const struct sigmund_store *system_store,
                             const char *program,
                             int argc,
                             char **argv) {
@@ -89,7 +89,7 @@ int cmd_alias_action(const struct invocation *inv,
         return 5;
     }
 
-    struct resolved_target target;
+    struct sigmund_resolved_target target;
     if (resolve_target(inv, user_store, system_store, target_token, &target) != 0) {
         return 5;
     }
@@ -116,7 +116,7 @@ int cmd_alias_action(const struct invocation *inv,
         die_errno("sigmund: failed to init user storage");
     }
 
-    struct record r;
+    struct sigmund_run_record r;
     char record_path[SIGMUND_PATH_MAX];
     if (load_record_by_id(target.store.record_dir, target.id, &r, record_path, sizeof(record_path)) != 0) {
         return 5;
@@ -166,8 +166,8 @@ out:
     return rc;
 }
 
-static int print_aliases_for_store(const char *scope, const struct store_paths *store, bool verbose) {
-    struct alias_entry *entries = NULL;
+static int print_aliases_for_store(const char *scope, const struct sigmund_store *store, bool verbose) {
+    struct sigmund_alias *entries = NULL;
     size_t count = 0;
     if (load_aliases(store, &entries, &count) != 0) {
         fprintf(stderr, "sigmund: warning: failed to read %s aliases\n", scope);
@@ -198,9 +198,9 @@ static int print_aliases_for_store(const char *scope, const struct store_paths *
     return 0;
 }
 
-int cmd_aliases_action(const struct invocation *inv,
-                              const struct store_paths *user_store,
-                              const struct store_paths *system_store,
+int cmd_aliases_action(const struct sigmund_invocation *inv,
+                              const struct sigmund_store *user_store,
+                              const struct sigmund_store *system_store,
                               bool verbose) {
     printf("%-12s %-6s %-40s %s\n", "NAME", "SCOPE", "COMMAND", "HASH");
     int rc = 0;
@@ -209,7 +209,7 @@ int cmd_aliases_action(const struct invocation *inv,
             rc = 5;
         }
         if (!inv->requested_system && inv->have_sudo_user) {
-            struct store_paths sudo_user_store;
+            struct sigmund_store sudo_user_store;
             if (init_invoking_user_store(inv, &sudo_user_store) == 0 &&
                 print_aliases_for_store("user", &sudo_user_store, verbose) != 0) {
                 rc = 5;
@@ -259,8 +259,8 @@ void usage(void) {
            SIGMUND_VERSION);
 }
 
-int cmd_elevated_capability_action(const struct invocation *inv,
-                                          const struct store_paths *system_store,
+int cmd_elevated_capability_action(const struct sigmund_invocation *inv,
+                                          const struct sigmund_store *system_store,
                                           const char *command,
                                           bool tail,
                                           bool console_mode,
@@ -355,7 +355,7 @@ int cmd_elevated_capability_action(const struct invocation *inv,
         return 3;
     }
 
-    struct record selected_record;
+    struct sigmund_run_record selected_record;
     char selected_path[SIGMUND_PATH_MAX];
     if (load_record_by_id(system_store->record_dir, runid_sel, &selected_record, selected_path, sizeof(selected_path)) != 0) {
         return 5;
@@ -394,7 +394,7 @@ int cmd_elevated_capability_action(const struct invocation *inv,
         return rc;
     }
     if (!strcmp(command, "tail") || !strcmp(command, "dump")) {
-        struct record r;
+        struct sigmund_run_record r;
         char path[SIGMUND_PATH_MAX];
         if (load_record_by_id(system_store->record_dir, runid_sel, &r, path, sizeof(path)) != 0 || !r.has_log) {
             return 5;

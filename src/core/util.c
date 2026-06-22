@@ -5,7 +5,7 @@
 static int append_cmd_escaped(char *dst, size_t n, size_t *off, const char *arg);
 static bool cmd_arg_needs_quotes(const char *arg);
 
-void sig_note(const struct invocation *inv, const char *fmt, ...) {
+void sig_note(const struct sigmund_invocation *inv, const char *fmt, ...) {
     if (inv && inv->quiet) {
         return;
     }

@@ -15,46 +15,46 @@ bool command_accepts_target_tokens(const char *command) {
 }
 
 static int resolve_run_id(const char *dir, const char *input, char *resolved, size_t n);
-static int resolve_user_store_id(const struct store_paths *store, const char *id, char *resolved, size_t n);
-static int resolve_system_private_id(const struct store_paths *store, const char *id, char *resolved, size_t n);
-static int resolve_system_public_id(const struct store_paths *store, const char *id, char *resolved, size_t n);
-static void fill_target(struct resolved_target *out,
+static int resolve_user_store_id(const struct sigmund_store *store, const char *id, char *resolved, size_t n);
+static int resolve_system_private_id(const struct sigmund_store *store, const char *id, char *resolved, size_t n);
+static int resolve_system_public_id(const struct sigmund_store *store, const char *id, char *resolved, size_t n);
+static void fill_target(struct sigmund_resolved_target *out,
                         enum resolve_scope scope,
-                        const struct store_paths *store,
+                        const struct sigmund_store *store,
                         const char *id,
                         bool needs_elevation);
-static int set_target_capability(struct resolved_target *target, const char *alias, const char *hash);
+static int set_target_capability(struct sigmund_resolved_target *target, const char *alias, const char *hash);
 static int append_alias_match(struct alias_match_list *list,
-                              const struct record *r,
+                              const struct sigmund_run_record *r,
                               enum run_state st,
                               const char *started_at);
-static bool public_alias_visible(const struct store_paths *store, const char *alias);
+static bool public_alias_visible(const struct sigmund_store *store, const char *alias);
 static void report_alias_ambiguity(const char *command, const char *alias, const struct alias_match_list *list);
-static int append_resolved_target(struct resolved_target **targets,
+static int append_resolved_target(struct sigmund_resolved_target **targets,
                                   int *count,
                                   enum resolve_scope scope,
-                                  const struct store_paths *store,
+                                  const struct sigmund_store *store,
                                   const char *id,
                                   bool needs_elevation);
-static int append_capability_target(struct resolved_target **targets,
+static int append_capability_target(struct sigmund_resolved_target **targets,
                                     int *count,
-                                    const struct store_paths *store,
+                                    const struct sigmund_store *store,
                                     const char *runid_sel,
                                     const char *alias,
                                     const char *hash);
-static int append_private_alias_targets(struct resolved_target **targets,
+static int append_private_alias_targets(struct sigmund_resolved_target **targets,
                                         int *count,
                                         enum resolve_scope scope,
-                                        const struct store_paths *store,
+                                        const struct sigmund_store *store,
                                         const char *alias,
                                         const char *command,
                                         bool all);
-static int collect_public_alias_matches(const struct store_paths *store,
+static int collect_public_alias_matches(const struct sigmund_store *store,
                                         const char *alias,
                                         struct alias_match_list *list);
-static int append_public_alias_elevation_target(struct resolved_target **targets,
+static int append_public_alias_elevation_target(struct sigmund_resolved_target **targets,
                                                 int *count,
-                                                const struct store_paths *system_store,
+                                                const struct sigmund_store *system_store,
                                                 const char *alias,
                                                 const char *command,
                                                 bool all);
@@ -111,8 +111,8 @@ enum id_token_scope parse_id_token(const char *token, const char **id_out) {
     return ID_TOKEN_PLAIN;
 }
 
-int ensure_run_recorded_under_alias(const struct store_paths *store, const char *id, const char *alias) {
-    struct record r;
+int ensure_run_recorded_under_alias(const struct sigmund_store *store, const char *id, const char *alias) {
+    struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX];
     if (load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
         return -1;
@@ -124,26 +124,26 @@ int ensure_run_recorded_under_alias(const struct store_paths *store, const char 
     return 0;
 }
 
-static int resolve_user_store_id(const struct store_paths *store, const char *id, char *resolved, size_t n) {
+static int resolve_user_store_id(const struct sigmund_store *store, const char *id, char *resolved, size_t n) {
     return resolve_run_id(store->record_dir, id, resolved, n);
 }
 
-static int resolve_system_private_id(const struct store_paths *store, const char *id, char *resolved, size_t n) {
+static int resolve_system_private_id(const struct sigmund_store *store, const char *id, char *resolved, size_t n) {
     return resolve_run_id(store->record_dir, id, resolved, n);
 }
 
-static int resolve_system_public_id(const struct store_paths *store, const char *id, char *resolved, size_t n) {
+static int resolve_system_public_id(const struct sigmund_store *store, const char *id, char *resolved, size_t n) {
     if (resolve_run_id(store->public_dir, id, resolved, n) != 0) {
         return -1;
     }
-    struct public_index pi;
+    struct sigmund_public_index pi;
     if (load_public_index_by_id(store, resolved, &pi) != 0 || !pi.root_managed) {
         return -1;
     }
     return 0;
 }
 
-int resolve_public_profile_token(const struct store_paths *store,
+int resolve_public_profile_token(const struct sigmund_store *store,
                                         const char *token,
                                         char hash[PROFILE_HASH_STR_LEN]) {
     if (valid_profile_hash(token)) {
@@ -156,9 +156,9 @@ int resolve_public_profile_token(const struct store_paths *store,
     return 0;
 }
 
-static void fill_target(struct resolved_target *out,
+static void fill_target(struct sigmund_resolved_target *out,
                         enum resolve_scope scope,
-                        const struct store_paths *store,
+                        const struct sigmund_store *store,
                         const char *id,
                         bool needs_elevation) {
     memset(out, 0, sizeof(*out));
@@ -168,7 +168,7 @@ static void fill_target(struct resolved_target *out,
     checked_snprintf(out->id, sizeof(out->id), "%s", id);
 }
 
-static int set_target_capability(struct resolved_target *target, const char *alias, const char *hash) {
+static int set_target_capability(struct sigmund_resolved_target *target, const char *alias, const char *hash) {
     if (!target || !valid_alias(alias) || !valid_profile_hash(hash)) {
         errno = EINVAL;
         return -1;
@@ -191,7 +191,7 @@ bool command_all_allowed(const char *command) {
                        !strcmp(command, "prune"));
 }
 
-bool record_matches_alias_intent(const char *command, const struct record *r, enum run_state st) {
+bool record_matches_alias_intent(const char *command, const struct sigmund_run_record *r, enum run_state st) {
     if (!strcmp(command, "start") || !strcmp(command, "stop") || !strcmp(command, "kill") ||
         !strcmp(command, "tail")) {
         return st == STATE_RUNNING;
@@ -209,7 +209,7 @@ bool record_matches_alias_intent(const char *command, const struct record *r, en
 }
 
 static int append_alias_match(struct alias_match_list *list,
-                              const struct record *r,
+                              const struct sigmund_run_record *r,
                               enum run_state st,
                               const char *started_at) {
     struct alias_match *next = realloc(list->items, (list->count + 1) * sizeof(*list->items));
@@ -230,7 +230,7 @@ static int append_alias_match(struct alias_match_list *list,
     return 0;
 }
 
-int collect_private_alias_matches(const struct store_paths *store,
+int collect_private_alias_matches(const struct sigmund_store *store,
                                          const char *alias,
                                          const char *command,
                                          struct alias_match_list *list) {
@@ -257,7 +257,7 @@ int collect_private_alias_matches(const struct store_paths *store,
             closedir(d);
             return -1;
         }
-        struct record r;
+        struct sigmund_run_record r;
         if (load_record(path, &r) != 0 || !valid_record(&r) ||
             strcmp(r.id, file_id) != 0 || !r.has_alias || strcmp(r.alias, alias) != 0) {
             continue;
@@ -282,7 +282,7 @@ int collect_private_alias_matches(const struct store_paths *store,
     return 0;
 }
 
-static bool public_alias_visible(const struct store_paths *store, const char *alias) {
+static bool public_alias_visible(const struct sigmund_store *store, const char *alias) {
     if (alias_exists_in_store(store, alias)) {
         return true;
     }
@@ -310,7 +310,7 @@ static bool public_alias_visible(const struct store_paths *store, const char *al
         if (checked_snprintf(path, sizeof(path), "%s/%s", store->public_dir, e->d_name) != 0) {
             continue;
         }
-        struct public_index pi;
+        struct sigmund_public_index pi;
         if (load_public_index(path, &pi) == 0 && pi.has_alias && strcmp(pi.alias, alias) == 0) {
             found = true;
             break;
@@ -338,13 +338,13 @@ static void report_alias_ambiguity(const char *command, const char *alias, const
     }
 }
 
-static int append_resolved_target(struct resolved_target **targets,
+static int append_resolved_target(struct sigmund_resolved_target **targets,
                                   int *count,
                                   enum resolve_scope scope,
-                                  const struct store_paths *store,
+                                  const struct sigmund_store *store,
                                   const char *id,
                                   bool needs_elevation) {
-    struct resolved_target *next = realloc(*targets, (size_t)(*count + 1) * sizeof(**targets));
+    struct sigmund_resolved_target *next = realloc(*targets, (size_t)(*count + 1) * sizeof(**targets));
     if (!next) {
         return -1;
     }
@@ -354,9 +354,9 @@ static int append_resolved_target(struct resolved_target **targets,
     return 0;
 }
 
-static int append_capability_target(struct resolved_target **targets,
+static int append_capability_target(struct sigmund_resolved_target **targets,
                                     int *count,
-                                    const struct store_paths *store,
+                                    const struct sigmund_store *store,
                                     const char *runid_sel,
                                     const char *alias,
                                     const char *hash) {
@@ -369,10 +369,10 @@ static int append_capability_target(struct resolved_target **targets,
     return 0;
 }
 
-static int append_private_alias_targets(struct resolved_target **targets,
+static int append_private_alias_targets(struct sigmund_resolved_target **targets,
                                         int *count,
                                         enum resolve_scope scope,
-                                        const struct store_paths *store,
+                                        const struct sigmund_store *store,
                                         const char *alias,
                                         const char *command,
                                         bool all) {
@@ -399,7 +399,7 @@ static int append_private_alias_targets(struct resolved_target **targets,
     return 1;
 }
 
-static int collect_public_alias_matches(const struct store_paths *store,
+static int collect_public_alias_matches(const struct sigmund_store *store,
                                         const char *alias,
                                         struct alias_match_list *list) {
     memset(list, 0, sizeof(*list));
@@ -427,13 +427,13 @@ static int collect_public_alias_matches(const struct store_paths *store,
         if (!valid_id(id)) {
             continue;
         }
-        struct public_index pi;
+        struct sigmund_public_index pi;
         if (load_public_index_by_id(store, id, &pi) != 0 ||
             !pi.has_alias || strcmp(pi.alias, alias) != 0) {
             continue;
         }
         list->alias_known = true;
-        struct record pseudo;
+        struct sigmund_run_record pseudo;
         memset(&pseudo, 0, sizeof(pseudo));
         snprintf(pseudo.id, sizeof(pseudo.id), "%s", id);
         if (append_alias_match(list, &pseudo, STATE_UNKNOWN, pi.started_at[0] ? pi.started_at : "-") != 0) {
@@ -445,9 +445,9 @@ static int collect_public_alias_matches(const struct store_paths *store,
     return 0;
 }
 
-static int append_public_alias_elevation_target(struct resolved_target **targets,
+static int append_public_alias_elevation_target(struct sigmund_resolved_target **targets,
                                                 int *count,
-                                                const struct store_paths *system_store,
+                                                const struct sigmund_store *system_store,
                                                 const char *alias,
                                                 const char *command,
                                                 bool all) {
@@ -485,11 +485,11 @@ static int append_public_alias_elevation_target(struct resolved_target **targets
     return rc;
 }
 
-int resolve_target(const struct invocation *inv,
-                          const struct store_paths *current_user_store,
-                          const struct store_paths *system_store,
+int resolve_target(const struct sigmund_invocation *inv,
+                          const struct sigmund_store *current_user_store,
+                          const struct sigmund_store *system_store,
                           const char *token,
-                          struct resolved_target *out) {
+                          struct sigmund_resolved_target *out) {
     memset(out, 0, sizeof(*out));
     out->scope = RESOLVE_NOT_FOUND;
 
@@ -503,7 +503,7 @@ int resolve_target(const struct invocation *inv,
 
     if (inv->euid_root) {
         if (token_scope == ID_TOKEN_USER) {
-            struct store_paths user_store;
+            struct sigmund_store user_store;
             if (init_invoking_user_store(inv, &user_store) != 0) {
                 fprintf(stderr, "sigmund: error: user:%s requires sudo provenance\n", id);
                 out->scope = RESOLVE_ERROR;
@@ -529,7 +529,7 @@ int resolve_target(const struct invocation *inv,
         char user_resolved[16] = {0};
         bool root_match = resolve_system_private_id(system_store, id, root_resolved, sizeof(root_resolved)) == 0;
         bool user_match = false;
-        struct store_paths user_store;
+        struct sigmund_store user_store;
         if (inv->have_sudo_user && init_invoking_user_store(inv, &user_store) == 0) {
             user_match = resolve_user_store_id(&user_store, id, user_resolved, sizeof(user_resolved)) == 0;
         }
@@ -580,13 +580,13 @@ int report_not_found(const char *token) {
     return 5;
 }
 
-int resolve_action_token(const struct invocation *inv,
-                                const struct store_paths *current_user_store,
-                                const struct store_paths *system_store,
+int resolve_action_token(const struct sigmund_invocation *inv,
+                                const struct sigmund_store *current_user_store,
+                                const struct sigmund_store *system_store,
                                 const char *command,
                                 const char *token,
                                 bool all,
-                                struct resolved_target **targets_out,
+                                struct sigmund_resolved_target **targets_out,
                                 int *count_out) {
     *targets_out = NULL;
     *count_out = 0;
@@ -612,7 +612,7 @@ int resolve_action_token(const struct invocation *inv,
         char resolved[16];
         if (inv->euid_root) {
             if (scope == ID_TOKEN_USER) {
-                struct store_paths user_store;
+                struct sigmund_store user_store;
                 if (init_invoking_user_store(inv, &user_store) != 0) {
                     fprintf(stderr, "sigmund: error: user:%s requires sudo provenance\n", atom);
                     return 5;
@@ -629,7 +629,7 @@ int resolve_action_token(const struct invocation *inv,
                     return append_resolved_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, resolved, false) == 0 ? 0 : 3;
                 }
                 if (inv->have_sudo_user) {
-                    struct store_paths user_store;
+                    struct sigmund_store user_store;
                     if (init_invoking_user_store(inv, &user_store) == 0 &&
                         resolve_user_store_id(&user_store, atom, resolved, sizeof(resolved)) == 0) {
                         return append_resolved_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, resolved, false) == 0 ? 0 : 3;
@@ -660,7 +660,7 @@ int resolve_action_token(const struct invocation *inv,
     int rc = 0;
     if (inv->euid_root) {
         if (scope == ID_TOKEN_USER) {
-            struct store_paths user_store;
+            struct sigmund_store user_store;
             if (init_invoking_user_store(inv, &user_store) != 0) {
                 fprintf(stderr, "sigmund: error: user:%s requires sudo provenance\n", atom);
                 return 5;
@@ -682,7 +682,7 @@ int resolve_action_token(const struct invocation *inv,
         if (rc == -2) return 6;
         if (rc < 0) return 3;
         if (inv->have_sudo_user) {
-            struct store_paths user_store;
+            struct sigmund_store user_store;
             if (init_invoking_user_store(inv, &user_store) == 0) {
                 rc = append_private_alias_targets(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, atom, command, all);
                 if (rc == 1) return 0;
@@ -715,7 +715,7 @@ int resolve_action_token(const struct invocation *inv,
 int elevate_with_sudo_targets(const char *program,
                                const char *command,
                                char **original_tokens,
-                               const struct resolved_target *targets,
+                               const struct sigmund_resolved_target *targets,
                                int ntargets,
                                bool all,
                                bool print_cmd) {
@@ -790,7 +790,7 @@ int maybe_elevate_requested_system_targets(const char *program,
     if (!command_accepts_target_tokens(command) || argc <= 0) {
         return 0;
     }
-    struct store_paths system_store;
+    struct sigmund_store system_store;
     if (init_system_store(&system_store) != 0) {
         return 0;
     }

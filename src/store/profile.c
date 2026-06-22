@@ -4,11 +4,11 @@
 #include "sigmund/core.h"
 #include "sigmund/platform.h"
 
-static void free_profiles(struct profile *profiles, size_t count);
-static bool profile_equal_argv(const struct profile *p, const char *binary_path, int argc, char **argv);
-static int parse_profile_object(const char *j, const char *hash, struct profile *profile);
-static int load_profiles(const struct store_paths *store, struct profile **profiles_out, size_t *count_out);
-static int write_profiles_atomic(const struct store_paths *store, const struct profile *profiles, size_t count);
+static void free_profiles(struct sigmund_profile *profiles, size_t count);
+static bool profile_equal_argv(const struct sigmund_profile *p, const char *binary_path, int argc, char **argv);
+static int parse_profile_object(const char *j, const char *hash, struct sigmund_profile *profile);
+static int load_profiles(const struct sigmund_store *store, struct sigmund_profile **profiles_out, size_t *count_out);
+static int write_profiles_atomic(const struct sigmund_store *store, const struct sigmund_profile *profiles, size_t count);
 
 /*
  * This digest is a stable capability key. Do not add versions, environment,
@@ -34,7 +34,7 @@ void profile_hash_for_argv(const char *binary_path, int argc, char **argv, char 
     hex_encode(digest, sizeof(digest), out, PROFILE_HASH_STR_LEN);
 }
 
-void free_profile(struct profile *p) {
+void free_profile(struct sigmund_profile *p) {
     if (!p) {
         return;
     }
@@ -42,7 +42,7 @@ void free_profile(struct profile *p) {
     memset(p, 0, sizeof(*p));
 }
 
-static void free_profiles(struct profile *profiles, size_t count) {
+static void free_profiles(struct sigmund_profile *profiles, size_t count) {
     if (!profiles) {
         return;
     }
@@ -52,7 +52,7 @@ static void free_profiles(struct profile *profiles, size_t count) {
     free(profiles);
 }
 
-static bool profile_equal_argv(const struct profile *p, const char *binary_path, int argc, char **argv) {
+static bool profile_equal_argv(const struct sigmund_profile *p, const char *binary_path, int argc, char **argv) {
     if (strcmp(p->binary_path, binary_path) != 0 || p->argc != argc) {
         return false;
     }
@@ -64,7 +64,7 @@ static bool profile_equal_argv(const struct profile *p, const char *binary_path,
     return true;
 }
 
-static int parse_profile_object(const char *j, const char *hash, struct profile *profile) {
+static int parse_profile_object(const char *j, const char *hash, struct sigmund_profile *profile) {
     memset(profile, 0, sizeof(*profile));
     if (!valid_profile_hash(hash)) {
         errno = EINVAL;
@@ -92,7 +92,7 @@ static int parse_profile_object(const char *j, const char *hash, struct profile 
     return 0;
 }
 
-static int load_profiles(const struct store_paths *store, struct profile **profiles_out, size_t *count_out) {
+static int load_profiles(const struct sigmund_store *store, struct sigmund_profile **profiles_out, size_t *count_out) {
     *profiles_out = NULL;
     *count_out = 0;
     char *j = NULL;
@@ -110,7 +110,7 @@ static int load_profiles(const struct store_paths *store, struct profile **profi
     }
     p++;
     size_t cap = 0, count = 0;
-    struct profile *profiles = NULL;
+    struct sigmund_profile *profiles = NULL;
     while (1) {
         p = skip_ws(p);
         if (*p == '}') {
@@ -139,7 +139,7 @@ static int load_profiles(const struct store_paths *store, struct profile **profi
         }
         if (count == cap) {
             size_t next_cap = cap ? cap * 2 : 8;
-            struct profile *next = realloc(profiles, next_cap * sizeof(*profiles));
+            struct sigmund_profile *next = realloc(profiles, next_cap * sizeof(*profiles));
             if (!next) {
                 free(j);
                 free_profiles(profiles, count);
@@ -178,7 +178,7 @@ static int load_profiles(const struct store_paths *store, struct profile **profi
     return 0;
 }
 
-static int write_profiles_atomic(const struct store_paths *store, const struct profile *profiles, size_t count) {
+static int write_profiles_atomic(const struct sigmund_store *store, const struct sigmund_profile *profiles, size_t count) {
     char dir[SIGMUND_PATH_MAX], tmp[SIGMUND_PATH_MAX];
     snprintf(dir, sizeof(dir), "%s", store->profile_path);
     char *slash = strrchr(dir, '/');
@@ -236,7 +236,7 @@ static int write_profiles_atomic(const struct store_paths *store, const struct p
     return 0;
 }
 
-int write_profile_atomic(const struct store_paths *store,
+int write_profile_atomic(const struct sigmund_store *store,
                                 const char *hash,
                                 const char *binary_path,
                                 int argc,
@@ -251,7 +251,7 @@ int write_profile_atomic(const struct store_paths *store,
         errno = EINVAL;
         return -1;
     }
-    struct profile *profiles = NULL;
+    struct sigmund_profile *profiles = NULL;
     size_t count = 0;
     if (load_profiles(store, &profiles, &count) != 0) {
         return -1;
@@ -267,7 +267,7 @@ int write_profile_atomic(const struct store_paths *store,
             return rc;
         }
     }
-    struct profile *next = realloc(profiles, (count + 1) * sizeof(*profiles));
+    struct sigmund_profile *next = realloc(profiles, (count + 1) * sizeof(*profiles));
     if (!next) {
         free_profiles(profiles, count);
         return -1;
@@ -287,7 +287,7 @@ int write_profile_atomic(const struct store_paths *store,
     return rc;
 }
 
-int load_profile_by_hash(const struct store_paths *store, const char *hash, struct profile *profile) {
+int load_profile_by_hash(const struct sigmund_store *store, const char *hash, struct sigmund_profile *profile) {
     memset(profile, 0, sizeof(*profile));
     if (!valid_profile_hash(hash)) {
         errno = EINVAL;
@@ -306,8 +306,8 @@ int load_profile_by_hash(const struct store_paths *store, const char *hash, stru
     return 0;
 }
 
-int profile_exists_in_store(const struct store_paths *store, const char *hash) {
-    struct profile p;
+int profile_exists_in_store(const struct sigmund_store *store, const char *hash) {
+    struct sigmund_profile p;
     if (load_profile_by_hash(store, hash, &p) != 0) {
         return -1;
     }

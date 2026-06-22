@@ -13,7 +13,7 @@ struct sha256_ctx {
 };
 
 void die_errno(const char *msg);
-void sig_note(const struct invocation *inv, const char *fmt, ...);
+void sig_note(const struct sigmund_invocation *inv, const char *fmt, ...);
 int checked_snprintf(char *dst, size_t n, const char *fmt, ...);
 bool has_suffix(const char *s, const char *suffix);
 bool valid_id(const char *id);
@@ -21,7 +21,7 @@ bool record_json_filename_id(const char *name, char *id, size_t n);
 bool valid_id_prefix(const char *id);
 bool valid_profile_hash(const char *hash);
 bool valid_alias(const char *alias);
-bool valid_record(const struct record *r);
+bool valid_record(const struct sigmund_run_record *r);
 int mkdir_p0700(const char *dir);
 int read_file_trim(const char *path, char *buf, size_t n);
 bool path_exists(const char *path);

@@ -23,25 +23,25 @@ struct list_rows {
     size_t count;
 };
 
-static void format_result(const struct record *r, enum run_state st, char *out, size_t n);
+static void format_result(const struct sigmund_run_record *r, enum run_state st, char *out, size_t n);
 static void free_list_rows(struct list_rows *rows);
 static int append_list_row(struct list_rows *rows, const struct list_row *row);
 static int compare_list_rows(const void *a, const void *b);
 static void print_list_header(bool iso);
 static void print_list_row(const struct list_row *row, bool iso);
-static int collect_list_private(const struct store_paths *store,
+static int collect_list_private(const struct sigmund_store *store,
                                 const char *alias_filter,
                                 bool iso,
                                 struct list_rows *rows);
-static int collect_list_public(const struct store_paths *store,
+static int collect_list_public(const struct sigmund_store *store,
                                const char *alias_filter,
                                bool iso,
                                struct list_rows *rows);
 static int print_collected_list(struct list_rows *rows, bool iso);
-static void unlink_public_index(const struct store_paths *store, const char *id);
-static int cmd_prune_store_all(const struct store_paths *store, bool include_stale, int *removed_count);
+static void unlink_public_index(const struct sigmund_store *store, const char *id);
+static int cmd_prune_store_all(const struct sigmund_store *store, bool include_stale, int *removed_count);
 
-static void format_result(const struct record *r, enum run_state st, char *out, size_t n) {
+static void format_result(const struct sigmund_run_record *r, enum run_state st, char *out, size_t n) {
     if (st == STATE_RUNNING) {
         snprintf(out, n, "%s", r->has_console ? "console" : "-");
         return;
@@ -107,7 +107,7 @@ static void print_list_row(const struct list_row *row, bool iso) {
     printf("%-10s %-8s %-*s %-10s %s\n", row->id, row->state, iso ? 24 : 8, row->started, row->result, cmd);
 }
 
-static int collect_list_private(const struct store_paths *store,
+static int collect_list_private(const struct sigmund_store *store,
                                 const char *alias_filter,
                                 bool iso,
                                 struct list_rows *rows) {
@@ -127,7 +127,7 @@ static int collect_list_private(const struct store_paths *store,
         if (checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
             continue;
         }
-        struct record r;
+        struct sigmund_run_record r;
         if (load_record(path, &r) != 0) {
             fprintf(stderr, "sigmund: warning: skipping corrupt record %s\n", e->d_name);
             continue;
@@ -166,7 +166,7 @@ static int collect_list_private(const struct store_paths *store,
     return 0;
 }
 
-static int collect_list_public(const struct store_paths *store,
+static int collect_list_public(const struct sigmund_store *store,
                                const char *alias_filter,
                                bool iso,
                                struct list_rows *rows) {
@@ -193,7 +193,7 @@ static int collect_list_public(const struct store_paths *store,
         if (checked_snprintf(path, sizeof(path), "%s/%s", store->public_dir, e->d_name) != 0) {
             continue;
         }
-        struct public_index pi;
+        struct sigmund_public_index pi;
         if (load_public_index(path, &pi) != 0 || strcmp(pi.id, file_id) != 0) {
             continue;
         }
@@ -233,8 +233,8 @@ static int print_collected_list(struct list_rows *rows, bool iso) {
     return 0;
 }
 
-int cmd_list_normal(const struct store_paths *user_store,
-                           const struct store_paths *system_store,
+int cmd_list_normal(const struct sigmund_store *user_store,
+                           const struct sigmund_store *system_store,
                            const char *alias_filter,
                            bool iso) {
     struct list_rows rows = {0};
@@ -249,7 +249,7 @@ int cmd_list_normal(const struct store_paths *user_store,
     return rc;
 }
 
-int cmd_list_system(const struct store_paths *system_store,
+int cmd_list_system(const struct sigmund_store *system_store,
                            const char *alias_filter,
                            bool iso) {
     struct list_rows rows = {0};
@@ -263,7 +263,7 @@ int cmd_list_system(const struct store_paths *system_store,
     return rc;
 }
 
-static void unlink_public_index(const struct store_paths *store, const char *id) {
+static void unlink_public_index(const struct sigmund_store *store, const char *id) {
     if (store->kind != STORE_SYSTEM_MANAGED || !id || !*id) {
         return;
     }
@@ -273,8 +273,8 @@ static void unlink_public_index(const struct store_paths *store, const char *id)
     }
 }
 
-int prune_one_run(const struct store_paths *store, const char *id, const char *boot, bool allow_stale, bool *removed) {
-    struct record r;
+int prune_one_run(const struct sigmund_store *store, const char *id, const char *boot, bool allow_stale, bool *removed) {
+    struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX];
     if (load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
         return 5;
@@ -299,7 +299,7 @@ int prune_one_run(const struct store_paths *store, const char *id, const char *b
     return 0;
 }
 
-static int cmd_prune_store_all(const struct store_paths *store, bool include_stale, int *removed_count) {
+static int cmd_prune_store_all(const struct sigmund_store *store, bool include_stale, int *removed_count) {
     if (removed_count) {
         *removed_count = 0;
     }
@@ -320,7 +320,7 @@ static int cmd_prune_store_all(const struct store_paths *store, bool include_sta
         if (checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
             continue;
         }
-        struct record r;
+        struct sigmund_run_record r;
         if (load_record(path, &r) != 0) {
             unlink(path);
             continue;
@@ -421,14 +421,14 @@ static int cmd_prune_store_all(const struct store_paths *store, bool include_sta
     return 0;
 }
 
-int cmd_prune_action(const struct invocation *inv,
-                            const struct store_paths *user_store,
-                            const struct store_paths *system_store,
+int cmd_prune_action(const struct sigmund_invocation *inv,
+                            const struct sigmund_store *user_store,
+                            const struct sigmund_store *system_store,
                             const char *program,
                             const char *target_token,
                             bool all) {
     if (!target_token || strcmp(target_token, "all") == 0) {
-        const struct store_paths *store = inv->euid_root ? system_store : user_store;
+        const struct sigmund_store *store = inv->euid_root ? system_store : user_store;
         int removed = 0;
         int rc = cmd_prune_store_all(store, target_token && strcmp(target_token, "all") == 0, &removed);
         if (rc == 0) {
@@ -440,7 +440,7 @@ int cmd_prune_action(const struct invocation *inv,
         }
         return rc;
     }
-    struct resolved_target *targets = NULL;
+    struct sigmund_resolved_target *targets = NULL;
     int ntargets = 0;
     int rc = resolve_action_token(inv, user_store, system_store, "prune", target_token, all, &targets, &ntargets);
     if (rc != 0) {

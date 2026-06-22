@@ -74,7 +74,7 @@ bool valid_alias(const char *alias) {
     return true;
 }
 
-bool valid_record(const struct record *r) {
+bool valid_record(const struct sigmund_run_record *r) {
     return r->pid > 0 && r->pgid > 1 && r->id[0] != '\0';
 }
 

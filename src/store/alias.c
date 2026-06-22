@@ -4,10 +4,10 @@
 #include "sigmund/core.h"
 #include "sigmund/platform.h"
 
-static int parse_alias_recipe_object(const char *j, struct alias_entry *entry);
-static int write_aliases_atomic(const struct store_paths *store, const struct alias_entry *entries, size_t count);
+static int parse_alias_recipe_object(const char *j, struct sigmund_alias *entry);
+static int write_aliases_atomic(const struct sigmund_store *store, const struct sigmund_alias *entries, size_t count);
 
-void free_aliases(struct alias_entry *entries, size_t count) {
+void free_aliases(struct sigmund_alias *entries, size_t count) {
     if (!entries) {
         return;
     }
@@ -17,7 +17,7 @@ void free_aliases(struct alias_entry *entries, size_t count) {
     free(entries);
 }
 
-static int parse_alias_recipe_object(const char *j, struct alias_entry *entry) {
+static int parse_alias_recipe_object(const char *j, struct sigmund_alias *entry) {
     if (json_get_str(j, "bin", entry->binary_path, sizeof(entry->binary_path)) != 0 &&
         json_get_str(j, "binary_path", entry->binary_path, sizeof(entry->binary_path)) != 0) {
         return -1;
@@ -34,7 +34,7 @@ static int parse_alias_recipe_object(const char *j, struct alias_entry *entry) {
     return 0;
 }
 
-int load_aliases(const struct store_paths *store, struct alias_entry **entries_out, size_t *count_out) {
+int load_aliases(const struct sigmund_store *store, struct sigmund_alias **entries_out, size_t *count_out) {
     *entries_out = NULL;
     *count_out = 0;
     char *j = NULL;
@@ -52,7 +52,7 @@ int load_aliases(const struct store_paths *store, struct alias_entry **entries_o
     }
     p++;
     size_t cap = 0, count = 0;
-    struct alias_entry *entries = NULL;
+    struct sigmund_alias *entries = NULL;
     while (1) {
         p = skip_ws(p);
         if (*p == '}') {
@@ -75,7 +75,7 @@ int load_aliases(const struct store_paths *store, struct alias_entry **entries_o
         p = skip_ws(p + 1);
         if (count == cap) {
             size_t next_cap = cap ? cap * 2 : 8;
-            struct alias_entry *next = realloc(entries, next_cap * sizeof(*entries));
+            struct sigmund_alias *next = realloc(entries, next_cap * sizeof(*entries));
             if (!next) {
                 free(j);
                 free_aliases(entries, count);
@@ -134,7 +134,7 @@ int load_aliases(const struct store_paths *store, struct alias_entry **entries_o
     return 0;
 }
 
-static int write_aliases_atomic(const struct store_paths *store, const struct alias_entry *entries, size_t count) {
+static int write_aliases_atomic(const struct sigmund_store *store, const struct sigmund_alias *entries, size_t count) {
     const char *dir = store->kind == STORE_SYSTEM_MANAGED ? store->public_dir : store->base;
     char tmp[SIGMUND_PATH_MAX];
     mode_t mode = store->kind == STORE_SYSTEM_MANAGED ? 0644 : 0600;
@@ -209,11 +209,11 @@ static int write_aliases_atomic(const struct store_paths *store, const struct al
     return 0;
 }
 
-int alias_lookup_hash(const struct store_paths *store, const char *alias, char hash[PROFILE_HASH_STR_LEN]) {
+int alias_lookup_hash(const struct sigmund_store *store, const char *alias, char hash[PROFILE_HASH_STR_LEN]) {
     if (!valid_alias(alias)) {
         return -1;
     }
-    struct alias_entry *entries = NULL;
+    struct sigmund_alias *entries = NULL;
     size_t count = 0;
     if (load_aliases(store, &entries, &count) != 0) {
         return -1;
@@ -230,12 +230,12 @@ int alias_lookup_hash(const struct store_paths *store, const char *alias, char h
     return rc;
 }
 
-int alias_upsert_hash(const struct store_paths *store, const char *alias, const char *hash) {
+int alias_upsert_hash(const struct sigmund_store *store, const char *alias, const char *hash) {
     if (!valid_alias(alias) || !valid_profile_hash(hash)) {
         errno = EINVAL;
         return -1;
     }
-    struct alias_entry *entries = NULL;
+    struct sigmund_alias *entries = NULL;
     size_t count = 0;
     if (load_aliases(store, &entries, &count) != 0) {
         return -1;
@@ -249,7 +249,7 @@ int alias_upsert_hash(const struct store_paths *store, const char *alias, const 
             return rc;
         }
     }
-    struct alias_entry *next = realloc(entries, (count + 1) * sizeof(*entries));
+    struct sigmund_alias *next = realloc(entries, (count + 1) * sizeof(*entries));
     if (!next) {
         free_aliases(entries, count);
         return -1;
@@ -265,13 +265,13 @@ int alias_upsert_hash(const struct store_paths *store, const char *alias, const 
     return rc;
 }
 
-int alias_lookup_recipe(const struct store_paths *store, const char *alias, struct profile *recipe) {
+int alias_lookup_recipe(const struct sigmund_store *store, const char *alias, struct sigmund_profile *recipe) {
     memset(recipe, 0, sizeof(*recipe));
     if (!valid_alias(alias)) {
         errno = EINVAL;
         return -1;
     }
-    struct alias_entry *entries = NULL;
+    struct sigmund_alias *entries = NULL;
     size_t count = 0;
     if (load_aliases(store, &entries, &count) != 0) {
         return -1;
@@ -298,7 +298,7 @@ int alias_lookup_recipe(const struct store_paths *store, const char *alias, stru
     return rc;
 }
 
-int alias_upsert_recipe(const struct store_paths *store,
+int alias_upsert_recipe(const struct sigmund_store *store,
                                const char *alias,
                                const char *binary_path,
                                int argc,
@@ -307,7 +307,7 @@ int alias_upsert_recipe(const struct store_paths *store,
         errno = EINVAL;
         return -1;
     }
-    struct alias_entry *entries = NULL;
+    struct sigmund_alias *entries = NULL;
     size_t count = 0;
     if (load_aliases(store, &entries, &count) != 0) {
         return -1;
@@ -331,7 +331,7 @@ int alias_upsert_recipe(const struct store_paths *store,
             return rc;
         }
     }
-    struct alias_entry *next = realloc(entries, (count + 1) * sizeof(*entries));
+    struct sigmund_alias *next = realloc(entries, (count + 1) * sizeof(*entries));
     if (!next) {
         free_aliases(entries, count);
         return -1;
@@ -374,11 +374,11 @@ int parse_alias_cap_atom(const char *atom,
     return 0;
 }
 
-int verify_system_alias_cap(const struct store_paths *system_store,
+int verify_system_alias_cap(const struct sigmund_store *system_store,
                                    const char *alias,
                                    const char *hash) {
     char current[PROFILE_HASH_STR_LEN];
-    struct profile p;
+    struct sigmund_profile p;
     if (!valid_alias(alias) || !valid_profile_hash(hash) ||
         alias_lookup_hash(system_store, alias, current) != 0 ||
         strcmp(current, hash) != 0 ||
@@ -389,8 +389,8 @@ int verify_system_alias_cap(const struct store_paths *system_store,
     return 0;
 }
 
-bool alias_exists_in_store(const struct store_paths *store, const char *alias) {
-    struct alias_entry *entries = NULL;
+bool alias_exists_in_store(const struct sigmund_store *store, const char *alias) {
+    struct sigmund_alias *entries = NULL;
     size_t count = 0;
     if (!valid_alias(alias) || load_aliases(store, &entries, &count) != 0) {
         return false;

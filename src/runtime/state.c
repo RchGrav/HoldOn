@@ -8,9 +8,9 @@
 #include "sigmund/console.h"
 #include "sigmund/access.h"
 
-static bool target_group_gone(const struct record *r);
+static bool target_group_gone(const struct sigmund_run_record *r);
 
-void report_session_escapees(const struct record *r) {
+void report_session_escapees(const struct sigmund_run_record *r) {
     int escaped = count_session_escapees(r->sid, r->pgid);
     if (escaped > 0) {
         fprintf(stderr,
@@ -19,7 +19,7 @@ void report_session_escapees(const struct record *r) {
     }
 }
 
-enum run_state eval_state(const struct record *r, const char *current_boot) {
+enum run_state eval_state(const struct sigmund_run_record *r, const char *current_boot) {
     if ((r->has_state && strcmp(r->state, "failed") == 0) || (r->has_launch_error && r->launch_error[0] != '\0')) {
         return STATE_FAILED;
     }
@@ -86,7 +86,7 @@ void rollback_spawned_group(pid_t pid, pid_t pgid) {
     }
 }
 
-static bool target_group_gone(const struct record *r) {
+static bool target_group_gone(const struct sigmund_run_record *r) {
     enum group_liveness gl = group_session_liveness(r->pgid, r->sid);
     if (gl == GROUP_EMPTY || gl == GROUP_ZOMBIE_ONLY) {
         return true;
@@ -97,7 +97,7 @@ static bool target_group_gone(const struct record *r) {
     return group_exists(r->pgid) == 0;
 }
 
-bool wait_target_group_gone(const struct record *r, int timeout_ms) {
+bool wait_target_group_gone(const struct sigmund_run_record *r, int timeout_ms) {
     int waited = 0;
     while (waited <= timeout_ms) {
         if (target_group_gone(r)) {

@@ -180,7 +180,7 @@ int main(int argc, char **argv) {
         return 5;
     }
 
-    struct invocation inv;
+    struct sigmund_invocation inv;
     if (detect_invocation(&inv, requested_system, elevated) != 0) {
         die_errno("sigmund: failed to resolve invocation context");
     }
@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
 
     bool is_list = owned && !strcmp(command, "list");
     if (requested_system && !inv.euid_root && owned && !strcmp(command, "start") && cmd_argc == 1) {
-        struct store_paths pre_system_store;
+        struct sigmund_store pre_system_store;
         if (init_system_store(&pre_system_store) == 0) {
             const char *atom = NULL;
             enum id_token_scope start_scope = parse_id_token(cmd_argv[0], &atom);
@@ -236,8 +236,8 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-    struct store_paths user_store;
-    struct store_paths system_store;
+    struct sigmund_store user_store;
+    struct sigmund_store system_store;
     memset(&user_store, 0, sizeof(user_store));
     if (init_system_store(&system_store) != 0) {
         die_errno("sigmund: failed to resolve system storage");
@@ -267,7 +267,7 @@ int main(int argc, char **argv) {
     }
 
     if (!owned) {
-        struct store_paths start_store;
+        struct sigmund_store start_store;
         if (ensure_start_store_for_command(&inv, requested_system, false, NULL, cmd_argc, cmd_argv, &start_store) != 0) {
             if ((inv.euid_root || requested_system) &&
                 start_target_is_within_invoking_home(&inv, false, NULL, cmd_argc, cmd_argv)) {
@@ -279,7 +279,7 @@ int main(int argc, char **argv) {
     }
 
     if (!strcmp(command, "start")) {
-        struct store_paths start_store;
+        struct sigmund_store start_store;
         if (ensure_start_store_for_command(&inv, requested_system, true, command, cmd_argc, cmd_argv, &start_store) != 0) {
             if ((inv.euid_root || requested_system) &&
                 start_target_is_within_invoking_home(&inv, true, command, cmd_argc, cmd_argv)) {

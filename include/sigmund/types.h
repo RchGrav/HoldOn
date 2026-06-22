@@ -7,7 +7,7 @@
  * (SIGMUND_PATH_MAX, PROFILE_HASH_STR_LEN, ALIAS_MAX_LEN, ...) used below. */
 #include "sigmund/config.h"
 
-struct record {
+struct sigmund_run_record {
     int version;
     char id[16];
     char run_id[16];
@@ -52,7 +52,7 @@ enum run_state { STATE_RUNNING, STATE_EXITED, STATE_STALE, STATE_FAILED, STATE_U
 
 enum store_kind { STORE_USER_LOCAL, STORE_SYSTEM_MANAGED };
 
-struct store_paths {
+struct sigmund_store {
     enum store_kind kind;
     char base[SIGMUND_PATH_MAX];
     char record_dir[SIGMUND_PATH_MAX];
@@ -63,7 +63,7 @@ struct store_paths {
     char alias_path[SIGMUND_PATH_MAX];
 };
 
-struct invocation {
+struct sigmund_invocation {
     bool euid_root;
     bool requested_system;
     bool elevated;
@@ -77,17 +77,17 @@ struct invocation {
 
 enum resolve_scope { RESOLVE_USER_LOCAL, RESOLVE_SYSTEM_MANAGED, RESOLVE_NOT_FOUND, RESOLVE_ERROR };
 
-struct resolved_target {
+struct sigmund_resolved_target {
     enum resolve_scope scope;
     char id[ALIAS_MAX_LEN + 1 + PROFILE_HASH_STR_LEN];
     char cap_alias[ALIAS_MAX_LEN + 1];
     char cap_hash[PROFILE_HASH_STR_LEN];
-    struct store_paths store;
+    struct sigmund_store store;
     bool needs_elevation;
     bool has_capability;
 };
 
-struct public_index {
+struct sigmund_public_index {
     char id[16];
     char alias[ALIAS_MAX_LEN + 1];
     bool root_managed;
@@ -97,14 +97,14 @@ struct public_index {
     char started_at[64];
 };
 
-struct profile {
+struct sigmund_profile {
     char hash[PROFILE_HASH_STR_LEN];
     char binary_path[SIGMUND_PATH_MAX];
     int argc;
     char **argv;
 };
 
-struct alias_entry {
+struct sigmund_alias {
     char name[ALIAS_MAX_LEN + 1];
     char hash[PROFILE_HASH_STR_LEN];
     char binary_path[SIGMUND_PATH_MAX];

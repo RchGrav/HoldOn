@@ -9,10 +9,10 @@
 #include "sigmund/access.h"
 
 struct start_profile_target {
-    struct store_paths store;
+    struct sigmund_store store;
     char hash[PROFILE_HASH_STR_LEN];
     char alias[ALIAS_MAX_LEN + 1];
-    struct profile recipe;
+    struct sigmund_profile recipe;
     bool has_hash;
     bool has_alias;
     bool has_recipe;
@@ -20,32 +20,32 @@ struct start_profile_target {
 };
 
 static const char *explicit_start_argv0(bool owned, const char *command, int argc, char **argv);
-static int private_start_hash_for_token(const struct store_paths *store,
+static int private_start_hash_for_token(const struct sigmund_store *store,
                                         const char *token,
                                         char hash[PROFILE_HASH_STR_LEN],
                                         bool *matched);
-static int private_start_recipe_for_token(const struct store_paths *store,
+static int private_start_recipe_for_token(const struct sigmund_store *store,
                                           const char *token,
-                                          struct profile *recipe,
+                                          struct sigmund_profile *recipe,
                                           bool *matched);
 static void free_start_profile_target(struct start_profile_target *target);
 static void start_target_set_alias(struct start_profile_target *target, const char *alias);
 static int start_target_set_recipe(struct start_profile_target *target,
-                                   const struct store_paths *store,
+                                   const struct sigmund_store *store,
                                    const char *alias);
 static int start_target_set_hash(struct start_profile_target *target,
-                                 const struct store_paths *store,
+                                 const struct sigmund_store *store,
                                  const char *hash,
                                  const char *alias,
                                  bool needs_elevation);
-static int count_running_alias(const struct store_paths *store, const char *alias, size_t *count_out);
-static int resolve_start_profile_target(const struct invocation *inv,
-                                        const struct store_paths *current_user_store,
-                                        const struct store_paths *system_store,
+static int count_running_alias(const struct sigmund_store *store, const char *alias, size_t *count_out);
+static int resolve_start_profile_target(const struct sigmund_invocation *inv,
+                                        const struct sigmund_store *current_user_store,
+                                        const struct sigmund_store *system_store,
                                         const char *token,
                                         struct start_profile_target *out);
-static int perform_explicit_start(const struct invocation *inv,
-                                  const struct store_paths *store,
+static int perform_explicit_start(const struct sigmund_invocation *inv,
+                                  const struct sigmund_store *store,
                                   bool tail,
                                   bool console_mode,
                                   int argc,
@@ -64,7 +64,7 @@ static const char *explicit_start_argv0(bool owned, const char *command, int arg
     return NULL;
 }
 
-bool start_target_is_within_invoking_home(const struct invocation *inv,
+bool start_target_is_within_invoking_home(const struct sigmund_invocation *inv,
                                                  bool owned,
                                                  const char *command,
                                                  int argc,
@@ -91,8 +91,8 @@ bool start_target_is_within_invoking_home(const struct invocation *inv,
     return path_is_within_dir(resolved, home);
 }
 
-int perform_start(const struct invocation *inv,
-                         const struct store_paths *store,
+int perform_start(const struct sigmund_invocation *inv,
+                         const struct sigmund_store *store,
                          bool tail,
                          bool console_mode,
                          int argc,
@@ -128,10 +128,10 @@ int perform_start(const struct invocation *inv,
     char id[16], log_path[SIGMUND_PATH_MAX], reserve_path[SIGMUND_PATH_MAX], console_sock[SIGMUND_PATH_MAX], boot_id[128] = {0};
     console_sock[0] = '\0';
     bool has_boot = current_boot_id(boot_id, sizeof(boot_id));
-    struct store_paths system_hint;
-    struct store_paths invoking_user_store;
-    const struct store_paths *avoid_public_store = NULL;
-    const struct store_paths *avoid_user_store = NULL;
+    struct sigmund_store system_hint;
+    struct sigmund_store invoking_user_store;
+    const struct sigmund_store *avoid_public_store = NULL;
+    const struct sigmund_store *avoid_user_store = NULL;
 
     if (store->kind == STORE_USER_LOCAL) {
         if (init_system_store(&system_hint) == 0) {
@@ -277,7 +277,7 @@ int perform_start(const struct invocation *inv,
         return 1;
     }
 
-    struct record r = {0};
+    struct sigmund_run_record r = {0};
     r.version = 1;
     if (checked_snprintf(r.id, sizeof(r.id), "%s", id) != 0) {
         die_errno("sigmund: id too long");
@@ -445,7 +445,7 @@ int perform_start(const struct invocation *inv,
     return 1;
 }
 
-static int private_start_hash_for_token(const struct store_paths *store,
+static int private_start_hash_for_token(const struct sigmund_store *store,
                                         const char *token,
                                         char hash[PROFILE_HASH_STR_LEN],
                                         bool *matched) {
@@ -471,9 +471,9 @@ static int private_start_hash_for_token(const struct store_paths *store,
     return 0;
 }
 
-static int private_start_recipe_for_token(const struct store_paths *store,
+static int private_start_recipe_for_token(const struct sigmund_store *store,
                                           const char *token,
-                                          struct profile *recipe,
+                                          struct sigmund_profile *recipe,
                                           bool *matched) {
     *matched = false;
     memset(recipe, 0, sizeof(*recipe));
@@ -503,7 +503,7 @@ static void start_target_set_alias(struct start_profile_target *target, const ch
 }
 
 static int start_target_set_recipe(struct start_profile_target *target,
-                                   const struct store_paths *store,
+                                   const struct sigmund_store *store,
                                    const char *alias) {
     target->store = *store;
     target->has_recipe = true;
@@ -512,7 +512,7 @@ static int start_target_set_recipe(struct start_profile_target *target,
 }
 
 static int start_target_set_hash(struct start_profile_target *target,
-                                 const struct store_paths *store,
+                                 const struct sigmund_store *store,
                                  const char *hash,
                                  const char *alias,
                                  bool needs_elevation) {
@@ -530,7 +530,7 @@ static int start_target_set_hash(struct start_profile_target *target,
     return 1;
 }
 
-static int count_running_alias(const struct store_paths *store, const char *alias, size_t *count_out) {
+static int count_running_alias(const struct sigmund_store *store, const char *alias, size_t *count_out) {
     struct alias_match_list matches;
     if (collect_private_alias_matches(store, alias, "start", &matches) != 0) {
         return -1;
@@ -540,9 +540,9 @@ static int count_running_alias(const struct store_paths *store, const char *alia
     return 0;
 }
 
-static int resolve_start_profile_target(const struct invocation *inv,
-                                        const struct store_paths *current_user_store,
-                                        const struct store_paths *system_store,
+static int resolve_start_profile_target(const struct sigmund_invocation *inv,
+                                        const struct sigmund_store *current_user_store,
+                                        const struct sigmund_store *system_store,
                                         const char *token,
                                         struct start_profile_target *out) {
     memset(out, 0, sizeof(*out));
@@ -568,7 +568,7 @@ static int resolve_start_profile_target(const struct invocation *inv,
 
     if (inv->euid_root) {
         if (scope == ID_TOKEN_USER) {
-            struct store_paths user_store;
+            struct sigmund_store user_store;
             if (init_invoking_user_store(inv, &user_store) != 0) {
                 fprintf(stderr, "sigmund: error: user:%s requires sudo provenance\n", atom);
                 return -1;
@@ -620,7 +620,7 @@ static int resolve_start_profile_target(const struct invocation *inv,
             return -1;
         }
         if (inv->have_sudo_user) {
-            struct store_paths user_store;
+            struct sigmund_store user_store;
             if (init_invoking_user_store(inv, &user_store) == 0) {
                 matched = false;
                 rc = private_start_recipe_for_token(&user_store, atom, &out->recipe, &matched);
@@ -705,13 +705,13 @@ int elevate_start_token(const char *program,
     return elevate_with_sudo_canonical(program, n, canon);
 }
 
-int perform_profile_start(const struct invocation *inv,
-                                 const struct store_paths *store,
+int perform_profile_start(const struct sigmund_invocation *inv,
+                                 const struct sigmund_store *store,
                                  bool tail,
                                  bool console_mode,
                                  const char *hash,
                                  const char *alias) {
-    struct profile p;
+    struct sigmund_profile p;
     if (load_profile_by_hash(store, hash, &p) != 0) {
         fprintf(stderr, "sigmund: error: profile %s is unavailable\n", hash);
         return 5;
@@ -721,11 +721,11 @@ int perform_profile_start(const struct invocation *inv,
     return rc;
 }
 
-int cmd_start_action(const struct invocation *inv,
-                            const struct store_paths *user_store,
-                            const struct store_paths *system_store,
+int cmd_start_action(const struct sigmund_invocation *inv,
+                            const struct sigmund_store *user_store,
+                            const struct sigmund_store *system_store,
                             const char *program,
-                            const struct store_paths *fallback_store,
+                            const struct sigmund_store *fallback_store,
                             bool tail,
                             bool console_mode,
                             bool multi,
@@ -811,13 +811,13 @@ int cmd_start_action(const struct invocation *inv,
     return perform_explicit_start(inv, fallback_store, tail, console_mode, argc, argv);
 }
 
-int ensure_start_store_for_command(const struct invocation *inv,
+int ensure_start_store_for_command(const struct sigmund_invocation *inv,
                                           bool requested_system,
                                           bool owned,
                                           const char *command,
                                           int argc,
                                           char **argv,
-                                          struct store_paths *store) {
+                                          struct sigmund_store *store) {
     bool wants_system_store = (inv && inv->euid_root) || requested_system;
 
     if (wants_system_store &&
@@ -834,8 +834,8 @@ int ensure_start_store_for_command(const struct invocation *inv,
     return ensure_user_store_for_current_user(store);
 }
 
-static int perform_explicit_start(const struct invocation *inv,
-                                  const struct store_paths *store,
+static int perform_explicit_start(const struct sigmund_invocation *inv,
+                                  const struct sigmund_store *store,
                                   bool tail,
                                   bool console_mode,
                                   int argc,

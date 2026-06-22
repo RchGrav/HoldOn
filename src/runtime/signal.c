@@ -11,14 +11,14 @@
 static volatile sig_atomic_t g_tail_interrupted = 0;
 
 static void handle_tail_sigint(int signo);
-static int do_print_signal_command(const struct store_paths *store, const char *id, int sig);
+static int do_print_signal_command(const struct sigmund_store *store, const char *id, int sig);
 
 static void handle_tail_sigint(int signo) {
     (void)signo;
     g_tail_interrupted = 1;
 }
 
-int tail_log_until_exit(const struct record *r, bool from_end, bool follow_until_exit) {
+int tail_log_until_exit(const struct sigmund_run_record *r, bool from_end, bool follow_until_exit) {
     int fd = open(r->log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         die_errno("sigmund: failed to open log for tail");
@@ -75,8 +75,8 @@ int tail_log_until_exit(const struct record *r, bool from_end, bool follow_until
     return 0;
 }
 
-int do_signal_action(const struct store_paths *store, const char *id, int sig, bool graceful, bool *already_done) {
-    struct record r;
+int do_signal_action(const struct sigmund_store *store, const char *id, int sig, bool graceful, bool *already_done) {
+    struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX], boot[128] = {0};
     bool have_boot = current_boot_id(boot, sizeof(boot));
     if (already_done) {
@@ -144,8 +144,8 @@ int do_signal_action(const struct store_paths *store, const char *id, int sig, b
     return 0;
 }
 
-static int do_print_signal_command(const struct store_paths *store, const char *id, int sig) {
-    struct record r;
+static int do_print_signal_command(const struct sigmund_store *store, const char *id, int sig) {
+    struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX], boot[128] = {0};
     bool have_boot = current_boot_id(boot, sizeof(boot));
     if (load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
@@ -172,9 +172,9 @@ static int do_print_signal_command(const struct store_paths *store, const char *
     return 0;
 }
 
-int cmd_signal_action(const struct invocation *inv,
-                             const struct store_paths *user_store,
-                             const struct store_paths *system_store,
+int cmd_signal_action(const struct sigmund_invocation *inv,
+                             const struct sigmund_store *user_store,
+                             const struct sigmund_store *system_store,
                              const char *program,
                              const char *command,
                              int argc,
@@ -187,10 +187,10 @@ int cmd_signal_action(const struct invocation *inv,
         fprintf(stderr, "usage: sigmund %s <target>...\n", command);
         return 5;
     }
-    struct resolved_target *targets = NULL;
+    struct sigmund_resolved_target *targets = NULL;
     int ntargets = 0;
     for (int i = 0; i < argc; i++) {
-        struct resolved_target *one = NULL;
+        struct sigmund_resolved_target *one = NULL;
         int none = 0;
         int rc = resolve_action_token(inv, user_store, system_store, command, argv[i], all, &one, &none);
         if (rc != 0) {
@@ -199,7 +199,7 @@ int cmd_signal_action(const struct invocation *inv,
             return rc;
         }
         if (none > 0) {
-            struct resolved_target *next = realloc(targets, (size_t)(ntargets + none) * sizeof(*targets));
+            struct sigmund_resolved_target *next = realloc(targets, (size_t)(ntargets + none) * sizeof(*targets));
             if (!next) {
                 free(one);
                 free(targets);
@@ -245,12 +245,12 @@ int cmd_signal_action(const struct invocation *inv,
     return worst;
 }
 
-int cmd_tail_action(const struct invocation *inv,
-                           const struct store_paths *user_store,
-                           const struct store_paths *system_store,
+int cmd_tail_action(const struct sigmund_invocation *inv,
+                           const struct sigmund_store *user_store,
+                           const struct sigmund_store *system_store,
                            const char *program,
                            const char *id_token) {
-    struct resolved_target *targets = NULL;
+    struct sigmund_resolved_target *targets = NULL;
     int ntargets = 0;
     int rc = resolve_action_token(inv, user_store, system_store, "tail", id_token, false, &targets, &ntargets);
     if (rc != 0) {
@@ -262,13 +262,13 @@ int cmd_tail_action(const struct invocation *inv,
         sig_note(inv, "sigmund: nothing to tail\n");
         return 0;
     }
-    struct resolved_target target = targets[0];
+    struct sigmund_resolved_target target = targets[0];
     if (target.needs_elevation) {
         rc = elevate_with_sudo_targets(program, "tail", NULL, &target, 1, false, false);
         free(targets);
         return rc;
     }
-    struct record r;
+    struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX];
     if (load_record_by_id(target.store.record_dir, target.id, &r, path, sizeof(path)) != 0) {
         free(targets);
@@ -287,12 +287,12 @@ int cmd_tail_action(const struct invocation *inv,
     return rc;
 }
 
-int cmd_dump_action(const struct invocation *inv,
-                           const struct store_paths *user_store,
-                           const struct store_paths *system_store,
+int cmd_dump_action(const struct sigmund_invocation *inv,
+                           const struct sigmund_store *user_store,
+                           const struct sigmund_store *system_store,
                            const char *program,
                            const char *id_token) {
-    struct resolved_target *targets = NULL;
+    struct sigmund_resolved_target *targets = NULL;
     int ntargets = 0;
     int rc = resolve_action_token(inv, user_store, system_store, "dump", id_token, false, &targets, &ntargets);
     if (rc != 0) {
@@ -304,13 +304,13 @@ int cmd_dump_action(const struct invocation *inv,
         sig_note(inv, "sigmund: nothing to dump\n");
         return 0;
     }
-    struct resolved_target target = targets[0];
+    struct sigmund_resolved_target target = targets[0];
     if (target.needs_elevation) {
         rc = elevate_with_sudo_targets(program, "dump", NULL, &target, 1, false, false);
         free(targets);
         return rc;
     }
-    struct record r;
+    struct sigmund_run_record r;
     char path[SIGMUND_PATH_MAX];
     if (load_record_by_id(target.store.record_dir, target.id, &r, path, sizeof(path)) != 0) {
         free(targets);

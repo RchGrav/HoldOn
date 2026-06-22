@@ -9,7 +9,7 @@ static int console_addr_relative(const char *sock_path,
                                  char *dir,
                                  size_t dirn);
 
-int format_console_sock_path(const struct store_paths *store,
+int format_console_sock_path(const struct sigmund_store *store,
                                     const char *id,
                                     char *out,
                                     size_t n) {

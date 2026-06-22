@@ -13,7 +13,7 @@ static int grant_action_index(const char *name);
 static int parse_grant_actions(const char *input, bool selected[GRANT_ACTION_COUNT], bool *all_scope);
 static int validate_sigmund_self_for_sudoers(const char *program, char *abs_sigmund, size_t n);
 static const char *sudoers_dir_path(void);
-static int resolve_system_alias_hash_for_grant(const struct store_paths *system_store,
+static int resolve_system_alias_hash_for_grant(const struct sigmund_store *system_store,
                                                const char *alias,
                                                char hash[PROFILE_HASH_STR_LEN]);
 static int build_action_alternation(const bool selected[GRANT_ACTION_COUNT], char *out, size_t n);
@@ -148,7 +148,7 @@ static const char *sudoers_dir_path(void) {
     return "/etc/sudoers.d";
 }
 
-static int resolve_system_alias_hash_for_grant(const struct store_paths *system_store,
+static int resolve_system_alias_hash_for_grant(const struct sigmund_store *system_store,
                                                const char *alias,
                                                char hash[PROFILE_HASH_STR_LEN]) {
     if (!valid_alias(alias)) {
@@ -423,8 +423,8 @@ static int unlink_sudoers_template_file(const char *sudoers_path) {
     return 0;
 }
 
-int cmd_grant_revoke_action(const struct invocation *inv,
-                                   const struct store_paths *system_store,
+int cmd_grant_revoke_action(const struct sigmund_invocation *inv,
+                                   const struct sigmund_store *system_store,
                                    const char *program,
                                    bool grant,
                                    int argc,

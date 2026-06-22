@@ -5,10 +5,10 @@
 #include "sigmund/platform.h"
 
 static int chown_if_root(const char *path, uid_t uid, gid_t gid);
-static int init_user_store_for_current_user(struct store_paths *store);
-static int ensure_user_store_from_home_owned(const char *home, uid_t uid, gid_t gid, struct store_paths *store);
-static bool id_collides_in_store(const struct store_paths *store, const char *id, bool include_public);
-static bool id_material_collides_in_store(const struct store_paths *store, const char *id, bool include_public);
+static int init_user_store_for_current_user(struct sigmund_store *store);
+static int ensure_user_store_from_home_owned(const char *home, uid_t uid, gid_t gid, struct sigmund_store *store);
+static bool id_collides_in_store(const struct sigmund_store *store, const char *id, bool include_public);
+static bool id_material_collides_in_store(const struct sigmund_store *store, const char *id, bool include_public);
 
 int chown_root_if_root(const char *path) {
     if (geteuid() != 0) {
@@ -30,7 +30,7 @@ static int chown_if_root(const char *path, uid_t uid, gid_t gid) {
     return 0;
 }
 
-int init_user_store_from_home(const char *home, struct store_paths *store) {
+int init_user_store_from_home(const char *home, struct sigmund_store *store) {
     if (!home || !*home) {
         errno = EINVAL;
         return -1;
@@ -48,7 +48,7 @@ int init_user_store_from_home(const char *home, struct store_paths *store) {
     return 0;
 }
 
-static int init_user_store_for_current_user(struct store_paths *store) {
+static int init_user_store_for_current_user(struct sigmund_store *store) {
     const char *home = getenv("HOME");
     if (!home || !*home) {
         fprintf(stderr, "sigmund: error: HOME is not set\n");
@@ -58,7 +58,7 @@ static int init_user_store_for_current_user(struct store_paths *store) {
     return init_user_store_from_home(home, store);
 }
 
-int ensure_user_store_for_current_user(struct store_paths *store) {
+int ensure_user_store_for_current_user(struct sigmund_store *store) {
     if (init_user_store_for_current_user(store) != 0) {
         return -1;
     }
@@ -75,7 +75,7 @@ int ensure_user_store_for_current_user(struct store_paths *store) {
     return 0;
 }
 
-static int ensure_user_store_from_home_owned(const char *home, uid_t uid, gid_t gid, struct store_paths *store) {
+static int ensure_user_store_from_home_owned(const char *home, uid_t uid, gid_t gid, struct sigmund_store *store) {
     char local_dir[SIGMUND_PATH_MAX], state_dir[SIGMUND_PATH_MAX];
     if (init_user_store_from_home(home, store) != 0) {
         return -1;
@@ -101,7 +101,7 @@ static int ensure_user_store_from_home_owned(const char *home, uid_t uid, gid_t 
     return 0;
 }
 
-int ensure_invoking_user_store(const struct invocation *inv, struct store_paths *store) {
+int ensure_invoking_user_store(const struct sigmund_invocation *inv, struct sigmund_store *store) {
     if (!inv || !inv->have_sudo_user || !inv->invoking_home[0]) {
         errno = EINVAL;
         return -1;
@@ -109,7 +109,7 @@ int ensure_invoking_user_store(const struct invocation *inv, struct store_paths 
     return ensure_user_store_from_home_owned(inv->invoking_home, inv->invoking_uid, inv->invoking_gid, store);
 }
 
-int init_system_store(struct store_paths *store) {
+int init_system_store(struct sigmund_store *store) {
     const char *base = SIGMUND_SYSTEM_STATE_DIR;
 #ifdef SIGMUND_TESTING
     const char *override = getenv("SIGMUND_TEST_SYSTEM_STATE_DIR");
@@ -131,7 +131,7 @@ int init_system_store(struct store_paths *store) {
     return 0;
 }
 
-int ensure_system_store(struct store_paths *store) {
+int ensure_system_store(struct sigmund_store *store) {
     if (init_system_store(store) != 0) {
         return -1;
     }
@@ -163,7 +163,7 @@ int ensure_system_store(struct store_paths *store) {
     return 0;
 }
 
-static bool id_collides_in_store(const struct store_paths *store, const char *id, bool include_public) {
+static bool id_collides_in_store(const struct sigmund_store *store, const char *id, bool include_public) {
     char path[SIGMUND_PATH_MAX];
     if (checked_snprintf(path, sizeof(path), "%s/%s.json", store->record_dir, id) == 0 && path_exists(path)) {
         return true;
@@ -186,7 +186,7 @@ static bool id_collides_in_store(const struct store_paths *store, const char *id
     return false;
 }
 
-static bool id_material_collides_in_store(const struct store_paths *store, const char *id, bool include_public) {
+static bool id_material_collides_in_store(const struct sigmund_store *store, const char *id, bool include_public) {
     char path[SIGMUND_PATH_MAX];
     if (checked_snprintf(path, sizeof(path), "%s/%s.json", store->record_dir, id) == 0 && path_exists(path)) {
         return true;
@@ -206,9 +206,9 @@ static bool id_material_collides_in_store(const struct store_paths *store, const
     return false;
 }
 
-int gen_id_for_store(const struct store_paths *primary,
-                            const struct store_paths *avoid_public_store,
-                            const struct store_paths *avoid_user_store,
+int gen_id_for_store(const struct sigmund_store *primary,
+                            const struct sigmund_store *avoid_public_store,
+                            const struct sigmund_store *avoid_user_store,
                             char *out,
                             size_t out_n) {
     if (out_n < ID_HEX_LEN + 1) {

@@ -5,7 +5,7 @@
 #include "sigmund/platform.h"
 #include "sigmund/store.h"
 
-int detect_invocation(struct invocation *inv, bool requested_system, bool elevated) {
+int detect_invocation(struct sigmund_invocation *inv, bool requested_system, bool elevated) {
     memset(inv, 0, sizeof(*inv));
     inv->euid_root = (geteuid() == 0);
     inv->requested_system = requested_system;
@@ -54,7 +54,7 @@ int detect_invocation(struct invocation *inv, bool requested_system, bool elevat
     return 0;
 }
 
-int init_invoking_user_store(const struct invocation *inv, struct store_paths *store) {
+int init_invoking_user_store(const struct sigmund_invocation *inv, struct sigmund_store *store) {
     if (!inv || !inv->have_sudo_user || !inv->invoking_home[0]) {
         errno = EINVAL;
         return -1;
