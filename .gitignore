@@ -2,6 +2,8 @@
 /sigmund
 /sigmund-dynamic
 
+# Local agent instructions
+
 # Prerequisites
 *.d
 
