@@ -1,13 +1,11 @@
 #include "sigmund/config.h"
 #include "sigmund/types.h"
+#include "sigmund/core.h"
 
 static volatile sig_atomic_t g_tail_interrupted = 0;
 static volatile sig_atomic_t g_console_resized = 0;
-static int write_all(int fd, const void *buf, size_t n);
 static void usage(void);
 static int show_help(const char *topic);
-static void format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n);
-static int read_exec_handshake(int fd, int *child_errno);
 
 static void handle_tail_sigint(int signo) {
     (void)signo;
@@ -17,176 +15,6 @@ static void handle_tail_sigint(int signo) {
 static void handle_console_sigwinch(int signo) {
     (void)signo;
     g_console_resized = 1;
-}
-
-static void die_errno(const char *msg) {
-    int e = errno;
-    fprintf(stderr, "%s: %s\n", msg, strerror(e));
-    exit(1);
-}
-
-static int checked_snprintf(char *dst, size_t n, const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    int r = vsnprintf(dst, n, fmt, ap);
-    va_end(ap);
-    if (r < 0 || (size_t)r >= n) {
-        errno = ENAMETOOLONG;
-        return -1;
-    }
-    return 0;
-}
-
-static bool has_suffix(const char *s, const char *suffix) {
-    size_t sl = strlen(s), sufl = strlen(suffix);
-    return sl >= sufl && strcmp(s + (sl - sufl), suffix) == 0;
-}
-
-static bool valid_id(const char *id) {
-    size_t len = strlen(id);
-    if (len != ID_HEX_LEN) {
-        return false;
-    }
-    if (strcmp(id, "00000000") == 0 || strcmp(id, "ffffffff") == 0) {
-        return false;
-    }
-    for (size_t i = 0; i < len; i++) {
-        if (!isdigit((unsigned char)id[i]) && !(id[i] >= 'a' && id[i] <= 'f')) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool record_json_filename_id(const char *name, char *id, size_t n) {
-    if (!name || !has_suffix(name, ".json")) {
-        return false;
-    }
-    size_t len = strlen(name);
-    size_t id_len = len - 5;
-    if (id_len + 1 > n) {
-        return false;
-    }
-    memcpy(id, name, id_len);
-    id[id_len] = '\0';
-    return valid_id(id);
-}
-
-static bool valid_id_prefix(const char *id) {
-    size_t len = strlen(id);
-    if (len < 1 || len > ID_HEX_LEN) {
-        return false;
-    }
-    for (size_t i = 0; i < len; i++) {
-        if (!isdigit((unsigned char)id[i]) && !(id[i] >= 'a' && id[i] <= 'f')) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool valid_profile_hash(const char *hash) {
-    if (!hash || strlen(hash) != PROFILE_HASH_HEX_LEN) {
-        return false;
-    }
-    for (size_t i = 0; i < PROFILE_HASH_HEX_LEN; i++) {
-        if (!isdigit((unsigned char)hash[i]) && !(hash[i] >= 'a' && hash[i] <= 'f')) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool valid_alias(const char *alias) {
-    if (!alias) {
-        return false;
-    }
-    size_t len = strlen(alias);
-    if (len == 0 || len > ALIAS_MAX_LEN || valid_profile_hash(alias)) {
-        return false;
-    }
-    for (size_t i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)alias[i];
-        if (!(isalnum(c) || c == '_' || c == '-')) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool valid_record(const struct record *r) {
-    return r->pid > 0 && r->pgid > 1 && r->id[0] != '\0';
-}
-
-static int mkdir_p0700(const char *dir) {
-    char path[SIGMUND_PATH_MAX];
-    if (checked_snprintf(path, sizeof(path), "%s", dir) != 0) {
-        return -1;
-    }
-
-    size_t len = strlen(path);
-    if (len == 0) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    for (size_t i = 1; i <= len; i++) {
-        if (path[i] != '/' && path[i] != '\0') {
-            continue;
-        }
-        char saved = path[i];
-        path[i] = '\0';
-        if (path[0] != '\0') {
-            struct stat st;
-            bool created = false;
-            if (stat(path, &st) != 0) {
-                if (mkdir(path, 0700) != 0 && errno != EEXIST) {
-                    return -1;
-                }
-                created = true;
-            } else if (!S_ISDIR(st.st_mode)) {
-                errno = ENOTDIR;
-                return -1;
-            }
-            if (created && chmod(path, 0700) != 0) {
-                return -1;
-            }
-        }
-        path[i] = saved;
-    }
-    return 0;
-}
-
-static int read_file_trim(const char *path, char *buf, size_t n) {
-    if (n == 0) {
-        errno = EINVAL;
-        return -1;
-    }
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) {
-        return -1;
-    }
-    ssize_t r;
-    do {
-        r = read(fd, buf, n - 1);
-    } while (r < 0 && errno == EINTR);
-    int saved = errno;
-    close(fd);
-    if (r < 0) {
-        errno = saved;
-        return -1;
-    }
-    buf[r] = '\0';
-    while (r > 0 && (buf[r - 1] == '\n' || buf[r - 1] == '\r' || isspace((unsigned char)buf[r - 1]))) {
-        buf[r - 1] = '\0';
-        r--;
-    }
-    return 0;
-}
-
-static bool path_exists(const char *path) {
-    struct stat st;
-    return stat(path, &st) == 0;
 }
 
 static int get_boot_id(char *buf, size_t n) {
@@ -216,188 +44,6 @@ static bool current_boot_id(char *buf, size_t n) {
     return get_boot_id(buf, n) == 0 && buf[0] != '\0';
 }
 
-struct sha256_ctx {
-    uint32_t h[8];
-    uint64_t len;
-    unsigned char buf[64];
-    size_t off;
-};
-
-static uint32_t rotr32(uint32_t x, unsigned n) {
-    return (x >> n) | (x << (32 - n));
-}
-
-static void sha256_block(struct sha256_ctx *c, const unsigned char *p) {
-    static const uint32_t k[64] = {
-        0x428a2f98U,0x71374491U,0xb5c0fbcfU,0xe9b5dba5U,0x3956c25bU,0x59f111f1U,0x923f82a4U,0xab1c5ed5U,
-        0xd807aa98U,0x12835b01U,0x243185beU,0x550c7dc3U,0x72be5d74U,0x80deb1feU,0x9bdc06a7U,0xc19bf174U,
-        0xe49b69c1U,0xefbe4786U,0x0fc19dc6U,0x240ca1ccU,0x2de92c6fU,0x4a7484aaU,0x5cb0a9dcU,0x76f988daU,
-        0x983e5152U,0xa831c66dU,0xb00327c8U,0xbf597fc7U,0xc6e00bf3U,0xd5a79147U,0x06ca6351U,0x14292967U,
-        0x27b70a85U,0x2e1b2138U,0x4d2c6dfcU,0x53380d13U,0x650a7354U,0x766a0abbU,0x81c2c92eU,0x92722c85U,
-        0xa2bfe8a1U,0xa81a664bU,0xc24b8b70U,0xc76c51a3U,0xd192e819U,0xd6990624U,0xf40e3585U,0x106aa070U,
-        0x19a4c116U,0x1e376c08U,0x2748774cU,0x34b0bcb5U,0x391c0cb3U,0x4ed8aa4aU,0x5b9cca4fU,0x682e6ff3U,
-        0x748f82eeU,0x78a5636fU,0x84c87814U,0x8cc70208U,0x90befffaU,0xa4506cebU,0xbef9a3f7U,0xc67178f2U
-    };
-    uint32_t w[64];
-    for (int i = 0; i < 16; i++) {
-        w[i] = ((uint32_t)p[i * 4] << 24) | ((uint32_t)p[i * 4 + 1] << 16) |
-               ((uint32_t)p[i * 4 + 2] << 8) | (uint32_t)p[i * 4 + 3];
-    }
-    for (int i = 16; i < 64; i++) {
-        uint32_t s0 = rotr32(w[i - 15], 7) ^ rotr32(w[i - 15], 18) ^ (w[i - 15] >> 3);
-        uint32_t s1 = rotr32(w[i - 2], 17) ^ rotr32(w[i - 2], 19) ^ (w[i - 2] >> 10);
-        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-    }
-    uint32_t a = c->h[0], b = c->h[1], d = c->h[3], e = c->h[4], f = c->h[5], g = c->h[6], h = c->h[7], cc = c->h[2];
-    for (int i = 0; i < 64; i++) {
-        uint32_t s1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25);
-        uint32_t ch = (e & f) ^ (~e & g);
-        uint32_t t1 = h + s1 + ch + k[i] + w[i];
-        uint32_t s0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22);
-        uint32_t maj = (a & b) ^ (a & cc) ^ (b & cc);
-        uint32_t t2 = s0 + maj;
-        h = g; g = f; f = e; e = d + t1; d = cc; cc = b; b = a; a = t1 + t2;
-    }
-    c->h[0] += a; c->h[1] += b; c->h[2] += cc; c->h[3] += d;
-    c->h[4] += e; c->h[5] += f; c->h[6] += g; c->h[7] += h;
-}
-
-static void sha256_init(struct sha256_ctx *c) {
-    c->h[0] = 0x6a09e667U; c->h[1] = 0xbb67ae85U; c->h[2] = 0x3c6ef372U; c->h[3] = 0xa54ff53aU;
-    c->h[4] = 0x510e527fU; c->h[5] = 0x9b05688cU; c->h[6] = 0x1f83d9abU; c->h[7] = 0x5be0cd19U;
-    c->len = 0;
-    c->off = 0;
-}
-
-static void sha256_update(struct sha256_ctx *c, const void *data, size_t n) {
-    const unsigned char *p = data;
-    c->len += (uint64_t)n * 8U;
-    while (n > 0) {
-        size_t take = 64 - c->off;
-        if (take > n) take = n;
-        memcpy(c->buf + c->off, p, take);
-        c->off += take;
-        p += take;
-        n -= take;
-        if (c->off == 64) {
-            sha256_block(c, c->buf);
-            c->off = 0;
-        }
-    }
-}
-
-static void sha256_final(struct sha256_ctx *c, unsigned char out[32]) {
-    c->buf[c->off++] = 0x80;
-    if (c->off > 56) {
-        while (c->off < 64) c->buf[c->off++] = 0;
-        sha256_block(c, c->buf);
-        c->off = 0;
-    }
-    while (c->off < 56) c->buf[c->off++] = 0;
-    for (int i = 7; i >= 0; i--) c->buf[c->off++] = (unsigned char)(c->len >> (i * 8));
-    sha256_block(c, c->buf);
-    for (int i = 0; i < 8; i++) {
-        out[i * 4] = (unsigned char)(c->h[i] >> 24);
-        out[i * 4 + 1] = (unsigned char)(c->h[i] >> 16);
-        out[i * 4 + 2] = (unsigned char)(c->h[i] >> 8);
-        out[i * 4 + 3] = (unsigned char)c->h[i];
-    }
-}
-
-static void hex_encode(const unsigned char *bytes, size_t n, char *out, size_t out_n) {
-    static const char hex[] = "0123456789abcdef";
-    if (out_n < n * 2 + 1) {
-        if (out_n > 0) out[0] = '\0';
-        return;
-    }
-    for (size_t i = 0; i < n; i++) {
-        out[i * 2] = hex[bytes[i] >> 4];
-        out[i * 2 + 1] = hex[bytes[i] & 0x0f];
-    }
-    out[n * 2] = '\0';
-}
-
-static int rand_bytes(uint8_t *buf, size_t n) {
-    size_t off = 0;
-#if defined(__linux__)
-    bool fallback = false;
-    while (off < n && !fallback) {
-        ssize_t r = getrandom(buf + off, n - off, 0);
-        if (r > 0) {
-            off += (size_t)r;
-            continue;
-        }
-        if (r < 0 && errno == EINTR) {
-            continue;
-        }
-        if (r < 0 && (errno == ENOSYS || errno == EINVAL)) {
-            fallback = true;
-            break;
-        }
-        return -1;
-    }
-    if (!fallback) {
-        return 0;
-    }
-#endif
-
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd < 0) {
-        return -1;
-    }
-    while (off < n) {
-        ssize_t x = read(fd, buf + off, n - off);
-        if (x > 0) {
-            off += (size_t)x;
-            continue;
-        }
-        if (x < 0 && errno == EINTR) {
-            continue;
-        }
-        close(fd);
-        return -1;
-    }
-    close(fd);
-    return 0;
-}
-
-static int mkdir_p_mode(const char *dir, mode_t mode) {
-    char path[SIGMUND_PATH_MAX];
-    if (checked_snprintf(path, sizeof(path), "%s", dir) != 0) {
-        return -1;
-    }
-
-    size_t len = strlen(path);
-    if (len == 0) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    for (size_t i = 1; i <= len; i++) {
-        if (path[i] != '/' && path[i] != '\0') {
-            continue;
-        }
-        char saved = path[i];
-        path[i] = '\0';
-        if (path[0] != '\0') {
-            struct stat st;
-            if (stat(path, &st) != 0) {
-                if (mkdir(path, mode) != 0 && errno != EEXIST) {
-                    return -1;
-                }
-                if (chmod(path, mode) != 0) {
-                    return -1;
-                }
-            } else if (!S_ISDIR(st.st_mode)) {
-                errno = ENOTDIR;
-                return -1;
-            }
-        }
-        path[i] = saved;
-    }
-    return 0;
-}
-
 static int chown_root_if_root(const char *path) {
     if (geteuid() != 0) {
         return 0;
@@ -415,34 +61,6 @@ static int chown_if_root(const char *path, uid_t uid, gid_t gid) {
     if (chown(path, uid, gid) != 0) {
         return -1;
     }
-    return 0;
-}
-
-static int parse_uid_env(const char *s, uid_t *out) {
-    if (!s || !*s) {
-        return -1;
-    }
-    char *end = NULL;
-    errno = 0;
-    unsigned long long v = strtoull(s, &end, 10);
-    if (end == s || *end != '\0' || errno != 0) {
-        return -1;
-    }
-    *out = (uid_t)v;
-    return 0;
-}
-
-static int parse_gid_env(const char *s, gid_t *out) {
-    if (!s || !*s) {
-        return -1;
-    }
-    char *end = NULL;
-    errno = 0;
-    unsigned long long v = strtoull(s, &end, 10);
-    if (end == s || *end != '\0' || errno != 0) {
-        return -1;
-    }
-    *out = (gid_t)v;
     return 0;
 }
 
@@ -730,26 +348,6 @@ static int gen_id_for_store(const struct store_paths *primary,
     }
     errno = EEXIST;
     return -1;
-}
-
-static int write_all(int fd, const void *buf, size_t n) {
-    const char *p = buf;
-    while (n > 0) {
-        ssize_t w = write(fd, p, n);
-        if (w < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            return -1;
-        }
-        if (w == 0) {
-            errno = EIO;
-            return -1;
-        }
-        p += w;
-        n -= (size_t)w;
-    }
-    return 0;
 }
 
 static void sig_note(const struct invocation *inv, const char *fmt, ...) {
@@ -1371,52 +969,6 @@ static void run_console_broker(int parent_pipe,
     broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, target, 0);
 }
 
-static void json_escape(FILE *f, const char *s) {
-    for (; *s; s++) {
-        if (*s == '"' || *s == '\\') {
-            fprintf(f, "\\%c", *s);
-        } else if (*s == '\n') {
-            fputs("\\n", f);
-        } else if (*s == '\r') {
-            fputs("\\r", f);
-        } else if (*s == '\t') {
-            fputs("\\t", f);
-        } else if (*s == '\b') {
-            fputs("\\b", f);
-        } else if (*s == '\f') {
-            fputs("\\f", f);
-        } else if ((unsigned char)*s < 32) {
-            fprintf(f, "\\u%04x", (unsigned char)*s);
-        } else {
-            fputc(*s, f);
-        }
-    }
-}
-
-static int write_json_argv(FILE *f, int argc, char **argv) {
-    fputs("[", f);
-    for (int i = 0; i < argc; i++) {
-        if (i > 0) {
-            fputs(", ", f);
-        }
-        fputc('"', f);
-        json_escape(f, argv[i]);
-        fputc('"', f);
-    }
-    fputs("]", f);
-    return 0;
-}
-
-static void sha256_update_cstr(struct sha256_ctx *ctx, const char *s) {
-    sha256_update(ctx, s, strlen(s));
-}
-
-static void sha256_update_nul_field(struct sha256_ctx *ctx, const char *s) {
-    static const unsigned char nul = 0;
-    sha256_update_cstr(ctx, s ? s : "");
-    sha256_update(ctx, &nul, 1);
-}
-
 /*
  * This digest is a stable capability key. Do not add versions, environment,
  * cwd, uid, timestamps, or other context: existing aliases, profiles, and
@@ -1664,86 +1216,6 @@ out:
         unlink(tmp);
     }
     return rc;
-}
-
-static int append_cmd_escaped(char *dst, size_t n, size_t *off, const char *arg) {
-    const char *sq = "'\\''";
-    if (*off + 1 >= n) {
-        return -1;
-    }
-    dst[(*off)++] = '\'';
-    for (; *arg; arg++) {
-        if (*arg == '\'') {
-            for (size_t j = 0; sq[j]; j++) {
-                if (*off + 1 >= n) {
-                    return -1;
-                }
-                dst[(*off)++] = sq[j];
-            }
-        } else {
-            if (*off + 1 >= n) {
-                return -1;
-            }
-            dst[(*off)++] = *arg;
-        }
-    }
-    if (*off + 1 >= n) {
-        return -1;
-    }
-    dst[(*off)++] = '\'';
-    dst[*off] = '\0';
-    return 0;
-}
-
-static bool cmd_arg_needs_quotes(const char *arg) {
-    if (!arg || !*arg) {
-        return true;
-    }
-    for (const unsigned char *p = (const unsigned char *)arg; *p; p++) {
-        if (isspace(*p) || strchr("'\"\\$`!*?[]{}()<>|&;#", (int)*p)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static int append_cmd_human(char *dst, size_t n, size_t *off, const char *arg) {
-    if (!arg) {
-        arg = "";
-    }
-    if (!cmd_arg_needs_quotes(arg)) {
-        for (const char *p = arg; *p; p++) {
-            if (*off + 1 >= n) {
-                return -1;
-            }
-            dst[(*off)++] = *p;
-        }
-        dst[*off] = '\0';
-        return 0;
-    }
-    return append_cmd_escaped(dst, n, off, arg);
-}
-
-static int format_argv_human(char *dst, size_t n, int argc, char **argv) {
-    if (!dst || n == 0 || argc <= 0 || !argv) {
-        errno = EINVAL;
-        return -1;
-    }
-    size_t off = 0;
-    dst[0] = '\0';
-    for (int i = 0; i < argc; i++) {
-        if (i > 0) {
-            if (off + 1 >= n) {
-                return -1;
-            }
-            dst[off++] = ' ';
-            dst[off] = '\0';
-        }
-        if (append_cmd_human(dst, n, &off, argv[i]) != 0) {
-            return -1;
-        }
-    }
-    return 0;
 }
 
 #if defined(__APPLE__)
@@ -2118,386 +1590,6 @@ static int group_exists(pid_t pgid) {
     return -1;
 }
 
-static const char *skip_ws(const char *p) {
-    while (*p && isspace((unsigned char)*p)) p++;
-    return p;
-}
-
-static int skip_json_string(const char **pp) {
-    const char *p = *pp;
-    if (*p != '"') return -1;
-    p++;
-    while (*p) {
-        if (*p == '"') {
-            *pp = p + 1;
-            return 0;
-        }
-        if (*p == '\\') {
-            p++;
-            if (!*p) return -1;
-            if (*p == 'u') {
-                for (int i = 0; i < 4; i++) {
-                    p++;
-                    if (!isxdigit((unsigned char)*p)) return -1;
-                }
-            }
-        }
-        p++;
-    }
-    return -1;
-}
-
-/* BMP-only; surrogate pairs are rejected. */
-static int parse_json_string(const char *p, char *out, size_t n, const char **endp) {
-    if (*p != '"') return -1;
-    p++;
-    size_t i = 0;
-    while (*p) {
-        if (*p == '"') {
-            if (i >= n) return -1;
-            out[i] = '\0';
-            if (endp) *endp = p + 1;
-            return 0;
-        }
-        if (*p == '\\') {
-            p++;
-            if (!*p) return -1;
-            char c = *p;
-            switch (*p) {
-            case 'n': c = '\n'; break;
-            case 't': c = '\t'; break;
-            case 'r': c = '\r'; break;
-            case 'b': c = '\b'; break;
-            case 'f': c = '\f'; break;
-            case '\\': case '"': case '/': break;
-            case 'u': {
-                unsigned v = 0;
-                for (int j = 0; j < 4; j++) {
-                    p++;
-                    if (!isxdigit((unsigned char)*p)) return -1;
-                    v = (v << 4) + (unsigned)(isdigit((unsigned char)*p) ? *p - '0' : (tolower((unsigned char)*p) - 'a' + 10));
-                }
-                if (v == 0) return -1;
-                if (v >= 0xD800 && v <= 0xDFFF) return -1;
-                if (v <= 0x7F) {
-                    c = (char)v;
-                    if (i + 1 >= n) return -1;
-                    out[i++] = c;
-                } else if (v <= 0x7FF) {
-                    if (i + 2 >= n) return -1;
-                    out[i++] = (char)(0xC0 | (v >> 6));
-                    out[i++] = (char)(0x80 | (v & 0x3F));
-                } else {
-                    if (i + 3 >= n) return -1;
-                    out[i++] = (char)(0xE0 | (v >> 12));
-                    out[i++] = (char)(0x80 | ((v >> 6) & 0x3F));
-                    out[i++] = (char)(0x80 | (v & 0x3F));
-                }
-                p++;
-                continue;
-            }
-            default: return -1;
-            }
-            if (i + 1 >= n) return -1;
-            out[i++] = c;
-            p++;
-            continue;
-        }
-        if (i + 1 >= n) return -1;
-        out[i++] = *p++;
-    }
-    return -1;
-}
-
-static int skip_json_value(const char **pp);
-static int skip_json_value_impl(const char **pp, int depth);
-
-static int match_json_string(const char *p, const char *lit, const char **endp, bool *matched) {
-    if (*p != '"') return -1;
-    p++;
-    size_t li = 0;
-    bool ok = true;
-    while (*p) {
-        if (*p == '"') {
-            if (lit[li] != '\0') {
-                ok = false;
-            }
-            if (endp) *endp = p + 1;
-            if (matched) *matched = ok;
-            return 0;
-        }
-        unsigned cp = 0;
-        if (*p == '\\') {
-            p++;
-            if (!*p) return -1;
-            switch (*p) {
-            case 'n': cp = '\n'; p++; break;
-            case 't': cp = '\t'; p++; break;
-            case 'r': cp = '\r'; p++; break;
-            case 'b': cp = '\b'; p++; break;
-            case 'f': cp = '\f'; p++; break;
-            case '\\': cp = '\\'; p++; break;
-            case '"': cp = '"'; p++; break;
-            case '/': cp = '/'; p++; break;
-            case 'u': {
-                unsigned v = 0;
-                for (int j = 0; j < 4; j++) {
-                    p++;
-                    if (!isxdigit((unsigned char)*p)) return -1;
-                    v = (v << 4) + (unsigned)(isdigit((unsigned char)*p) ? *p - '0' : (tolower((unsigned char)*p) - 'a' + 10));
-                }
-                if (v == 0 || (v >= 0xD800 && v <= 0xDFFF)) return -1;
-                cp = v;
-                p++;
-                break;
-            }
-            default:
-                return -1;
-            }
-        } else {
-            cp = (unsigned char)*p;
-            p++;
-        }
-
-        if (cp <= 0x7F) {
-            if (lit[li] == '\0' || (unsigned char)lit[li] != cp) {
-                ok = false;
-            }
-            if (lit[li] != '\0') {
-                li++;
-            }
-        } else {
-            ok = false;
-        }
-    }
-    return -1;
-}
-
-static int skip_json_value_impl(const char **pp, int depth) {
-    if (depth > JSON_MAX_DEPTH) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    const char *p = skip_ws(*pp);
-    if (*p == '"') {
-        if (skip_json_string(&p) != 0) return -1;
-        *pp = p;
-        return 0;
-    }
-    if (*p == '{' || *p == '[') {
-        char open = *p, close = (open == '{') ? '}' : ']';
-        p++;
-        while (*p) {
-            p = skip_ws(p);
-            if (*p == close) { *pp = p + 1; return 0; }
-            if (open == '{') {
-                if (skip_json_string(&p) != 0) return -1;
-                p = skip_ws(p);
-                if (*p != ':') return -1;
-                p++;
-            }
-            if (skip_json_value_impl(&p, depth + 1) != 0) return -1;
-            p = skip_ws(p);
-            if (*p == ',') p++;
-        }
-        return -1;
-    }
-    while (*p && !isspace((unsigned char)*p) && *p != ',' && *p != '}' && *p != ']') p++;
-    *pp = p;
-    return 0;
-}
-
-static int skip_json_value(const char **pp) {
-    return skip_json_value_impl(pp, 0);
-}
-
-static int json_find_key(const char *j, const char *k, const char **v) {
-    const char *p = skip_ws(j);
-    if (*p != '{') return -1;
-    p++;
-    while (*p) {
-        p = skip_ws(p);
-        if (*p == '}') return -1;
-        bool key_match = false;
-        if (match_json_string(p, k, &p, &key_match) != 0) return -1;
-        p = skip_ws(p);
-        if (*p != ':') return -1;
-        p = skip_ws(p + 1);
-        if (key_match) {
-            *v = p;
-            return 0;
-        }
-        if (skip_json_value(&p) != 0) return -1;
-        p = skip_ws(p);
-        if (*p == ',') p++;
-    }
-    return -1;
-}
-
-static int json_get_i64(const char *j, const char *k, int64_t *out) {
-    const char *v;
-    if (json_find_key(j, k, &v) != 0) {
-        return -1;
-    }
-    if (*v == '+') return -1;
-    char *end = NULL;
-    errno = 0;
-    long long x = strtoll(v, &end, 10);
-    if (end == v || errno != 0) return -1;
-    end = (char *)skip_ws(end);
-    if (*end && *end != ',' && *end != '}' && *end != ']') return -1;
-    *out = x;
-    return 0;
-}
-
-static int json_get_bool(const char *j, const char *k, bool *out) {
-    const char *v;
-    if (json_find_key(j, k, &v) != 0) {
-        return -1;
-    }
-    v = skip_ws(v);
-    if (strncmp(v, "true", 4) == 0) {
-        const char *end = skip_ws(v + 4);
-        if (*end && *end != ',' && *end != '}' && *end != ']') return -1;
-        *out = true;
-        return 0;
-    }
-    if (strncmp(v, "false", 5) == 0) {
-        const char *end = skip_ws(v + 5);
-        if (*end && *end != ',' && *end != '}' && *end != ']') return -1;
-        *out = false;
-        return 0;
-    }
-    return -1;
-}
-
-static int json_get_u64(const char *j, const char *k, uint64_t *out) {
-    const char *v;
-    if (json_find_key(j, k, &v) != 0) {
-        return -1;
-    }
-    if (*v == '+' || *v == '-') return -1;
-    char *end = NULL;
-    errno = 0;
-    unsigned long long x = strtoull(v, &end, 10);
-    if (end == v || errno != 0) return -1;
-    end = (char *)skip_ws(end);
-    if (*end && *end != ',' && *end != '}' && *end != ']') return -1;
-    *out = x;
-    return 0;
-}
-
-static int json_get_str(const char *j, const char *k, char *out, size_t n) {
-    const char *v;
-    if (json_find_key(j, k, &v) != 0) return -1;
-    return parse_json_string(skip_ws(v), out, n, NULL);
-}
-
-static int json_get_argv_display(const char *j, char *out, size_t n) {
-    const char *v;
-    if (json_find_key(j, "argv", &v) != 0 || *v != '[') {
-        return -1;
-    }
-    v = skip_ws(v + 1);
-    size_t off = 0;
-    bool first = true;
-    while (*v && *v != ']') {
-        char arg[SIGMUND_PATH_MAX];
-        if (parse_json_string(v, arg, sizeof(arg), &v) != 0) {
-            return -1;
-        }
-        if (!first) {
-            if (off + 1 >= n) return -1;
-            out[off++] = ' ';
-            out[off] = '\0';
-        }
-        if (append_cmd_human(out, n, &off, arg) != 0) {
-            return -1;
-        }
-        first = false;
-        v = skip_ws(v);
-        if (*v == ',') {
-            v = skip_ws(v + 1);
-        } else if (*v != ']') {
-            return -1;
-        }
-    }
-    if (*v != ']') return -1;
-    return 0;
-}
-
-static void free_argv_alloc(char **argv, int argc) {
-    if (!argv) {
-        return;
-    }
-    for (int i = 0; i < argc; i++) {
-        free(argv[i]);
-    }
-    free(argv);
-}
-
-static int json_get_string_array_alloc(const char *j, const char *key, char ***argv_out, int *argc_out) {
-    *argv_out = NULL;
-    *argc_out = 0;
-    const char *v;
-    if (json_find_key(j, key, &v) != 0 || *v != '[') {
-        return -1;
-    }
-    v = skip_ws(v + 1);
-    int cap = 4;
-    int argc = 0;
-    char **argv = calloc((size_t)cap + 1, sizeof(char *));
-    if (!argv) {
-        return -1;
-    }
-    while (*v && *v != ']') {
-        char arg[SIGMUND_PATH_MAX];
-        if (parse_json_string(v, arg, sizeof(arg), &v) != 0) {
-            free_argv_alloc(argv, argc);
-            return -1;
-        }
-        if (argc == cap) {
-            cap *= 2;
-            char **next = realloc(argv, ((size_t)cap + 1) * sizeof(char *));
-            if (!next) {
-                free_argv_alloc(argv, argc);
-                return -1;
-            }
-            argv = next;
-        }
-        argv[argc] = strdup(arg);
-        if (!argv[argc]) {
-            free_argv_alloc(argv, argc);
-            return -1;
-        }
-        argc++;
-        argv[argc] = NULL;
-        v = skip_ws(v);
-        if (*v == ',') {
-            v = skip_ws(v + 1);
-        } else if (*v != ']') {
-            free_argv_alloc(argv, argc);
-            return -1;
-        }
-    }
-    if (*v != ']' || argc == 0) {
-        free_argv_alloc(argv, argc);
-        return -1;
-    }
-    *argv_out = argv;
-    *argc_out = argc;
-    return 0;
-}
-
-static int json_get_argv_alloc(const char *j, char ***argv_out, int *argc_out) {
-    return json_get_string_array_alloc(j, "argv", argv_out, argc_out);
-}
-
-static int json_get_args_alloc(const char *j, char ***argv_out, int *argc_out) {
-    return json_get_string_array_alloc(j, "args", argv_out, argc_out);
-}
-
 static int realpath_copy(const char *path, char *out, size_t n) {
     char *resolved = realpath(path, NULL);
     if (!resolved) {
@@ -2607,87 +1699,12 @@ static bool start_target_is_within_invoking_home(const struct invocation *inv,
     return path_is_within_dir(resolved, home);
 }
 
-static int read_owned_file_no_symlink(const char *path, char **out) {
-    *out = NULL;
-    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) {
-        return -1;
-    }
-
-    struct stat st;
-    if (fstat(fd, &st) != 0) {
-        int saved = errno;
-        close(fd);
-        errno = saved;
-        return -1;
-    }
-    if (!S_ISREG(st.st_mode) || st.st_size < 0 || st.st_size > MAX_RECORD_BYTES) {
-        close(fd);
-        errno = EINVAL;
-        return -1;
-    }
-
-    size_t sz = (size_t)st.st_size;
-    char *j = malloc(sz + 1);
-    if (!j) {
-        int saved = errno;
-        close(fd);
-        errno = saved;
-        return -1;
-    }
-
-    size_t off = 0;
-    while (off < sz) {
-        ssize_t nr = read(fd, j + off, sz - off);
-        if (nr > 0) {
-            off += (size_t)nr;
-            continue;
-        }
-        if (nr == 0) {
-            free(j);
-            close(fd);
-            errno = EIO;
-            return -1;
-        }
-        if (errno == EINTR) {
-            continue;
-        }
-        int saved = errno;
-        free(j);
-        close(fd);
-        errno = saved;
-        return -1;
-    }
-    j[sz] = '\0';
-
-    if (close(fd) != 0) {
-        int saved = errno;
-        free(j);
-        errno = saved;
-        return -1;
-    }
-    *out = j;
-    return 0;
-}
-
 static void free_profile(struct profile *p) {
     if (!p) {
         return;
     }
     free_argv_alloc(p->argv, p->argc);
     memset(p, 0, sizeof(*p));
-}
-
-static int fsync_dir_path(const char *dir) {
-    int dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (dfd < 0) {
-        return -1;
-    }
-    int rc = fsync(dfd);
-    int saved = errno;
-    close(dfd);
-    errno = saved;
-    return rc;
 }
 
 static void free_profiles(struct profile *profiles, size_t count) {
@@ -2698,28 +1715,6 @@ static void free_profiles(struct profile *profiles, size_t count) {
         free_profile(&profiles[i]);
     }
     free(profiles);
-}
-
-static int copy_argv(char ***out, int argc, char **argv) {
-    *out = NULL;
-    if (argc <= 0 || !argv) {
-        errno = EINVAL;
-        return -1;
-    }
-    char **copy = calloc((size_t)argc + 1, sizeof(char *));
-    if (!copy) {
-        return -1;
-    }
-    for (int i = 0; i < argc; i++) {
-        copy[i] = strdup(argv[i]);
-        if (!copy[i]) {
-            free_argv_alloc(copy, i);
-            return -1;
-        }
-    }
-    copy[argc] = NULL;
-    *out = copy;
-    return 0;
 }
 
 static bool profile_equal_argv(const struct profile *p, const char *binary_path, int argc, char **argv) {
@@ -3431,10 +2426,6 @@ static int load_record(const char *path, struct record *r) {
     return 0;
 }
 
-static int read_small_file(const char *path, char **out) {
-    return read_owned_file_no_symlink(path, out);
-}
-
 static int load_public_index(const char *path, struct public_index *pi) {
     memset(pi, 0, sizeof(*pi));
     char *j = NULL;
@@ -3600,31 +2591,6 @@ static void rollback_spawned_group(pid_t pid, pid_t pgid) {
             continue;
         }
     }
-}
-
-static int read_exec_handshake(int fd, int *child_errno) {
-    unsigned char *p = (unsigned char *)child_errno;
-    size_t got = 0;
-    *child_errno = 0;
-    while (got < sizeof(*child_errno)) {
-        ssize_t n = read(fd, p + got, sizeof(*child_errno) - got);
-        if (n > 0) {
-            got += (size_t)n;
-            continue;
-        }
-        if (n == 0) {
-            if (got == 0) {
-                return 0;
-            }
-            errno = EPROTO;
-            return -1;
-        }
-        if (errno == EINTR) {
-            continue;
-        }
-        return -1;
-    }
-    return 1;
 }
 
 static int perform_start(const struct invocation *inv,
@@ -4107,18 +3073,6 @@ static const char *state_str(enum run_state s) {
     }
 }
 
-static void format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n) {
-    time_t sec = (time_t)(unix_ns / 1000000000LL);
-    struct tm tm_utc;
-    if (!gmtime_r(&sec, &tm_utc)) {
-        snprintf(out, n, "-");
-        return;
-    }
-    if (strftime(out, n, "%Y-%m-%dT%H:%M:%SZ", &tm_utc) == 0) {
-        snprintf(out, n, "-");
-    }
-}
-
 static void format_result(const struct record *r, enum run_state st, char *out, size_t n) {
     if (st == STATE_RUNNING) {
         snprintf(out, n, "%s", r->has_console ? "console" : "-");
@@ -4172,25 +3126,6 @@ static int append_list_row(struct list_rows *rows, const struct list_row *row) {
     rows->items = next;
     rows->items[rows->count++] = *row;
     return 0;
-}
-
-static void format_relative_age(int64_t start_unix_ns, char *out, size_t n) {
-    struct timespec now;
-    if (clock_gettime(CLOCK_REALTIME, &now) != 0 || start_unix_ns <= 0) {
-        snprintf(out, n, "-");
-        return;
-    }
-    int64_t now_ns = (int64_t)now.tv_sec * 1000000000LL + now.tv_nsec;
-    int64_t age_s = (now_ns > start_unix_ns) ? (now_ns - start_unix_ns) / 1000000000LL : 0;
-    if (age_s < 60) {
-        snprintf(out, n, "%" PRId64 "s", age_s);
-    } else if (age_s < 3600) {
-        snprintf(out, n, "%" PRId64 "m", age_s / 60);
-    } else if (age_s < 86400) {
-        snprintf(out, n, "%" PRId64 "h", age_s / 3600);
-    } else {
-        snprintf(out, n, "%" PRId64 "d", age_s / 86400);
-    }
 }
 
 static int compare_list_rows(const void *a, const void *b) {
@@ -4622,10 +3557,6 @@ static int verify_system_alias_cap(const struct store_paths *system_store,
     return 0;
 }
 
-static bool valid_runid_selector(const char *sel) {
-    return sel && (valid_id(sel) || strcmp(sel, "00000000") == 0 || strcmp(sel, "ffffffff") == 0);
-}
-
 static int ensure_run_recorded_under_alias(const struct store_paths *store, const char *id, const char *alias) {
     struct record r;
     char path[SIGMUND_PATH_MAX];
@@ -4664,10 +3595,6 @@ static int resolve_system_public_id(const struct store_paths *store, const char 
         return -1;
     }
     return 0;
-}
-
-static bool valid_target_atom(const char *id) {
-    return valid_id_prefix(id) || valid_alias(id);
 }
 
 static int resolve_public_profile_token(const struct store_paths *store,
