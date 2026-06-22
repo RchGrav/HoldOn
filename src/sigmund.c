@@ -1135,60 +1135,61 @@ static int broker_process_client_input(struct console_client_state *state,
     return 0;
 }
 
-static size_t unix_socket_path_limit(void) {
-    struct sockaddr_un addr;
-    return sizeof(addr.sun_path);
-}
-
-static int format_console_sock_path(const struct invocation *inv,
-                                    const struct store_paths *store,
+static int format_console_sock_path(const struct store_paths *store,
                                     const char *id,
                                     char *out,
                                     size_t n) {
-    char preferred[SIGMUND_PATH_MAX];
-    if (checked_snprintf(preferred, sizeof(preferred), "%s/%s.sock", store->console_dir, id) != 0) {
-        return -1;
-    }
-    if (strlen(preferred) < unix_socket_path_limit()) {
-        return checked_snprintf(out, n, "%s", preferred);
-    }
+    /* The console socket always lives inside the store's 0700-owned console
+     * directory; access is gated by that directory's permissions. It is
+     * bound/connected via a short name relative to that directory (see
+     * console_addr_relative), so the directory's absolute length does not
+     * count against the AF_UNIX sun_path limit. There is therefore no need to
+     * fall back to a world-writable location such as /tmp. */
+    return checked_snprintf(out, n, "%s/%s.sock", store->console_dir, id);
+}
 
-    uid_t owner_uid = geteuid();
-    gid_t owner_gid = getegid();
-    if (store->kind == STORE_USER_LOCAL && inv && inv->euid_root && inv->have_sudo_user) {
-        owner_uid = inv->invoking_uid;
-        owner_gid = inv->invoking_gid;
-    }
-
-    char dir[SIGMUND_PATH_MAX];
-    if (checked_snprintf(dir, sizeof(dir), "/tmp/sigmund-console-%llu", (unsigned long long)owner_uid) != 0) {
+/* AF_UNIX paths are limited to sun_path bytes (104 on macOS, 108 on Linux),
+ * far shorter than a normal filesystem path. To keep the console socket inside
+ * its store-owned directory regardless of that directory's length, callers
+ * chdir into the directory and bind/connect using a short relative name. This
+ * helper splits an absolute socket path into its directory and fills an
+ * addr whose sun_path holds just the trailing "<id>.sock" name. Only
+ * bind()/connect() are subject to the limit; unlink/stat/record keep using the
+ * absolute path. */
+static int console_addr_relative(const char *sock_path,
+                                 struct sockaddr_un *addr,
+                                 char *dir,
+                                 size_t dirn) {
+    const char *slash = strrchr(sock_path, '/');
+    if (!slash || slash == sock_path || !slash[1]) {
+        errno = EINVAL;
         return -1;
     }
-    if (mkdir_p0700(dir) != 0 ||
-        chmod(dir, 0700) != 0 ||
-        chown_if_root(dir, owner_uid, owner_gid) != 0) {
-        return -1;
-    }
-    if (checked_snprintf(out, n, "%s/%s.sock", dir, id) != 0) {
-        return -1;
-    }
-    if (strlen(out) >= unix_socket_path_limit()) {
+    const char *name = slash + 1;
+    size_t namelen = strlen(name);
+    if (namelen >= sizeof(addr->sun_path)) {
         errno = ENAMETOOLONG;
         return -1;
     }
+    size_t dlen = (size_t)(slash - sock_path);
+    if (dlen >= dirn) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(dir, sock_path, dlen);
+    dir[dlen] = '\0';
+    memset(addr, 0, sizeof(*addr));
+    addr->sun_family = AF_UNIX;
+    memcpy(addr->sun_path, name, namelen + 1);
     return 0;
 }
 
 static int make_console_listener(const char *sock_path) {
     struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    size_t len = strlen(sock_path);
-    if (len == 0 || len >= sizeof(addr.sun_path)) {
-        errno = ENAMETOOLONG;
+    char dir[SIGMUND_PATH_MAX];
+    if (console_addr_relative(sock_path, &addr, dir, sizeof(dir)) != 0) {
         return -1;
     }
-    memcpy(addr.sun_path, sock_path, len + 1);
 
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) {
@@ -1202,21 +1203,52 @@ static int make_console_listener(const char *sock_path) {
         return -1;
     }
 #endif
-    unlink(sock_path);
-    mode_t old_umask = umask(077);
-    int rc = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
-    umask(old_umask);
-    if (rc != 0) {
+
+    int cwd_fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (cwd_fd < 0) {
         int saved = errno;
         close(fd);
         errno = saved;
         return -1;
     }
-    if (chmod(sock_path, 0600) != 0 || listen(fd, 1) != 0) {
+    if (chdir(dir) != 0) {
         int saved = errno;
+        close(cwd_fd);
         close(fd);
-        unlink(sock_path);
         errno = saved;
+        return -1;
+    }
+
+    int err = 0;
+    unlink(addr.sun_path);
+    mode_t old_umask = umask(077);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        err = errno;
+    }
+    umask(old_umask);
+    if (!err && chmod(addr.sun_path, 0600) != 0) {
+        err = errno;
+    }
+    if (!err && listen(fd, 1) != 0) {
+        err = errno;
+    }
+    if (err) {
+        unlink(addr.sun_path);
+    }
+
+    /* Restore the working directory before returning. The console broker forks
+     * and execs the target process after this call; that process must run in
+     * the caller's original cwd, not the console directory. fchdir failure is
+     * treated as fatal so we never launch the target in the wrong directory. */
+    if (fchdir(cwd_fd) != 0 && err == 0) {
+        err = errno;
+        unlink(addr.sun_path);
+    }
+    close(cwd_fd);
+
+    if (err) {
+        close(fd);
+        errno = err;
         return -1;
     }
     return fd;
@@ -3839,7 +3871,7 @@ static int perform_start(const struct invocation *inv,
         free_argv_alloc(launch_argv, argc);
         die_errno("sigmund: reserve path too long");
     }
-    if (console_mode && format_console_sock_path(inv, store, id, console_sock, sizeof(console_sock)) != 0) {
+    if (console_mode && format_console_sock_path(store, id, console_sock, sizeof(console_sock)) != 0) {
         free_argv_alloc(launch_argv, argc);
         die_errno("sigmund: console socket path too long");
     }
@@ -5919,15 +5951,13 @@ static int connect_console_socket(const char *sock_path) {
     }
 
     struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    size_t len = strlen(sock_path);
-    if (len == 0 || len >= sizeof(addr.sun_path)) {
-        fprintf(stderr, "sigmund: console socket path is too long\n");
-        errno = ENAMETOOLONG;
+    char dir[SIGMUND_PATH_MAX];
+    if (console_addr_relative(sock_path, &addr, dir, sizeof(dir)) != 0) {
+        if (errno == ENAMETOOLONG) {
+            fprintf(stderr, "sigmund: console socket path is too long\n");
+        }
         return -1;
     }
-    memcpy(addr.sun_path, sock_path, len + 1);
 
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) {
@@ -5941,10 +5971,36 @@ static int connect_console_socket(const char *sock_path) {
         return -1;
     }
 #endif
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+
+    /* Connect via the short relative name from inside the socket's directory
+     * (see console_addr_relative), restoring cwd afterward. */
+    int cwd_fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (cwd_fd < 0) {
         int saved = errno;
         close(fd);
         errno = saved;
+        return -1;
+    }
+    if (chdir(dir) != 0) {
+        int saved = errno;
+        close(cwd_fd);
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+
+    int err = 0;
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        err = errno;
+    }
+    if (fchdir(cwd_fd) != 0 && err == 0) {
+        err = errno;
+    }
+    close(cwd_fd);
+
+    if (err) {
+        close(fd);
+        errno = err;
         return -1;
     }
     return fd;

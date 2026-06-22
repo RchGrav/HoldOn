@@ -806,6 +806,76 @@ test_console_round_trip_and_log_tee() {
   }
 }
 
+test_console_socket_lives_in_store_dir() {
+  # The console socket must live inside the store's console directory, never in
+  # /tmp, even though the harness's store path is longer than the AF_UNIX
+  # sun_path limit (~104). This exercises the relative-bind path.
+  local out id store record sock
+  out=$("$SIGMUND_BIN" --console /bin/sh -c 'sleep 30' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  store="$HOME/.local/state/sigmund"
+  record="$store/$id.json"
+  sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
+  if [ "$sock" != "$store/console/$id.sock" ]; then
+    echo "console socket not in store console dir (got: $sock)" >&2
+    "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if [ ! -S "$sock" ]; then
+    echo "no socket present at $sock" >&2
+    "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+    return 1
+  fi
+  # The relative path must also be connectable when the store path is long.
+  printf 'noop\n' | "$SIGMUND_BIN" console "$id" >/dev/null 2>"$TEST_ROOT/console-store.err" || {
+    cat "$TEST_ROOT/console-store.err" >&2
+    "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+    return 1
+  }
+  "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+  return 0
+}
+
+test_console_target_runs_in_caller_cwd() {
+  # Relative-bind temporarily chdir()s into the console dir to bind the socket;
+  # it must restore the cwd so the launched process still runs in the caller's
+  # working directory, not the console directory.
+  local out id store logf workdir i ok
+  workdir="$TEST_ROOT/console-cwd"
+  mkdir -p "$workdir" || return 1
+  : > "$workdir/sentinel-file" || return 1
+  if [ "$USER_ACTOR_NEEDS_SUDO" -eq 1 ]; then
+    chown -R "$TEST_UID:$TEST_GID" "$workdir" || return 1
+  fi
+
+  out=$( cd "$workdir" && "$SIGMUND_BIN" --console /bin/sh -c \
+    'if [ -e sentinel-file ]; then echo CWD_OK; else echo CWD_BAD; fi; sleep 30' 2>&1 ) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  store="$HOME/.local/state/sigmund"
+  logf="$store/$id.log"
+  ok=0
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if grep -q CWD_OK "$logf" 2>/dev/null; then ok=1; break; fi
+    if grep -q CWD_BAD "$logf" 2>/dev/null; then ok=0; break; fi
+    sleep 0.2
+  done
+  "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+  if [ "$ok" -ne 1 ]; then
+    echo "target did not run in caller cwd; log:" >&2
+    cat "$logf" >&2 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
 build_console_protocol_helper() {
   local helper="$TEST_ROOT/console_protocol_helper"
   [ -x "$helper" ] && { printf '%s\n' "$helper"; return 0; }
@@ -850,13 +920,25 @@ int main(int argc, char **argv) {
   const char *input = argv[2];
   const char *expect = argv[3];
 
+  /* Connect via a short name relative to the socket's directory, mirroring
+   * sigmund's own client, so a long store path stays within sun_path. */
+  const char *slash = strrchr(sock_path, '/');
+  if (!slash || !slash[1]) return 3;
+  char dir[4096];
+  size_t dlen = (size_t)(slash - sock_path);
+  if (dlen >= sizeof(dir)) return 3;
+  memcpy(dir, sock_path, dlen);
+  dir[dlen] = '\0';
+  const char *name = slash + 1;
+
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (fd < 0) return 2;
   struct sockaddr_un addr;
   memset(&addr, 0, sizeof(addr));
   addr.sun_family = AF_UNIX;
-  if (strlen(sock_path) >= sizeof(addr.sun_path)) return 3;
-  strcpy(addr.sun_path, sock_path);
+  if (strlen(name) >= sizeof(addr.sun_path)) return 3;
+  strcpy(addr.sun_path, name);
+  if (chdir(dir) != 0) return 4;
   if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) return 4;
   if (write_all(fd, "SIGMUND1", 8) != 0) return 5;
   if (write_frame(fd, 'D', input) != 0) return 6;
@@ -1629,6 +1711,8 @@ run_test "--console works without an external attach tool" test_console_does_not
 run_test "console reports a normal run has no console" test_console_reports_non_console_run
 run_test "console attach round-trips and tees to the log" test_console_round_trip_and_log_tee
 run_test "console can reattach after detach" test_console_can_reattach_after_detach
+run_test "console socket lives in store dir, not /tmp, for long paths" test_console_socket_lives_in_store_dir
+run_test "console target runs in caller cwd (relative-bind restores cwd)" test_console_target_runs_in_caller_cwd
 run_test "prune <id> removes exactly one run record/output" test_prune_by_id
 run_test "prune all removes prunable while preserving running" test_prune_all_keeps_running
 run_test "transactional launch rollback on record write failure" test_transactional_record_write_failure
