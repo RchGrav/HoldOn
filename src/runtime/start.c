@@ -1,0 +1,856 @@
+#include "sigmund/config.h"
+#include "sigmund/types.h"
+#include "sigmund/runtime.h"
+#include "sigmund/runtime_internal.h"
+#include "sigmund/core.h"
+#include "sigmund/platform.h"
+#include "sigmund/store.h"
+#include "sigmund/console.h"
+#include "sigmund/access.h"
+
+struct start_profile_target {
+    struct store_paths store;
+    char hash[PROFILE_HASH_STR_LEN];
+    char alias[ALIAS_MAX_LEN + 1];
+    struct profile recipe;
+    bool has_hash;
+    bool has_alias;
+    bool has_recipe;
+    bool needs_elevation;
+};
+
+static const char *explicit_start_argv0(bool owned, const char *command, int argc, char **argv);
+static int private_start_hash_for_token(const struct store_paths *store,
+                                        const char *token,
+                                        char hash[PROFILE_HASH_STR_LEN],
+                                        bool *matched);
+static int private_start_recipe_for_token(const struct store_paths *store,
+                                          const char *token,
+                                          struct profile *recipe,
+                                          bool *matched);
+static void free_start_profile_target(struct start_profile_target *target);
+static void start_target_set_alias(struct start_profile_target *target, const char *alias);
+static int start_target_set_recipe(struct start_profile_target *target,
+                                   const struct store_paths *store,
+                                   const char *alias);
+static int start_target_set_hash(struct start_profile_target *target,
+                                 const struct store_paths *store,
+                                 const char *hash,
+                                 const char *alias,
+                                 bool needs_elevation);
+static int count_running_alias(const struct store_paths *store, const char *alias, size_t *count_out);
+static int resolve_start_profile_target(const struct invocation *inv,
+                                        const struct store_paths *current_user_store,
+                                        const struct store_paths *system_store,
+                                        const char *token,
+                                        struct start_profile_target *out);
+static int perform_explicit_start(const struct invocation *inv,
+                                  const struct store_paths *store,
+                                  bool tail,
+                                  bool console_mode,
+                                  int argc,
+                                  char **argv);
+
+static const char *explicit_start_argv0(bool owned, const char *command, int argc, char **argv) {
+    if (argc <= 0 || !argv || !argv[0]) {
+        return NULL;
+    }
+    if (!owned) {
+        return argv[0];
+    }
+    if (command && strcmp(command, "start") == 0) {
+        return argv[0];
+    }
+    return NULL;
+}
+
+bool start_target_is_within_invoking_home(const struct invocation *inv,
+                                                 bool owned,
+                                                 const char *command,
+                                                 int argc,
+                                                 char **argv) {
+    const char *target = explicit_start_argv0(owned, command, argc, argv);
+    if (!target || !*target) {
+        return false;
+    }
+
+    const char *home = NULL;
+    if (inv && inv->euid_root && inv->have_sudo_user && inv->invoking_home[0]) {
+        home = inv->invoking_home;
+    } else {
+        home = getenv("HOME");
+    }
+    if (!home || !*home) {
+        return false;
+    }
+
+    char resolved[SIGMUND_PATH_MAX];
+    if (resolve_binary_path(target, resolved, sizeof(resolved)) != 0) {
+        return false;
+    }
+    return path_is_within_dir(resolved, home);
+}
+
+int perform_start(const struct invocation *inv,
+                         const struct store_paths *store,
+                         bool tail,
+                         bool console_mode,
+                         int argc,
+                         char **argv,
+                         const char *exec_path,
+                         const char *run_alias) {
+    if (argc <= 0 || !argv || !argv[0]) {
+        usage();
+        return 5;
+    }
+
+    char resolved_exec_path[SIGMUND_PATH_MAX];
+    const char *path_to_resolve = (exec_path && *exec_path) ? exec_path : argv[0];
+    if (resolve_binary_path(path_to_resolve, resolved_exec_path, sizeof(resolved_exec_path)) != 0) {
+        if (errno == ENOENT) {
+            fprintf(stderr, "sigmund: cannot start '%s': command not found\n", argv[0]);
+        } else {
+            fprintf(stderr, "sigmund: cannot start '%s': %s\n", argv[0], strerror(errno));
+        }
+        return 1;
+    }
+
+    char **launch_argv = NULL;
+    if (copy_argv(&launch_argv, argc, argv) != 0) {
+        die_errno("sigmund: failed to prepare argv");
+    }
+    free(launch_argv[0]);
+    launch_argv[0] = strdup(resolved_exec_path);
+    if (!launch_argv[0]) {
+        die_errno("sigmund: failed to prepare argv");
+    }
+
+    char id[16], log_path[SIGMUND_PATH_MAX], reserve_path[SIGMUND_PATH_MAX], console_sock[SIGMUND_PATH_MAX], boot_id[128] = {0};
+    console_sock[0] = '\0';
+    bool has_boot = current_boot_id(boot_id, sizeof(boot_id));
+    struct store_paths system_hint;
+    struct store_paths invoking_user_store;
+    const struct store_paths *avoid_public_store = NULL;
+    const struct store_paths *avoid_user_store = NULL;
+
+    if (store->kind == STORE_USER_LOCAL) {
+        if (init_system_store(&system_hint) == 0) {
+            avoid_public_store = &system_hint;
+        }
+    } else if (inv && inv->have_sudo_user && inv->invoking_home[0]) {
+        if (init_user_store_from_home(inv->invoking_home, &invoking_user_store) == 0) {
+            avoid_user_store = &invoking_user_store;
+        }
+    }
+
+    if (gen_id_for_store(store, avoid_public_store, avoid_user_store, id, sizeof(id)) != 0) {
+        free_argv_alloc(launch_argv, argc);
+        die_errno("sigmund: failed to generate id");
+    }
+    if (checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) != 0) {
+        free_argv_alloc(launch_argv, argc);
+        die_errno("sigmund: log path too long");
+    }
+    if (checked_snprintf(reserve_path, sizeof(reserve_path), "%s/.%s.reserve", store->record_dir, id) != 0) {
+        free_argv_alloc(launch_argv, argc);
+        die_errno("sigmund: reserve path too long");
+    }
+    if (console_mode && format_console_sock_path(store, id, console_sock, sizeof(console_sock)) != 0) {
+        free_argv_alloc(launch_argv, argc);
+        die_errno("sigmund: console socket path too long");
+    }
+
+    int pipefd[2];
+#if defined(__linux__) && defined(O_CLOEXEC)
+    if (pipe2(pipefd, O_CLOEXEC) != 0)
+#endif
+    {
+        if (pipe(pipefd) != 0) {
+            int saved = errno;
+            unlink(reserve_path);
+            free_argv_alloc(launch_argv, argc);
+            errno = saved;
+            die_errno("sigmund: pipe failed");
+        }
+        if (fcntl(pipefd[0], F_SETFD, FD_CLOEXEC) != 0 ||
+            fcntl(pipefd[1], F_SETFD, FD_CLOEXEC) != 0) {
+            int saved = errno;
+            close(pipefd[0]);
+            close(pipefd[1]);
+            unlink(reserve_path);
+            free_argv_alloc(launch_argv, argc);
+            errno = saved;
+            die_errno("sigmund: pipe setup failed");
+        }
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        int saved = errno;
+        close(pipefd[0]);
+        close(pipefd[1]);
+        unlink(reserve_path);
+        free_argv_alloc(launch_argv, argc);
+        errno = saved;
+        die_errno("sigmund: fork failed");
+    }
+    if (pid == 0) {
+        close(pipefd[0]);
+        if (setsid() < 0) {
+            int e = errno;
+            write_all(pipefd[1], &e, sizeof(e));
+            _exit(127);
+        }
+        if (console_mode) {
+            int nullfd = open("/dev/null", O_RDWR);
+            if (nullfd < 0 ||
+                dup2(nullfd, STDIN_FILENO) < 0 ||
+                dup2(nullfd, STDOUT_FILENO) < 0 ||
+                dup2(nullfd, STDERR_FILENO) < 0) {
+                int e = errno;
+                write_all(pipefd[1], &e, sizeof(e));
+                _exit(127);
+            }
+            if (nullfd > STDERR_FILENO) {
+                close(nullfd);
+            }
+            run_console_broker(pipefd[1], log_path, console_sock, argc, launch_argv, resolved_exec_path);
+            _exit(127);
+        }
+        int nullfd = open("/dev/null", O_RDONLY);
+        if (nullfd < 0 || dup2(nullfd, STDIN_FILENO) < 0) {
+            int e = errno;
+            write_all(pipefd[1], &e, sizeof(e));
+            _exit(127);
+        }
+        if (nullfd > 2) {
+            close(nullfd);
+        }
+
+        int lfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+        if (lfd < 0 || dup2(lfd, STDOUT_FILENO) < 0 || dup2(lfd, STDERR_FILENO) < 0) {
+            int e = errno;
+            write_all(pipefd[1], &e, sizeof(e));
+            _exit(127);
+        }
+        if (lfd > 2) {
+            close(lfd);
+        }
+        execv(resolved_exec_path, launch_argv);
+        /* No envp variant here: children intentionally inherit Sigmund's environment. */
+        int e = errno;
+        write_all(pipefd[1], &e, sizeof(e));
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+    int child_errno = 0;
+    int handshake = read_exec_handshake(pipefd[0], &child_errno);
+    int handshake_errno = errno;
+    close(pipefd[0]);
+    if (handshake < 0) {
+        rollback_spawned_group(pid, pid);
+        unlink(reserve_path);
+        unlink(log_path);
+        if (console_sock[0]) {
+            unlink(console_sock);
+        }
+        free_argv_alloc(launch_argv, argc);
+        errno = handshake_errno;
+        die_errno("sigmund: exec handshake failed");
+    }
+    if (handshake > 0) {
+        int st;
+        while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
+            continue;
+        }
+        if (child_errno == ENOENT) {
+            fprintf(stderr, "sigmund: cannot start '%s': command not found\n", launch_argv[0]);
+        } else {
+            fprintf(stderr, "sigmund: cannot start '%s': %s\n", launch_argv[0], strerror(child_errno));
+        }
+        unlink(reserve_path);
+        unlink(log_path);
+        if (console_sock[0]) {
+            unlink(console_sock);
+        }
+        free_argv_alloc(launch_argv, argc);
+        return 1;
+    }
+
+    struct record r = {0};
+    r.version = 1;
+    if (checked_snprintf(r.id, sizeof(r.id), "%s", id) != 0) {
+        die_errno("sigmund: id too long");
+    }
+    if (checked_snprintf(r.run_id, sizeof(r.run_id), "%s", id) != 0) {
+        die_errno("sigmund: id too long");
+    }
+    r.pid = pid;
+    r.pgid = pid;
+    r.sid = pid;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    r.start_unix_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    format_rfc3339_utc_from_ns(r.start_unix_ns, r.started_at, sizeof(r.started_at));
+    r.has_started_at = true;
+    snprintf(r.state, sizeof(r.state), "running");
+    r.has_state = true;
+    r.uid = geteuid();
+    r.gid = getegid();
+    if (store->kind == STORE_SYSTEM_MANAGED) {
+        r.has_invocation = true;
+        if (inv && inv->have_sudo_user) {
+            r.invoked_by_uid = inv->invoking_uid;
+            r.invoked_by_gid = inv->invoking_gid;
+            if (checked_snprintf(r.invoked_by_user, sizeof(r.invoked_by_user), "%s", inv->invoking_user) != 0) {
+                die_errno("sigmund: invoking user too long");
+            }
+            r.invoked_via_sudo = true;
+        } else {
+            r.invoked_by_uid = 0;
+            r.invoked_by_gid = 0;
+            if (checked_snprintf(r.invoked_by_user, sizeof(r.invoked_by_user), "%s", "root") != 0) {
+                die_errno("sigmund: invoking user too long");
+            }
+            r.invoked_via_sudo = false;
+        }
+    }
+    if (run_alias && valid_alias(run_alias)) {
+        r.has_alias = true;
+        if (checked_snprintf(r.alias, sizeof(r.alias), "%s", run_alias) != 0) {
+            die_errno("sigmund: alias too long");
+        }
+    }
+    if (console_sock[0]) {
+        r.has_console = true;
+        if (checked_snprintf(r.console_sock, sizeof(r.console_sock), "%s", console_sock) != 0) {
+            die_errno("sigmund: console socket path too long");
+        }
+    }
+    r.has_log = true;
+    if (checked_snprintf(r.log_path, sizeof(r.log_path), "%s", log_path) != 0) {
+        die_errno("sigmund: log path too long");
+    }
+    r.has_boot = has_boot;
+    if (r.has_boot) {
+        snprintf(r.boot_id, sizeof(r.boot_id), "%s", boot_id);
+    }
+    read_proc_stat_tokens(pid, NULL, &r.proc_starttime_ticks);
+    read_proc_exe(pid, &r.exe_dev, &r.exe_ino);
+    if (format_argv_human(r.cmdline, sizeof(r.cmdline), argc, launch_argv) != 0) {
+        snprintf(r.cmdline, sizeof(r.cmdline), "?");
+    }
+
+    char record_path[SIGMUND_PATH_MAX] = {0};
+    bool chown_user_local_artifacts = store->kind == STORE_USER_LOCAL && inv && inv->euid_root && inv->have_sudo_user;
+    if (getenv("SIGMUND_TEST_FAIL_RECORD_WRITE")) {
+        errno = EIO;
+    } else if (write_record_atomic(store->record_dir, &r, argc, launch_argv, record_path, sizeof(record_path)) == 0) {
+        if (chown_user_local_artifacts) {
+            int chown_rc = 0;
+            if (record_path[0] &&
+                chown(record_path, inv->invoking_uid, inv->invoking_gid) != 0) {
+                chown_rc = -1;
+            }
+            if (chown(log_path, inv->invoking_uid, inv->invoking_gid) != 0) {
+                chown_rc = -1;
+            }
+            if (console_sock[0] && path_exists(console_sock) &&
+                chown(console_sock, inv->invoking_uid, inv->invoking_gid) != 0) {
+                chown_rc = -1;
+            }
+            if (chown_rc != 0) {
+                int saved = errno ? errno : EIO;
+                rollback_spawned_group(pid, pid);
+                if (record_path[0]) {
+                    unlink(record_path);
+                }
+                unlink(log_path);
+                if (console_sock[0]) {
+                    unlink(console_sock);
+                }
+                unlink(reserve_path);
+                free_argv_alloc(launch_argv, argc);
+                errno = saved;
+                die_errno("sigmund: failed to set user-local ownership");
+            }
+        }
+        if (store->kind == STORE_SYSTEM_MANAGED) {
+            int public_rc = 0;
+            if (getenv("SIGMUND_TEST_FAIL_PUBLIC_INDEX_WRITE")) {
+                errno = EIO;
+                public_rc = -1;
+            } else if (write_public_index_atomic(store, &r) != 0) {
+                public_rc = -1;
+            }
+            if (public_rc != 0) {
+                int saved = errno;
+                if (saved == 0) {
+                    saved = EIO;
+                }
+                rollback_spawned_group(pid, pid);
+                if (record_path[0]) {
+                    unlink(record_path);
+                }
+                unlink(log_path);
+                if (console_sock[0]) {
+                    unlink(console_sock);
+                }
+                unlink(reserve_path);
+                free_argv_alloc(launch_argv, argc);
+                char public_path[SIGMUND_PATH_MAX];
+                if (checked_snprintf(public_path, sizeof(public_path), "%s/%s.json", store->public_dir, r.id) == 0) {
+                    unlink(public_path);
+                }
+                errno = saved;
+                die_errno("sigmund: failed to write public index");
+            }
+        }
+        printf("%s\n", r.id);
+        sig_note(inv,
+                 "sigmund  started  %s   %s\n"
+                 "         log      %s\n"
+                 "         tail     sigmund tail %s\n"
+                 "%s%s%s"
+                 "         stop     sigmund stop %s\n",
+                 r.id,
+                 r.cmdline[0] ? r.cmdline : "?",
+                 r.log_path,
+                 r.id,
+                 r.has_console ? "         console  sigmund console " : "",
+                 r.has_console ? r.id : "",
+                 r.has_console ? "\n" : "",
+                 r.id);
+        fflush(stdout);
+
+        if (tail) {
+            free_argv_alloc(launch_argv, argc);
+            return tail_log_until_exit(&r, false, true);
+        }
+        free_argv_alloc(launch_argv, argc);
+        return 0;
+    }
+    {
+        int saved = errno;
+        rollback_spawned_group(pid, pid);
+        unlink(reserve_path);
+        unlink(log_path);
+        if (console_sock[0]) {
+            unlink(console_sock);
+        }
+        free_argv_alloc(launch_argv, argc);
+        errno = saved;
+        die_errno("sigmund: failed to write record");
+    }
+    return 1;
+}
+
+static int private_start_hash_for_token(const struct store_paths *store,
+                                        const char *token,
+                                        char hash[PROFILE_HASH_STR_LEN],
+                                        bool *matched) {
+    *matched = false;
+    if (valid_profile_hash(token)) {
+        *matched = true;
+        if (profile_exists_in_store(store, token) != 0) {
+            return -1;
+        }
+        snprintf(hash, PROFILE_HASH_STR_LEN, "%s", token);
+        return 1;
+    }
+    if (valid_alias(token)) {
+        if (alias_lookup_hash(store, token, hash) != 0) {
+            return 0;
+        }
+        *matched = true;
+        if (profile_exists_in_store(store, hash) != 0) {
+            return -1;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int private_start_recipe_for_token(const struct store_paths *store,
+                                          const char *token,
+                                          struct profile *recipe,
+                                          bool *matched) {
+    *matched = false;
+    memset(recipe, 0, sizeof(*recipe));
+    if (!valid_alias(token)) {
+        return 0;
+    }
+    if (alias_lookup_recipe(store, token, recipe) != 0) {
+        return 0;
+    }
+    *matched = true;
+    return 1;
+}
+
+static void free_start_profile_target(struct start_profile_target *target) {
+    if (target && target->has_recipe) {
+        free_profile(&target->recipe);
+        target->has_recipe = false;
+    }
+}
+
+static void start_target_set_alias(struct start_profile_target *target, const char *alias) {
+    if (valid_alias(alias)) {
+        if (checked_snprintf(target->alias, sizeof(target->alias), "%s", alias) == 0) {
+            target->has_alias = true;
+        }
+    }
+}
+
+static int start_target_set_recipe(struct start_profile_target *target,
+                                   const struct store_paths *store,
+                                   const char *alias) {
+    target->store = *store;
+    target->has_recipe = true;
+    start_target_set_alias(target, alias);
+    return 1;
+}
+
+static int start_target_set_hash(struct start_profile_target *target,
+                                 const struct store_paths *store,
+                                 const char *hash,
+                                 const char *alias,
+                                 bool needs_elevation) {
+    if (!valid_profile_hash(hash)) {
+        errno = EINVAL;
+        return -1;
+    }
+    target->store = *store;
+    if (checked_snprintf(target->hash, sizeof(target->hash), "%s", hash) != 0) {
+        return -1;
+    }
+    target->has_hash = true;
+    target->needs_elevation = needs_elevation;
+    start_target_set_alias(target, alias);
+    return 1;
+}
+
+static int count_running_alias(const struct store_paths *store, const char *alias, size_t *count_out) {
+    struct alias_match_list matches;
+    if (collect_private_alias_matches(store, alias, "start", &matches) != 0) {
+        return -1;
+    }
+    *count_out = matches.count;
+    free_alias_match_list(&matches);
+    return 0;
+}
+
+static int resolve_start_profile_target(const struct invocation *inv,
+                                        const struct store_paths *current_user_store,
+                                        const struct store_paths *system_store,
+                                        const char *token,
+                                        struct start_profile_target *out) {
+    memset(out, 0, sizeof(*out));
+    const char *atom = NULL;
+    enum id_token_scope scope = parse_id_token(token, &atom);
+    char cap_alias[ALIAS_MAX_LEN + 1];
+    char cap_hash[PROFILE_HASH_STR_LEN];
+    bool cap_token = false;
+    if (scope == ID_TOKEN_SYSTEM && parse_alias_cap_atom(atom, cap_alias, cap_hash) == 0) {
+        if (!inv->euid_root || verify_system_alias_cap(system_store, cap_alias, cap_hash) != 0) {
+            fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
+            return -1;
+        }
+        atom = cap_alias;
+        cap_token = true;
+    }
+    if (scope == ID_TOKEN_INVALID) {
+        return 0;
+    }
+    if (!valid_profile_hash(atom) && !valid_alias(atom)) {
+        return 0;
+    }
+
+    if (inv->euid_root) {
+        if (scope == ID_TOKEN_USER) {
+            struct store_paths user_store;
+            if (init_invoking_user_store(inv, &user_store) != 0) {
+                fprintf(stderr, "sigmund: error: user:%s requires sudo provenance\n", atom);
+                return -1;
+            }
+            bool matched = false;
+            int rc = private_start_recipe_for_token(&user_store, atom, &out->recipe, &matched);
+            if (rc == 1) {
+                return start_target_set_recipe(out, &user_store, atom);
+            }
+            rc = private_start_hash_for_token(&user_store, atom, out->hash, &matched);
+            if (rc == 1) {
+                return start_target_set_hash(out, &user_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+            }
+            if (rc < 0 && matched) {
+                fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
+                return -1;
+            }
+            return 0;
+        }
+        if (scope == ID_TOKEN_SYSTEM) {
+            if (cap_token) {
+                bool matched = false;
+                int rc = private_start_hash_for_token(system_store, cap_hash, out->hash, &matched);
+                if (rc == 1) {
+                    return start_target_set_hash(out, system_store, out->hash, cap_alias, false);
+                }
+                fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
+                return -1;
+            }
+            bool matched = false;
+            int rc = private_start_hash_for_token(system_store, atom, out->hash, &matched);
+            if (rc == 1) {
+                return start_target_set_hash(out, system_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+            }
+            if (rc < 0 && matched) {
+                fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
+                return -1;
+            }
+            return 0;
+        }
+
+        bool matched = false;
+        int rc = private_start_hash_for_token(system_store, atom, out->hash, &matched);
+        if (rc == 1) {
+            return start_target_set_hash(out, system_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+        }
+        if (rc < 0 && matched) {
+            fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
+            return -1;
+        }
+        if (inv->have_sudo_user) {
+            struct store_paths user_store;
+            if (init_invoking_user_store(inv, &user_store) == 0) {
+                matched = false;
+                rc = private_start_recipe_for_token(&user_store, atom, &out->recipe, &matched);
+                if (rc == 1) {
+                    return start_target_set_recipe(out, &user_store, atom);
+                }
+                rc = private_start_hash_for_token(&user_store, atom, out->hash, &matched);
+                if (rc == 1) {
+                    return start_target_set_hash(out, &user_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+                }
+                if (rc < 0 && matched) {
+                    fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
+                    return -1;
+                }
+            }
+        }
+        return 0;
+    }
+
+    if (scope == ID_TOKEN_USER || scope == ID_TOKEN_PLAIN) {
+        bool matched = false;
+        int rc = private_start_recipe_for_token(current_user_store, atom, &out->recipe, &matched);
+        if (rc == 1) {
+            return start_target_set_recipe(out, current_user_store, atom);
+        }
+        rc = private_start_hash_for_token(current_user_store, atom, out->hash, &matched);
+        if (rc == 1) {
+            return start_target_set_hash(out, current_user_store, out->hash, valid_alias(atom) ? atom : NULL, false);
+        }
+        if (rc < 0 && matched) {
+            fprintf(stderr, "sigmund: error: profile for '%s' is unavailable\n", token);
+            return -1;
+        }
+        if (scope == ID_TOKEN_USER) {
+            return 0;
+        }
+    }
+
+    if (scope == ID_TOKEN_SYSTEM || scope == ID_TOKEN_PLAIN) {
+        int rc = resolve_public_profile_token(system_store, atom, out->hash);
+        if (rc == 1) {
+            return start_target_set_hash(out, system_store, out->hash, valid_alias(atom) ? atom : NULL, true);
+        }
+    }
+    return 0;
+}
+
+int elevate_start_token(const char *program,
+                               bool tail,
+                               bool console_mode,
+                               const char *token_atom,
+                               const char *hash,
+                               bool multi,
+                               int multi_count) {
+    char token[8 + ALIAS_MAX_LEN + 1 + PROFILE_HASH_STR_LEN];
+    char count_buf[32];
+    char *canon[7];
+    int n = 0;
+    canon[n++] = "start";
+    if (tail) {
+        canon[n++] = "--tail";
+    }
+    if (console_mode) {
+        canon[n++] = "--console";
+    }
+    if (hash && valid_alias(token_atom) && valid_profile_hash(hash)) {
+        canon[n++] = "00000000";
+        canon[n++] = (char *)token_atom;
+        canon[n++] = (char *)hash;
+        return elevate_with_sudo_canonical(program, n, canon);
+    } else if (checked_snprintf(token, sizeof(token), "system:%s", token_atom) != 0) {
+        return 3;
+    }
+    canon[n++] = token;
+    if (multi) {
+        canon[n++] = "--multi";
+        if (multi_count != 1) {
+            snprintf(count_buf, sizeof(count_buf), "%d", multi_count);
+            canon[n++] = count_buf;
+        }
+    }
+    return elevate_with_sudo_canonical(program, n, canon);
+}
+
+int perform_profile_start(const struct invocation *inv,
+                                 const struct store_paths *store,
+                                 bool tail,
+                                 bool console_mode,
+                                 const char *hash,
+                                 const char *alias) {
+    struct profile p;
+    if (load_profile_by_hash(store, hash, &p) != 0) {
+        fprintf(stderr, "sigmund: error: profile %s is unavailable\n", hash);
+        return 5;
+    }
+    int rc = perform_start(inv, store, tail, console_mode, p.argc, p.argv, p.binary_path, alias);
+    free_profile(&p);
+    return rc;
+}
+
+int cmd_start_action(const struct invocation *inv,
+                            const struct store_paths *user_store,
+                            const struct store_paths *system_store,
+                            const char *program,
+                            const struct store_paths *fallback_store,
+                            bool tail,
+                            bool console_mode,
+                            bool multi,
+                            int multi_count,
+                            int argc,
+                            char **argv) {
+    if (argc == 1) {
+        struct start_profile_target target;
+        int rc = resolve_start_profile_target(inv, user_store, system_store, argv[0], &target);
+        if (rc < 0) {
+            return 5;
+        }
+        if (rc == 1) {
+            int start_rc;
+            int starts = multi ? multi_count : 1;
+            if (tail && starts > 1) {
+                fprintf(stderr, "sigmund: error: --tail cannot follow multiple starts\n");
+                free_start_profile_target(&target);
+                return 5;
+            }
+            if (target.needs_elevation) {
+                start_rc = 0;
+                for (int i = 0; i < starts; i++) {
+                    start_rc = elevate_start_token(program,
+                                                   tail,
+                                                   console_mode,
+                                                   target.has_alias ? target.alias : target.hash,
+                                                   target.has_alias ? target.hash : NULL,
+                                                   false,
+                                                   1);
+                    if (start_rc != 0) {
+                        break;
+                    }
+                }
+            } else {
+                if (target.has_alias && !multi) {
+                    size_t running = 0;
+                    if (count_running_alias(&target.store, target.alias, &running) != 0) {
+                        free_start_profile_target(&target);
+                        return 3;
+                    }
+                    if (running > 0) {
+                        fprintf(stderr,
+                                "sigmund: error: alias '%s' already has a running process; use --multi to start another\n",
+                                target.alias);
+                        free_start_profile_target(&target);
+                        return 6;
+                    }
+                }
+                start_rc = 0;
+                for (int i = 0; i < starts; i++) {
+                    if (target.has_recipe) {
+                        start_rc = perform_start(inv,
+                                                 &target.store,
+                                                 tail,
+                                                 console_mode,
+                                                 target.recipe.argc,
+                                                 target.recipe.argv,
+                                                 target.recipe.binary_path,
+                                                 target.has_alias ? target.alias : NULL);
+                    } else {
+                        start_rc = perform_profile_start(inv,
+                                                         &target.store,
+                                                         tail,
+                                                         console_mode,
+                                                         target.hash,
+                                                         target.has_alias ? target.alias : NULL);
+                    }
+                    if (start_rc != 0) {
+                        break;
+                    }
+                }
+            }
+            free_start_profile_target(&target);
+            return start_rc;
+        }
+        free_start_profile_target(&target);
+    }
+    if (multi) {
+        fprintf(stderr, "sigmund: error: --multi applies only to alias starts\n");
+        return 5;
+    }
+    return perform_explicit_start(inv, fallback_store, tail, console_mode, argc, argv);
+}
+
+int ensure_start_store_for_command(const struct invocation *inv,
+                                          bool requested_system,
+                                          bool owned,
+                                          const char *command,
+                                          int argc,
+                                          char **argv,
+                                          struct store_paths *store) {
+    bool wants_system_store = (inv && inv->euid_root) || requested_system;
+
+    if (wants_system_store &&
+        start_target_is_within_invoking_home(inv, owned, command, argc, argv)) {
+        if (inv && inv->euid_root && inv->have_sudo_user) {
+            return ensure_invoking_user_store(inv, store);
+        }
+        return ensure_user_store_for_current_user(store);
+    }
+
+    if (wants_system_store) {
+        return ensure_system_store(store);
+    }
+    return ensure_user_store_for_current_user(store);
+}
+
+static int perform_explicit_start(const struct invocation *inv,
+                                  const struct store_paths *store,
+                                  bool tail,
+                                  bool console_mode,
+                                  int argc,
+                                  char **argv) {
+    if (argc <= 0) {
+        fprintf(stderr, "usage: sigmund start <cmd> [args...]\n");
+        return 5;
+    }
+    if (argc == 1) {
+        char *shell_argv[4];
+        shell_argv[0] = "sh";
+        shell_argv[1] = "-c";
+        shell_argv[2] = argv[0];
+        shell_argv[3] = NULL;
+        return perform_start(inv, store, tail, console_mode, 3, shell_argv, NULL, NULL);
+    }
+    return perform_start(inv, store, tail, console_mode, argc, argv, NULL, NULL);
+}
