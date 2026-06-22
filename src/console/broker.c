@@ -1,0 +1,276 @@
+#include "sigmund/config.h"
+#include "sigmund/types.h"
+#include "sigmund/console.h"
+#include "sigmund/core.h"
+#include "sigmund/console_internal.h"
+
+/* Set by the SIGWINCH handler below; read by run_native_console in attach.c. */
+volatile sig_atomic_t g_console_resized = 0;
+
+static void broker_cleanup_and_exit(int parent_pipe,
+                                    const char *sock_path,
+                                    int listener,
+                                    int master,
+                                    int slave,
+                                    int logfd,
+                                    pid_t target,
+                                    int exit_code);
+static void broker_fail_errno(int parent_pipe,
+                              const char *sock_path,
+                              int listener,
+                              int master,
+                              int slave,
+                              int logfd,
+                              pid_t target,
+                              int err);
+
+void handle_console_sigwinch(int signo) {
+    (void)signo;
+    g_console_resized = 1;
+}
+
+static void broker_cleanup_and_exit(int parent_pipe,
+                                    const char *sock_path,
+                                    int listener,
+                                    int master,
+                                    int slave,
+                                    int logfd,
+                                    pid_t target,
+                                    int exit_code) {
+    if (target > 0) {
+        kill(target, SIGKILL);
+        int st = 0;
+        while (waitpid(target, &st, 0) < 0 && errno == EINTR) {
+            continue;
+        }
+    }
+    if (parent_pipe >= 0) close(parent_pipe);
+    if (listener >= 0) close(listener);
+    if (master >= 0) close(master);
+    if (slave >= 0) close(slave);
+    if (logfd >= 0) close(logfd);
+    if (sock_path && *sock_path) unlink(sock_path);
+    _exit(exit_code);
+}
+
+static void broker_fail_errno(int parent_pipe,
+                              const char *sock_path,
+                              int listener,
+                              int master,
+                              int slave,
+                              int logfd,
+                              pid_t target,
+                              int err) {
+    if (err == 0) {
+        err = EIO;
+    }
+    (void)write_all(parent_pipe, &err, sizeof(err));
+    broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, target, 127);
+}
+
+void run_console_broker(int parent_pipe,
+                               const char *log_path,
+                               const char *sock_path,
+                               int argc,
+                               char **argv,
+                               const char *exec_path) {
+    int listener = -1;
+    int master = -1;
+    int slave = -1;
+    int logfd = -1;
+    pid_t target = -1;
+
+    if (argc <= 0 || !argv || !argv[0]) {
+        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, EINVAL);
+    }
+
+    listener = make_console_listener(sock_path);
+    if (listener < 0) {
+        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
+    }
+    logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    if (logfd < 0) {
+        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
+    }
+    if (open_console_pty(&master, &slave) != 0) {
+        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
+    }
+
+    int exec_pipe[2];
+#if defined(__linux__) && defined(O_CLOEXEC)
+    if (pipe2(exec_pipe, O_CLOEXEC) != 0)
+#endif
+    {
+        if (pipe(exec_pipe) != 0) {
+            broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
+        }
+        if (fcntl(exec_pipe[0], F_SETFD, FD_CLOEXEC) != 0 ||
+            fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC) != 0) {
+            int saved = errno;
+            close(exec_pipe[0]);
+            close(exec_pipe[1]);
+            broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, saved);
+        }
+    }
+
+    target = fork();
+    if (target < 0) {
+        int saved = errno;
+        close(exec_pipe[0]);
+        close(exec_pipe[1]);
+        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, saved);
+    }
+    if (target == 0) {
+        close(exec_pipe[0]);
+        close(listener);
+        close(master);
+        close(logfd);
+        if (dup2(slave, STDIN_FILENO) < 0 ||
+            dup2(slave, STDOUT_FILENO) < 0 ||
+            dup2(slave, STDERR_FILENO) < 0) {
+            int e = errno;
+            (void)write_all(exec_pipe[1], &e, sizeof(e));
+            _exit(127);
+        }
+        if (slave > STDERR_FILENO) {
+            close(slave);
+        }
+        if (exec_path && *exec_path) {
+            execv(exec_path, argv);
+        } else {
+            execvp(argv[0], argv);
+        }
+        int e = errno;
+        (void)write_all(exec_pipe[1], &e, sizeof(e));
+        _exit(127);
+    }
+
+    close(exec_pipe[1]);
+    int child_errno = 0;
+    int handshake = read_exec_handshake(exec_pipe[0], &child_errno);
+    int handshake_errno = errno;
+    close(exec_pipe[0]);
+    close(slave);
+    slave = -1;
+    if (handshake < 0) {
+        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, handshake_errno);
+    }
+    if (handshake > 0) {
+        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, child_errno);
+    }
+    close(parent_pipe);
+    parent_pipe = -1;
+
+    struct sigaction pipe_ign, old_pipe;
+    bool have_old_pipe = false;
+    memset(&pipe_ign, 0, sizeof(pipe_ign));
+    pipe_ign.sa_handler = SIG_IGN;
+    sigemptyset(&pipe_ign.sa_mask);
+    if (sigaction(SIGPIPE, &pipe_ign, &old_pipe) == 0) {
+        have_old_pipe = true;
+    }
+
+    int client = -1;
+    bool client_input_closed = false;
+    struct console_client_state client_state;
+    memset(&client_state, 0, sizeof(client_state));
+    struct console_replay_buffer replay;
+    console_replay_init(&replay);
+    bool target_done = false;
+    while (1) {
+        if (!target_done) {
+            int st = 0;
+            pid_t got = waitpid(target, &st, WNOHANG);
+            if (got == target) {
+                target_done = true;
+                target = -1;
+            }
+        }
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(master, &rfds);
+        FD_SET(listener, &rfds);
+        int maxfd = master > listener ? master : listener;
+        if (client >= 0 && !client_input_closed) {
+            FD_SET(client, &rfds);
+            if (client > maxfd) {
+                maxfd = client;
+            }
+        }
+        struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
+        int sr = select(maxfd + 1, &rfds, NULL, NULL, &tv);
+        if (sr < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (sr == 0) {
+            if (target_done) {
+                break;
+            }
+            continue;
+        }
+        if (FD_ISSET(listener, &rfds)) {
+            int next = accept(listener, NULL, NULL);
+            if (next >= 0) {
+                if (client >= 0) {
+                    close(next);
+                } else if (console_replay_write(&replay, next) != 0) {
+                    close(next);
+                } else {
+                    client = next;
+                    client_input_closed = false;
+                    memset(&client_state, 0, sizeof(client_state));
+                }
+            }
+        }
+        if (client >= 0 && !client_input_closed && FD_ISSET(client, &rfds)) {
+            unsigned char buf[4096];
+            ssize_t n = read(client, buf, sizeof(buf));
+            if (n > 0) {
+                int input_rc = broker_process_client_input(&client_state, master, buf, (size_t)n);
+                if (input_rc != 0) {
+                    close(client);
+                    client = -1;
+                    client_input_closed = false;
+                    memset(&client_state, 0, sizeof(client_state));
+                }
+            } else if (n == 0) {
+                if (!client_state.decided && client_state.pending_len > 0) {
+                    (void)write_all(master, client_state.pending, client_state.pending_len);
+                    client_state.pending_len = 0;
+                }
+                client_input_closed = true;
+            } else {
+                close(client);
+                client = -1;
+                client_input_closed = false;
+                memset(&client_state, 0, sizeof(client_state));
+            }
+        }
+        if (FD_ISSET(master, &rfds)) {
+            char buf[4096];
+            ssize_t n = read(master, buf, sizeof(buf));
+            if (n > 0) {
+                (void)write_all(logfd, buf, (size_t)n);
+                console_replay_append(&replay, buf, (size_t)n);
+                if (client >= 0 && write_all(client, buf, (size_t)n) != 0) {
+                    close(client);
+                    client = -1;
+                    client_input_closed = false;
+                }
+            } else if (n == 0 || errno == EIO) {
+                break;
+            }
+        }
+    }
+
+    if (client >= 0) close(client);
+    console_replay_free(&replay);
+    if (have_old_pipe) {
+        sigaction(SIGPIPE, &old_pipe, NULL);
+    }
+    broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, target, 0);
+}
