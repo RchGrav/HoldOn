@@ -20,7 +20,7 @@ sigmund prune "$run_id"
 
 ## Install
 
-The one-line installer detects Linux or macOS, chooses the matching release artifact, verifies its SHA-256 checksum, and installs `sigmund`.
+The one-line installer detects Linux or macOS, chooses the matching release artifact, verifies it against the release `SHA256SUMS`, validates the archive layout, and installs `sigmund`. It refuses to install when checksums are missing or malformed.
 
 ```sh
 curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh | sh

@@ -173,32 +173,6 @@ select_artifact() {
   esac
 }
 
-release_body_checksum() {
-  tag=$1
-  artifact=$2
-  fetch_text "$GITHUB_API/repos/$REPO_OWNER/$REPO_NAME/releases/tags/$tag" 2>/dev/null |
-    awk -v artifact="$artifact" '
-      { data = data $0 "\n" }
-      END {
-        gsub(/\\r\\n|\\n|\\r/, "\n", data)
-        n = split(data, lines, "\n")
-        seen = 0
-        for (i = 1; i <= n; i++) {
-          if (index(lines[i], artifact)) {
-            seen = 1
-          }
-          if (seen && index(lines[i], "sha256:")) {
-            s = lines[i]
-            sub(/^.*sha256:[[:space:]]*/, "", s)
-            sub(/[^0-9a-fA-F].*$/, "", s)
-            print tolower(s)
-            exit
-          }
-        }
-      }
-    '
-}
-
 path_contains_dir() {
   dir=$1
   case ":$PATH:" in
@@ -222,6 +196,47 @@ truthy() {
     1|yes|true|on) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+validate_sha256_hex() {
+  value=$1
+  [ "${#value}" -eq 64 ] || return 1
+  case "$value" in
+    *[!0123456789abcdefABCDEF]*) return 1 ;;
+  esac
+  return 0
+}
+
+sha256_from_sums() {
+  sums=$1
+  artifact=$2
+  awk -v artifact="$artifact" '
+    ($2 == artifact || $2 == "*" artifact) {
+      print $1
+      found = 1
+      exit
+    }
+    END { if (!found) exit 1 }
+  ' "$sums"
+}
+
+validate_archive_layout() {
+  archive=$1
+  tar -tzf "$archive" | awk '
+    {
+      p = $0
+      if (p == "" || p ~ /^\//) bad = 1
+      n = split(p, parts, "/")
+      for (i = 1; i <= n; i++) {
+        if (parts[i] == "..") bad = 1
+      }
+      sub(/^\.\//, "", p)
+      if (p == "sigmund") found = 1
+    }
+    END {
+      if (bad || !found) exit 1
+    }
+  '
 }
 
 can_write_dir() {
@@ -433,48 +448,34 @@ fi
 need_cmd tar
 need_cmd awk
 need_cmd sed
+need_cmd mktemp
 
-tmp=${TMPDIR:-/tmp}/sigmund-install.$$
-rm -rf "$tmp"
-mkdir -p "$tmp"
+old_umask=$(umask)
+umask 077
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/sigmund-install.XXXXXX") || die "could not create temporary directory"
+umask "$old_umask"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
 archive="$tmp/$artifact"
 download "$url" "$archive"
 
-expected=
 sums="$tmp/SHA256SUMS"
-if download "$GITHUB_BASE/$REPO_OWNER/$REPO_NAME/releases/download/$tag/SHA256SUMS" "$sums" 2>/dev/null; then
-  expected=$(awk -v artifact="$artifact" '$2 == artifact || $2 == "*" artifact { print $1; exit }' "$sums")
-fi
-if [ -n "$expected" ] && [ "${#expected}" -ne 64 ]; then
-  expected=
-fi
-if [ -z "$expected" ]; then
-  expected=$(release_body_checksum "$tag" "$artifact" || true)
-fi
-if [ -n "$expected" ] && [ "${#expected}" -ne 64 ]; then
-  expected=
-fi
-if [ -z "$expected" ]; then
-  sidecar="$tmp/$artifact.sha256"
-  if download "$url.sha256" "$sidecar" 2>/dev/null; then
-    expected=$(awk '{print $1; exit}' "$sidecar")
-  fi
-fi
-if [ -n "$expected" ] && [ "${#expected}" -ne 64 ]; then
-  expected=
-fi
-[ -n "$expected" ] || die "no checksum available for $artifact; refusing to install"
+download "$GITHUB_BASE/$REPO_OWNER/$REPO_NAME/releases/download/$tag/SHA256SUMS" "$sums" 2>/dev/null ||
+  die "missing SHA256SUMS for $tag; refusing to install"
+expected=$(sha256_from_sums "$sums" "$artifact") ||
+  die "SHA256SUMS does not contain $artifact; refusing to install"
+validate_sha256_hex "$expected" ||
+  die "malformed SHA256SUMS entry for $artifact; refusing to install"
 
 actual=$(hash_file "$archive")
 [ "$actual" = "$expected" ] || die "checksum mismatch for $artifact"
 
+validate_archive_layout "$archive" || die "archive layout is invalid for $artifact"
 extract="$tmp/extract"
 mkdir -p "$extract"
 tar -xzf "$archive" -C "$extract"
-bin=$(find "$extract" -type f -name sigmund | head -n 1)
-[ -n "$bin" ] || die "archive did not contain sigmund binary"
+bin="$extract/sigmund"
+[ -f "$bin" ] && [ ! -L "$bin" ] || die "archive did not contain expected root sigmund binary"
 
 if [ "$use_sudo" -eq 1 ]; then
   install_binary_sudo "$bin" "$target" "$install_dir"

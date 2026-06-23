@@ -59,6 +59,7 @@ test: $(TEST_OBJS)
 	@bash tests/test_sigmund.sh
 	@$(MAKE) hash-vector
 	@bash tests/test_version_makefile.sh
+	@bash tests/test_release_installer.sh
 
 # Guards the profile-hash capability key against accidental framing changes.
 hash-vector:
