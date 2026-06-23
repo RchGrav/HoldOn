@@ -1,7 +1,7 @@
 # Mund 0.4 UX and CLI specification draft
 
 Date: 2026-06-23
-Status: draft proposal for the 0.4.0 breaking CLI redesign
+Status: implementation plan for the 0.4.0 breaking CLI redesign
 
 ## 1. Product stance
 
@@ -9,13 +9,15 @@ Sigmund remains the project identity, but the proposed user-facing command is `m
 
 `mund` is a guardian shell for background jobs: run it, leave it, find it, watch it, stop it safely.
 
-Version 0.4.0 is intentionally allowed to break the current CLI because the tool has no established user base. The goal is to replace the legacy action-first/alias-based surface with one coherent command language shared by:
+Version 0.4.0 is intentionally allowed to break the current CLI because the tool has no established user base. It should ship the full product direction in this document, not only a compatibility shim or partial rename. The goal is to replace the legacy action-first/alias-based surface with one coherent command language shared by:
 
 1. one-shot CLI commands;
 2. captive shell commands;
 3. importable/exportable CLI transcript config files.
 
 JSON remains the canonical on-disk profile storage format. CLI transcript config is a human editing/import/export format that compiles to the JSON profile model.
+
+The hardening backlog in section 11 is part of the same 0.4.0 release plan. The redesigned CLI should not be released as stable until the product surface and hardening work are both complete.
 
 ## 2. Core model
 
@@ -98,6 +100,8 @@ mund prune web
 ```
 
 ## 3. Proposed command grammar
+
+The 0.4.0 CLI surface is the command set below. Implementation may stage internal refactors behind this surface, but the release should not defer major user-facing pieces of the grammar to a later minor release.
 
 ```text
 mund run -- <cmd> [args...]
@@ -523,12 +527,11 @@ The command should print only the run ID to stdout on success.
 1. Should the binary be renamed to `mund` while the project remains Sigmund?
 2. Should `mund profile <name> restart` be allowed as sugar for resolving/stopping singular or all current profile runs plus starting a new one, or should restart require explicit policy?
 3. Should `profile <name> stop` be omitted entirely to preserve the definition/run distinction?
-4. How much of the viewer ships in 0.4.0 vs later minor releases?
-5. What is the minimum viable similarity scorer for the first implementation?
+4. What is the minimum viable similarity scorer for the first implementation?
 
 ## 11. 0.4.0 engineering hardening backlog
 
-The 0.4.0 CLI redesign should ship with hardening work that makes the new surface safe to iterate on. These items are release criteria for the breaking 0.4.0 line, not optional polish.
+The 0.4.0 CLI redesign should ship with hardening work that makes the new surface safe to iterate on. These items are release criteria for the breaking 0.4.0 line, not optional polish or a separate post-0.4 hardening phase.
 
 ### 11.1 Stabilize the test suite
 
@@ -679,10 +682,16 @@ Requirements:
 - Update `README.md` and `docs/install.md` to explain glibc static NSS caveats.
 - Recommend musl static artifacts for true standalone Linux installs.
 - Do not overstate GNU static portability.
+- Distinguish artifact families precisely:
+  - GNU dynamic: glibc-targeted and dynamically linked to the host glibc/NSS stack;
+  - GNU static: glibc-targeted and statically linked, but still subject to glibc NSS module/runtime behavior for user, group, host, DNS, and related name-service lookups;
+  - musl static: statically linked with musl and the recommended Linux artifact when standalone deployment matters.
+- Document that `make` on Linux defaults to `STATIC_LDFLAGS=-static`; with a glibc compiler this creates a GNU static binary with the caveats above, not the same portability profile as a musl static artifact.
 
 Acceptance:
 
 - Docs accurately describe GNU static, GNU dynamic, and musl static artifacts.
+- The recommended path for true standalone Linux installs is `SIGMUND_FLAVOR=musl-static` or an equivalent musl-targeted static build.
 
 ### 11.10 Harden release and installer scripts
 
@@ -712,19 +721,21 @@ Requirements:
 - Delete `REVIEW.md` or replace it with a current review-status document.
 - If replaced, list actual verification commands and caveats.
 - Do not claim all tests pass unless `make test` completes successfully.
+- Keep any replacement scoped to release-readiness/status. It should not preserve stale test counts, obsolete file names, or claims from previous review rounds.
 
 Acceptance:
 
 - No stale test counts or obsolete file references remain.
+- `REVIEW.md`, if present, clearly says docs-only checks are not implementation test evidence.
 
 ## 12. 0.4.0 release acceptance summary
 
 0.4.0 should be considered ready only when both product and hardening criteria are met:
 
-- new `mund` command grammar is coherent and documented;
+- full `mund` command grammar and product direction in this document are implemented coherently and documented;
 - profile/run target semantics are unambiguous;
 - CLI transcript import/export is specified and tested;
-- pager/live-filter/similarity-filter behavior has an implementation plan, even if shipped incrementally;
+- pager/live-filter/similarity-filter behavior is implemented to the 0.4.0 interaction contract, with later minor releases limited to refinement rather than deferring the core product feature;
 - test suite cannot hang indefinitely;
 - parser rejects unsupported flags and extra positionals;
 - console attach authorization is peer-credential enforced;

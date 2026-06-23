@@ -1,108 +1,102 @@
-# Review Report
+# Review status
 
-## Scope
+Date: 2026-06-23
+Branch: `mund-0.4.0/docs-review`
+Scope: release-readiness notes for the 0.4.0 documentation and hardening plan.
 
-This review focused on end-to-end portability, correctness, and safety for `sigmund`, with particular attention to Linux/macOS behavior, process-group lifecycle handling, stale-record detection, record/log cleanup, and the reliability of the shell test suite.
+## Current status
 
-## Summary
+This file replaces an older review report whose test counts and file references described a previous implementation review. Treat this document as a status tracker, not proof that the current branch is release-ready.
 
-The implementation was hardened across process identity validation, state evaluation, record parsing/writing, launch rollback, test reliability, and documentation. The most important behavior change is that `sigmund tail <id>` now behaves differently depending on whether the tracked process is still running: live jobs are followed from the end, while finished/stale/unknown jobs print the existing log from the beginning.
+0.4.0 is release-ready only after both tracks are complete:
 
-That `tail` behavior was changed because the old behavior made completed jobs look empty: it would seek to EOF and wait even when the process had already exited. For a job-oriented tool, `sigmund tail <id>` is most useful when it can show the output of the identified run, not only future bytes that can no longer arrive.
+1. the full `mund` CLI/product direction in `docs/MUND_0_4_UX_SPEC.md` is implemented and documented; and
+2. the hardening backlog in that same spec is implemented, tested, and reviewed.
 
-## Process
+## Verification policy
 
-### 1. Baseline unpack and test
+Do not claim the test suite passes unless this exact command completes successfully on the current branch:
 
-- Unpacked the original archive.
-- Built the project with the existing `Makefile`.
-- Ran the original test suite.
-- Confirmed the baseline could build and pass the existing tests in the Linux container.
-
-### 2. Test harness review
-
-The original shell test runner invoked test functions inside an `if`. In Bash, that suppresses `errexit` behavior in contexts where failed assertions should abort the test. This meant some intermediate failures could be hidden.
-
-The harness was rewritten so each test runs in a fresh strict Bash process. This made the test suite a more trustworthy signal before making further code changes.
-
-### 3. Process lifecycle and safety review
-
-The process-handling paths were reviewed for:
-
-- PID and process-group reuse;
-- leader exit before child exit;
-- zombie process leaders;
-- session membership checks;
-- signaling safety;
-- stale records across reboot;
-- macOS process metadata availability;
-- conservative behavior when validation is incomplete.
-
-The implementation now avoids blindly trusting `kill(-pgid, 0)` as proof that a recorded process group is safe to signal. It validates the leader where possible and scans remaining same-session process-group members when the leader has exited or become a zombie.
-
-### 4. Launch and rollback review
-
-Launch was reviewed around fork/exec handshaking, partial reads, interrupted reads, log creation, record creation, and cleanup after failures.
-
-The implementation now cleans reservation files and logs in more failure paths, handles partial exec-handshake payloads, and reaps children more robustly.
-
-### 5. Record and filesystem review
-
-Record loading and writing were reviewed for malformed input, oversized files, atomicity, persistence, collision behavior, and ID/file mismatches.
-
-The implementation now limits record size, validates records more strictly, verifies requested IDs match loaded record IDs, checks for `.json`, `.log`, and reservation collisions, and improves atomic write error handling.
-
-### 6. Documentation and spec review
-
-The README and spec were updated to reflect the actual post-review behavior, including Linux/macOS build expectations, platform boot markers, process identity checks, same-session group validation, `tail` semantics, and known edge cases.
-
-### 7. Re-review and final checks
-
-After each change round, the code and docs were re-reviewed for mismatch or newly introduced issues. The final package passed the available Linux checks listed below.
-
-## Verification performed
-
-```bash
-make clean && make test
+```sh
+make test
 ```
 
-Result: 26/26 tests passed.
+Docs-only changes may be reviewed with read/grep/link checks. Those checks are useful for documentation consistency, but they do not prove implementation behavior or release readiness.
 
-```bash
-make clean && make && make sigmund-dynamic
+## Latest docs-only verification
+
+Date: 2026-06-23
+
+Commands run for this docs cleanup:
+
+```sh
+python3 - <<'PY'
+from pathlib import Path
+import re, sys
+files = [Path(p) for p in ['README.md','docs/install.md','docs/MUND_0_4_UX_SPEC.md','REVIEW.md','docs/index.md']]
+missing=[]
+for f in files:
+    text=f.read_text()
+    for m in re.finditer(r'\[[^\]]+\]\(([^)]+)\)', text):
+        target=m.group(1).split('#',1)[0]
+        if not target or re.match(r'^[a-z]+:', target) or target.startswith('mailto:'):
+            continue
+        p=(f.parent/target).resolve()
+        if not p.exists():
+            missing.append((str(f), target))
+if missing:
+    print('Missing markdown link targets:')
+    for f,t in missing:
+        print(f'{f}: {t}')
+    sys.exit(1)
+print('All local markdown link targets exist for touched files.')
+PY
+
+grep -RIn "NSS\|musl-static\|GNU static\|GNU dynamic\|musl static\|STATIC_LDFLAGS" \
+  README.md docs/install.md docs/MUND_0_4_UX_SPEC.md REVIEW.md
+
+python3 - <<'PY'
+from pathlib import Path
+import re, sys
+patterns = [
+    re.compile("26" + "/26"),
+    re.compile("Result:" + r" .*" + "tests " + "passed"),
+    re.compile("make clean && " + "make test"),
+    re.compile("UBSan build " + "passed"),
+]
+files = [Path(p) for p in ['REVIEW.md','docs/MUND_0_4_UX_SPEC.md','README.md','docs/install.md']]
+hits = []
+for f in files:
+    for i, line in enumerate(f.read_text().splitlines(), 1):
+        if any(p.search(line) for p in patterns):
+            hits.append((f, i, line))
+if hits:
+    for f, i, line in hits:
+        print(f'{f}:{i}:{line}')
+    sys.exit(1)
+PY
+
+grep -n "full .*product direction\|release criteria\|later minor\|implementation plan" \
+  docs/MUND_0_4_UX_SPEC.md docs/index.md
 ```
 
-Result: static Linux build and dynamic build both succeeded.
+Result: local links in touched files resolved, static-artifact caveats were present in the expected docs, stale historical pass claims were absent, and 0.4.0 scope/alignment language was present.
 
-```bash
-clang -std=c11 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
-  -Wformat=2 -Wno-format-nonliteral -Wstrict-prototypes \
-  -Wmissing-prototypes -Werror \
-  -DSIGMUND_VERSION='"dev"' \
-  -c src/sigmund.c -o /tmp/sigmund_strict.o
-```
+Caveat: `make test` was intentionally not run because this branch touched documentation only.
 
-Result: strict compile passed with warnings treated as errors.
+## Release-readiness checklist
 
-```bash
-make clean && make sigmund CC=clang \
-  CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=undefined' \
-  STATIC_LDFLAGS= \
-  LDFLAGS='-fsanitize=undefined' \
-  EXTRA_CPPFLAGS='-DSIGMUND_BOOT_ID_PATH="/tmp/sigmund_test_boot_id"'
+- [ ] `make test` completes successfully on this branch.
+- [ ] CLI grammar, help text, parser behavior, and documentation agree for the 0.4.0 `mund` surface.
+- [ ] GNU static, GNU dynamic, and musl static install behavior is documented without overstating glibc static portability.
+- [ ] Console attach authorization is peer-credential checked before replaying output or forwarding input.
+- [ ] Signal safety refuses uncertain records instead of relying on display-oriented liveness.
+- [ ] Store directory creation and atomic writers reject symlink/temp-file attacks.
+- [ ] Release and installer scripts fail closed, validate checksums/layouts, and avoid destructive release deletion.
+- [ ] Source archive builds report the `VERSION` file value without requiring a Git checkout.
 
-SIGMUND_BIN=./sigmund bash tests/test_sigmund.sh
-```
+## Current caveats
 
-Result: UBSan build passed the full test suite.
-
-## Known limitations
-
-- The Linux paths were runtime-tested in the review container.
-- The macOS-specific paths were statically reviewed but not runtime-tested on macOS in the review container.
-- The shell tests are stronger than before, but they still do not replace a real macOS CI lane.
-- The JSON parser remains a small purpose-built parser for `sigmund`'s own records rather than a complete JSON implementation.
-
-## Files changed
-
-See `CHANGELOG.md` for the exact file-by-file change list.
+- This branch is scoped to documentation cleanup unless later commits say otherwise.
+- No implementation test result should be inferred from this file.
+- Any future reviewer who runs `make test` should update this status with the exact command, date, environment, and result.
