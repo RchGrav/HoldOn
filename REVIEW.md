@@ -92,7 +92,7 @@ Latest Autopilot alignment pass: `make test` was run on this branch and passed (
 
 ## Release-readiness checklist
 
-- [ ] `make test` completes successfully on this branch.
+- [x] `make test` completes successfully on this branch for the 2026-06-23 Autopilot alignment pass.
 - [ ] CLI grammar, help text, parser behavior, and documentation agree for the 0.4.0 `mund` surface.
 - [ ] GNU static, GNU dynamic, and musl static install behavior is documented without overstating glibc static portability.
 - [ ] Console attach authorization is peer-credential checked before replaying output or forwarding input.
@@ -104,5 +104,5 @@ Latest Autopilot alignment pass: `make test` was run on this branch and passed (
 ## Current caveats
 
 - This branch is scoped to documentation cleanup unless later commits say otherwise.
-- No implementation test result should be inferred from this file.
-- Any future reviewer who runs `make test` should update this status with the exact command, date, environment, and result.
+- The implementation test evidence in this file is limited to the 2026-06-23 Autopilot run: `make test` passed with 101 shell tests plus viewer filter and profile-hash vectors. It does not certify the remaining 0.4.0 release-readiness checklist items.
+- Any future reviewer who reruns `make test` should update this status with the exact command, date, environment, and result.
