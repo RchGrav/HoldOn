@@ -22,6 +22,11 @@ enum viewer_key {
     VIEWER_KEY_PRINTABLE
 };
 
+struct viewer_row {
+    char *line;
+    off_t offset;
+};
+
 struct viewer_state {
     int fd;
     const char *title;
@@ -38,6 +43,21 @@ struct viewer_state {
     off_t history[VIEWER_OFFSET_HISTORY_MAX];
     size_t history_count;
     enum viewer_scan_mode scan_mode;
+    bool cache_valid;
+    bool cache_scan_limited;
+    bool cache_reached_eof;
+    bool at_live_edge;
+    bool newer_available;
+    struct viewer_row *visible;
+    size_t visible_count;
+    size_t visible_capacity;
+    off_t prev_offset;
+    off_t next_offset;
+    off_t tail_anchor;
+    size_t cache_bytes_read;
+    size_t cache_lines_scanned;
+    size_t cache_match_count;
+    size_t scan_generation;
     size_t selected;
     size_t rows;
     size_t cols;
@@ -159,21 +179,106 @@ static void free_examples(struct viewer_state *state) {
     state->example_count = 0;
 }
 
+static void cache_clear(struct viewer_state *state) {
+    if (state->visible) {
+        for (size_t i = 0; i < state->visible_count; i++) free(state->visible[i].line);
+    }
+    state->visible_count = 0;
+    state->prev_offset = state->start_offset;
+    state->next_offset = state->start_offset;
+    state->cache_scan_limited = false;
+    state->cache_reached_eof = false;
+    state->cache_bytes_read = 0;
+    state->cache_lines_scanned = 0;
+    state->cache_match_count = 0;
+}
+
+static void cache_free(struct viewer_state *state) {
+    cache_clear(state);
+    free(state->visible);
+    state->visible = NULL;
+    state->visible_capacity = 0;
+    state->cache_valid = false;
+}
+
+static int cache_ensure_capacity(struct viewer_state *state, size_t cap) {
+    if (state->visible_capacity >= cap) return 0;
+    struct viewer_row *grown = realloc(state->visible, cap * sizeof(*state->visible));
+    if (!grown) return -1;
+    memset(grown + state->visible_capacity, 0, (cap - state->visible_capacity) * sizeof(*grown));
+    state->visible = grown;
+    state->visible_capacity = cap;
+    return 0;
+}
+
+static int cache_load_result(struct viewer_state *state, const struct sigmund_log_filter_result *result, size_t cap) {
+    if (cache_ensure_capacity(state, cap ? cap : 1) != 0) return -1;
+    cache_clear(state);
+    for (size_t i = 0; i < result->line_count; i++) {
+        char *copy = strdup(result->lines[i]);
+        if (!copy) {
+            cache_clear(state);
+            return -1;
+        }
+        state->visible[state->visible_count].line = copy;
+        state->visible[state->visible_count].offset = result->line_offsets[i];
+        state->visible_count++;
+    }
+    state->prev_offset = result->prev_offset;
+    state->next_offset = result->next_offset;
+    state->cache_scan_limited = result->scan_limited;
+    state->cache_reached_eof = result->reached_eof;
+    state->cache_bytes_read = result->bytes_read;
+    state->cache_lines_scanned = result->lines_scanned;
+    state->cache_match_count = result->match_count;
+    state->cache_valid = true;
+    state->scan_generation++;
+    if (state->selected >= state->visible_count && state->visible_count > 0) state->selected = state->visible_count - 1;
+    if (state->visible_count == 0) state->selected = 0;
+    return 0;
+}
+
+static void cache_invalidate(struct viewer_state *state) {
+    state->cache_valid = false;
+}
+
 static void reset_filter_navigation(struct viewer_state *state) {
     if (state->follow) {
         off_t end = lseek(state->fd, 0, SEEK_END);
         if (end >= 0) state->start_offset = end;
+        state->tail_anchor = state->start_offset;
         state->scan_mode = VIEWER_SCAN_BACKWARD;
+        state->at_live_edge = true;
+        state->newer_available = false;
     } else {
         state->start_offset = 0;
         state->scan_mode = VIEWER_SCAN_FORWARD;
+        state->at_live_edge = false;
+        state->newer_available = false;
     }
     state->history_count = 0;
     state->selected = 0;
+    cache_invalidate(state);
 }
 
-static bool filter_active(const struct viewer_state *state) {
-    return state->filter[0] || state->example_count > 0;
+static int handle_follow_tick(struct viewer_state *state) {
+    off_t end = lseek(state->fd, 0, SEEK_END);
+    if (end >= 0 && end > state->tail_anchor) {
+        state->tail_anchor = end;
+        if (state->at_live_edge) {
+            state->start_offset = end;
+            state->newer_available = false;
+            cache_invalidate(state);
+        } else {
+            state->newer_available = true;
+        }
+    }
+    if (state->follow && state->cache_reached_eof && state->is_running && !state->is_running(state->running_userdata)) {
+        state->follow = false;
+        state->follow_exited = true;
+        cache_invalidate(state);
+    }
+    return 0;
 }
 
 static bool same_line(const char *a, const char *b) {
@@ -221,45 +326,56 @@ static void write_sanitized_line(const char *line, size_t width) {
     viewer_puts("\033[K");
 }
 
-static int render(struct viewer_state *state, struct sigmund_log_filter_result *result) {
-    terminal_size(&state->rows, &state->cols);
-
+static int refill_cache(struct viewer_state *state) {
     struct sigmund_log_filter_options opts;
     configure_filter_opts(state, &opts);
     size_t visible_rows = state->rows > 4 ? state->rows - 4 : 1;
     size_t scan_budget = visible_rows * VIEWER_SCAN_BYTES_PER_ROW;
+    struct sigmund_log_filter_result result;
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
-        if (state->follow && state->history_count == 0) {
+        if (state->follow && state->at_live_edge) {
             off_t end = lseek(state->fd, 0, SEEK_END);
-            if (end >= 0) state->start_offset = end;
+            if (end >= 0) {
+                state->start_offset = end;
+                state->tail_anchor = end;
+            }
         }
-        if (sigmund_log_filter_backward_fd(state->fd, &opts, state->start_offset, scan_budget, result) != 0) return -1;
+        if (sigmund_log_filter_backward_fd(state->fd, &opts, state->start_offset, scan_budget, &result) != 0) return -1;
     } else {
         opts.scan_byte_budget = scan_budget;
         if (lseek(state->fd, state->start_offset, SEEK_SET) < 0) return -1;
-        if (sigmund_log_filter_fd(state->fd, &opts, result) != 0) return -1;
+        if (sigmund_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
     }
-    if (state->selected >= result->line_count && result->line_count > 0) state->selected = result->line_count - 1;
-    if (result->line_count == 0) state->selected = 0;
+    int rc = cache_load_result(state, &result, visible_rows);
+    sigmund_log_filter_result_free(&result);
+    return rc;
+}
+
+static int render(struct viewer_state *state) {
+    size_t old_rows = state->rows, old_cols = state->cols;
+    terminal_size(&state->rows, &state->cols);
+    if (old_rows && (old_rows != state->rows || old_cols != state->cols)) cache_invalidate(state);
+    if (!state->cache_valid && refill_cache(state) != 0) return -1;
 
     char header[512];
     snprintf(header,
              sizeof(header),
-             "\033[H\033[2Jmund view %s%s | filter: %s%s | similar: %zu | q quit\033[K\r\n",
+             "\033[H\033[2Jmund view %s%s | filter: %s%s%s | similar: %zu | q quit\033[K\r\n",
              state->title ? state->title : "",
              state->follow ? " [follow]" : (state->follow_exited ? " [exited]" : ""),
              state->filter[0] ? state->filter : "(type to filter)",
-             result->scan_limited ? " | partial" : (result->reached_eof ? " | EOF" : ""),
+             state->cache_scan_limited ? " | partial" : (state->cache_reached_eof ? " | EOF" : ""),
+             state->newer_available ? " | newer below" : "",
              state->example_count);
     if (viewer_puts(header) != 0) return -1;
 
     size_t body_rows = state->rows > 4 ? state->rows - 4 : 1;
     size_t line_width = state->cols > 4 ? state->cols - 4 : state->cols;
     for (size_t i = 0; i < body_rows; i++) {
-        if (i < result->line_count) {
+        if (i < state->visible_count) {
             if (i == state->selected) viewer_puts("\033[7m");
             viewer_puts("  ");
-            write_sanitized_line(result->lines[i], line_width);
+            write_sanitized_line(state->visible[i].line, line_width);
             if (i == state->selected) viewer_puts("\033[0m");
         } else {
             viewer_puts("~\033[K");
@@ -271,18 +387,22 @@ static int render(struct viewer_state *state, struct sigmund_log_filter_result *
     if (state->debug_stats) {
         snprintf(footer,
                  sizeof(footer),
-                 "offset=%lld next=%lld scanned=%zu bytes=%zu matches=%zu%s | arrows/j/k PgUp/PgDn space=similar backspace=filter\033[K",
+                 "scan_gen=%zu offset=%lld prev=%lld next=%lld scanned=%zu bytes=%zu matches=%zu%s%s | arrows/j/k PgUp/PgDn space=similar backspace=filter\033[K",
+                 state->scan_generation,
                  (long long)state->start_offset,
-                 (long long)result->next_offset,
-                 result->lines_scanned,
-                 result->bytes_read,
-                 result->match_count,
-                 state->follow ? " follow=on" : (state->follow_exited ? " follow=exited" : ""));
+                 (long long)state->prev_offset,
+                 (long long)state->next_offset,
+                 state->cache_lines_scanned,
+                 state->cache_bytes_read,
+                 state->cache_match_count,
+                 state->follow ? (state->at_live_edge ? " follow=tail" : " follow=browsing") : (state->follow_exited ? " follow=exited" : ""),
+                 state->newer_available ? " newer=yes" : "");
     } else {
         snprintf(footer,
                  sizeof(footer),
                  "arrows/j/k move | PgUp/PgDn page | type filters | Backspace clears | Space toggles similarity%s\033[K",
-                 state->follow ? " | Follow refresh on" : (state->follow_exited ? " | Run exited" : ""));
+                 state->follow ? (state->at_live_edge ? " | Follow tail" : " | Browsing older matches") :
+                                 (state->follow_exited ? " | Run exited" : ""));
     }
     return viewer_puts(footer);
 }
@@ -296,43 +416,55 @@ static void push_history(struct viewer_state *state, off_t off) {
     state->history[VIEWER_OFFSET_HISTORY_MAX - 1] = off;
 }
 
-static void page_down(struct viewer_state *state, const struct sigmund_log_filter_result *result) {
+static void page_down(struct viewer_state *state) {
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         if (state->history_count > 0) {
             state->start_offset = state->history[--state->history_count];
+            state->at_live_edge = state->history_count == 0 && state->start_offset >= state->tail_anchor;
         } else {
             off_t end = lseek(state->fd, 0, SEEK_END);
-            if (end >= 0) state->start_offset = end;
+            if (end >= 0) {
+                state->start_offset = end;
+                state->tail_anchor = end;
+            }
+            state->at_live_edge = true;
+            state->newer_available = false;
         }
         state->selected = 0;
+        cache_invalidate(state);
         return;
     }
-    if (result->line_count == 0 || result->next_offset <= state->start_offset) return;
+    if (state->visible_count == 0 || state->next_offset <= state->start_offset) return;
     push_history(state, state->start_offset);
-    state->start_offset = result->next_offset;
+    state->start_offset = state->next_offset;
     state->selected = 0;
+    cache_invalidate(state);
 }
 
-static void page_up(struct viewer_state *state, const struct sigmund_log_filter_result *result) {
-    if (filter_active(state) && state->follow) {
+static void page_up(struct viewer_state *state) {
+    if (state->follow) {
         push_history(state, state->start_offset);
         state->scan_mode = VIEWER_SCAN_BACKWARD;
-        if (result && result->line_count > 0 && result->prev_offset < state->start_offset) {
-            state->start_offset = result->prev_offset;
+        state->at_live_edge = false;
+        if (state->visible_count > 0 && state->prev_offset < state->start_offset) {
+            state->start_offset = state->prev_offset;
         } else if (state->start_offset == 0) {
             off_t end = lseek(state->fd, 0, SEEK_END);
             if (end >= 0) state->start_offset = end;
         }
         state->selected = 0;
+        cache_invalidate(state);
         return;
     }
     if (state->history_count == 0) {
         state->start_offset = 0;
         state->selected = 0;
+        cache_invalidate(state);
         return;
     }
     state->start_offset = state->history[--state->history_count];
     state->selected = 0;
+    cache_invalidate(state);
 }
 
 int sigmund_log_viewer_tty_fd(int fd,
@@ -355,7 +487,14 @@ int sigmund_log_viewer_tty_fd(int fd,
     state.base_opts = *opts;
     off_t current = lseek(fd, 0, SEEK_CUR);
     state.start_offset = current >= 0 ? current : 0;
-    if (state.follow && (opts->literal || opts->similar_example_count > 0)) {
+    state.tail_anchor = state.start_offset;
+    state.at_live_edge = state.follow;
+    if (state.follow) {
+        off_t end = lseek(fd, 0, SEEK_END);
+        if (end >= 0) {
+            state.start_offset = end;
+            state.tail_anchor = end;
+        }
         state.scan_mode = VIEWER_SCAN_BACKWARD;
     }
     if (opts->literal) {
@@ -366,40 +505,29 @@ int sigmund_log_viewer_tty_fd(int fd,
     if (raw_terminal_enter(&raw) != 0) return -1;
     int rc = 0;
     while (1) {
-        struct sigmund_log_filter_result result;
-        if (render(&state, &result) != 0) {
+        if (render(&state) != 0) {
             rc = -1;
             break;
         }
         unsigned char printable = 0;
         enum viewer_key key = read_key(&printable, state.follow ? 250 : -1);
         if (key == VIEWER_KEY_NONE && state.follow) {
-            if (result.reached_eof && state.is_running && !state.is_running(state.running_userdata)) {
-                state.follow = false;
-                state.follow_exited = true;
-                sigmund_log_filter_result_free(&result);
-                continue;
-            }
-            if (state.scan_mode == VIEWER_SCAN_FORWARD && result.line_count > 0 && result.next_offset > state.start_offset) {
-                page_down(&state, &result);
-            }
-            sigmund_log_filter_result_free(&result);
+            handle_follow_tick(&state);
             continue;
         }
         if (key == VIEWER_KEY_QUIT) {
-            sigmund_log_filter_result_free(&result);
             break;
         }
         if (key == VIEWER_KEY_DOWN) {
-            if (state.selected + 1 < result.line_count) state.selected++;
-            else page_down(&state, &result);
+            if (state.selected + 1 < state.visible_count) state.selected++;
+            else page_down(&state);
         } else if (key == VIEWER_KEY_UP) {
             if (state.selected > 0) state.selected--;
-            else page_up(&state, &result);
+            else page_up(&state);
         } else if (key == VIEWER_KEY_PAGE_DOWN) {
-            page_down(&state, &result);
+            page_down(&state);
         } else if (key == VIEWER_KEY_PAGE_UP) {
-            page_up(&state, &result);
+            page_up(&state);
         } else if (key == VIEWER_KEY_BACKSPACE) {
             size_t n = strlen(state.filter);
             if (n > 0) {
@@ -414,13 +542,13 @@ int sigmund_log_viewer_tty_fd(int fd,
                 reset_filter_navigation(&state);
             }
         } else if (key == VIEWER_KEY_TOGGLE) {
-            const char *line = state.selected < result.line_count ? result.lines[state.selected] : NULL;
+            const char *line = state.selected < state.visible_count ? state.visible[state.selected].line : NULL;
             if (toggle_example(&state, line) != 0) rc = -1;
         }
-        sigmund_log_filter_result_free(&result);
         if (rc != 0) break;
     }
     raw_terminal_leave(&raw);
     free_examples(&state);
+    cache_free(&state);
     return rc;
 }

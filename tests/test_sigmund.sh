@@ -836,6 +836,26 @@ test_log_view_follow_dynamic_tty_filter() {
   ! grep -q 'boring-ignore' "$TEST_ROOT/view-follow-dynamic.out" || { cat "$TEST_ROOT/view-follow-dynamic.out" >&2; return 1; }
 }
 
+test_log_view_selection_uses_cached_rows() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc max_gen
+  out=$("$SIGMUND_BIN" run -- /bin/sh -c 'printf "needle 1\nneedle 2\nneedle 3\nneedle 4\n"; sleep 0.1' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.3
+  set +e
+  python3 -c 'import sys,time; sys.stdout.write("needlejjkkq"); sys.stdout.flush(); time.sleep(0.1)' |
+    script -qfec "$SIGMUND_BIN view $id --interactive --debug-stats" /dev/null >"$TEST_ROOT/view-cache-selection.out" 2>"$TEST_ROOT/view-cache-selection.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-cache-selection.err" >&2; return 1; }
+  grep -q 'filter: needle' "$TEST_ROOT/view-cache-selection.out" || { cat "$TEST_ROOT/view-cache-selection.out" >&2; return 1; }
+  max_gen=$(grep -ao 'scan_gen=[0-9][0-9]*' "$TEST_ROOT/view-cache-selection.out" | sed 's/scan_gen=//' | sort -n | tail -n1)
+  [ -n "$max_gen" ] || { cat "$TEST_ROOT/view-cache-selection.out" >&2; return 1; }
+  [ "$max_gen" -le 7 ] || { echo "scan_gen advanced during selection movement: $max_gen" >&2; cat "$TEST_ROOT/view-cache-selection.out" >&2; return 1; }
+}
+
 test_start_follow_short_form() {
   local out id
   out=$("$SIGMUND_BIN" -f bash -c 'echo follow-short' 2>&1) || return 1
@@ -2565,6 +2585,7 @@ run_test "view filters run logs literally and by similarity" test_log_view_filte
 run_test "view follows live logs through filter engine" test_log_view_follow_filters_live_output
 run_test "logs follow routes through view filter engine" test_mund_logs_follow_routes_through_view_filter
 run_test "view follow filters dynamically from typed TTY input" test_log_view_follow_dynamic_tty_filter
+run_test "view selection movement uses cached filter rows" test_log_view_selection_uses_cached_rows
 run_test "-f starts and follows output" test_start_follow_short_form
 run_test "tail <id> tails an existing run log" test_tail_verb_existing_id
 run_test "persistent stale records remain visible and dumpable" test_persistent_stale_records
