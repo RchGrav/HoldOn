@@ -4,6 +4,12 @@
 #include "sigmund/core.h"
 #include "sigmund/console_internal.h"
 
+#if !defined(__linux__) && !defined(__APPLE__) && defined(__has_include)
+#if __has_include(<sys/ucred.h>)
+#include <sys/ucred.h>
+#endif
+#endif
+
 static int console_addr_relative(const char *sock_path,
                                  struct sockaddr_un *addr,
                                  char *dir,
@@ -126,6 +132,50 @@ int sigmund_make_console_listener(const char *sock_path) {
         return -1;
     }
     return fd;
+}
+
+int sigmund_console_peer_uid(int fd, uid_t *uid_out) {
+    if (!uid_out) {
+        errno = EINVAL;
+        return -1;
+    }
+#if defined(__linux__)
+    struct ucred cred;
+    socklen_t len = (socklen_t)sizeof(cred);
+    memset(&cred, 0, sizeof(cred));
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0 || len < sizeof(cred)) {
+        return -1;
+    }
+    *uid_out = cred.uid;
+    return 0;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
+    uid_t uid = 0;
+    gid_t gid = 0;
+    if (getpeereid(fd, &uid, &gid) != 0) {
+        return -1;
+    }
+    (void)gid;
+    *uid_out = uid;
+    return 0;
+#elif defined(LOCAL_PEERCRED)
+    struct xucred cred;
+    socklen_t len = (socklen_t)sizeof(cred);
+    memset(&cred, 0, sizeof(cred));
+    if (getsockopt(fd, 0, LOCAL_PEERCRED, &cred, &len) != 0) {
+        return -1;
+    }
+#if defined(XUCRED_VERSION)
+    if (cred.cr_version != XUCRED_VERSION) {
+        errno = EINVAL;
+        return -1;
+    }
+#endif
+    *uid_out = cred.cr_uid;
+    return 0;
+#else
+    errno = ENOTSUP;
+    return -1;
+#endif
 }
 
 int sigmund_open_console_pty(int *master_out, int *slave_out) {

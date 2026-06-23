@@ -23,6 +23,14 @@ static void broker_fail_errno(int parent_pipe,
                               int logfd,
                               pid_t target,
                               int err);
+static bool console_peer_uid_allowed(uid_t peer_uid,
+                                     uid_t owner_uid,
+                                     bool have_allowed_peer_uid,
+                                     uid_t allowed_peer_uid);
+static bool authorize_console_client(int client,
+                                     uid_t owner_uid,
+                                     bool have_allowed_peer_uid,
+                                     uid_t allowed_peer_uid);
 
 void sigmund_handle_console_sigwinch(int signo) {
     (void)signo;
@@ -68,9 +76,33 @@ static void broker_fail_errno(int parent_pipe,
     broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, target, 127);
 }
 
+static bool console_peer_uid_allowed(uid_t peer_uid,
+                                     uid_t owner_uid,
+                                     bool have_allowed_peer_uid,
+                                     uid_t allowed_peer_uid) {
+    return peer_uid == 0 || peer_uid == owner_uid || (have_allowed_peer_uid && peer_uid == allowed_peer_uid);
+}
+
+static bool authorize_console_client(int client,
+                                     uid_t owner_uid,
+                                     bool have_allowed_peer_uid,
+                                     uid_t allowed_peer_uid) {
+    uid_t peer_uid = (uid_t)-1;
+    if (sigmund_console_peer_uid(client, &peer_uid) != 0 ||
+        !console_peer_uid_allowed(peer_uid, owner_uid, have_allowed_peer_uid, allowed_peer_uid)) {
+        static const char msg[] = "sigmund: console attach denied\n";
+        (void)sigmund_write_all(client, msg, sizeof(msg) - 1);
+        return false;
+    }
+    return true;
+}
+
 void sigmund_run_console_broker(int parent_pipe,
                                const char *log_path,
                                const char *sock_path,
+                               uid_t owner_uid,
+                               bool have_allowed_peer_uid,
+                               uid_t allowed_peer_uid,
                                int argc,
                                char **argv,
                                const char *exec_path) {
@@ -215,7 +247,9 @@ void sigmund_run_console_broker(int parent_pipe,
         if (FD_ISSET(listener, &rfds)) {
             int next = accept(listener, NULL, NULL);
             if (next >= 0) {
-                if (client >= 0) {
+                if (!authorize_console_client(next, owner_uid, have_allowed_peer_uid, allowed_peer_uid)) {
+                    close(next);
+                } else if (client >= 0) {
                     close(next);
                 } else if (sigmund_console_replay_write(&replay, next) != 0) {
                     close(next);

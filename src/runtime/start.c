@@ -159,6 +159,9 @@ int sigmund_perform_start(const struct sigmund_invocation *inv,
         sigmund_free_argv_alloc(launch_argv, argc);
         sigmund_die_errno("sigmund: console socket path too long");
     }
+    uid_t console_owner_uid = geteuid();
+    bool console_have_allowed_peer_uid = inv && inv->euid_root && inv->have_sudo_user && inv->invoking_uid != console_owner_uid;
+    uid_t console_allowed_peer_uid = console_have_allowed_peer_uid ? inv->invoking_uid : (uid_t)0;
 
     int pipefd[2];
 #if defined(__linux__) && defined(O_CLOEXEC)
@@ -213,7 +216,15 @@ int sigmund_perform_start(const struct sigmund_invocation *inv,
             if (nullfd > STDERR_FILENO) {
                 close(nullfd);
             }
-            sigmund_run_console_broker(pipefd[1], log_path, console_sock, argc, launch_argv, resolved_exec_path);
+            sigmund_run_console_broker(pipefd[1],
+                                      log_path,
+                                      console_sock,
+                                      console_owner_uid,
+                                      console_have_allowed_peer_uid,
+                                      console_allowed_peer_uid,
+                                      argc,
+                                      launch_argv,
+                                      resolved_exec_path);
             _exit(127);
         }
         int nullfd = open("/dev/null", O_RDONLY);
