@@ -23,8 +23,29 @@ ROOT_ACTOR_AVAILABLE=0
 SUDO_BIN="$(command -v sudo || true)"
 USER_CREATED=0
 
-pass() { echo "PASS: $1"; }
+PASSES=0
+SKIPS=0
+pass() { echo "PASS: $1"; PASSES=$((PASSES + 1)); }
 fail() { echo "FAIL: $1"; FAILS=$((FAILS + 1)); }
+skip_note() { echo "SKIP: $1"; SKIPS=$((SKIPS + 1)); }
+# Call `skip "<reason>"` from inside a test to report SKIP instead of a vacuous
+# PASS. It returns sentinel 77, which run_test maps to SKIP (or to FAIL when
+# SIGMUND_REQUIRE_ROOT_TESTS=1, so CI cannot silently no-op the root lane).
+skip() { [ -n "${1:-}" ] && echo "  (skipped: $1)" >&2; return 77; }
+
+# Refuse to run vacuously: a missing core tool (e.g. ps from procps) must be a
+# hard, visible failure, never a quietly-green test.
+require_tools() {
+  local missing="" t
+  for t in ps stat sed awk grep find mktemp head tr cut id chmod kill; do
+    command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+  done
+  if [ -n "$missing" ]; then
+    echo "FATAL: required test tools missing:$missing" >&2
+    echo "  install them (e.g. 'procps' provides ps) and re-run; the suite refuses to pass vacuously." >&2
+    exit 1
+  fi
+}
 
 suite_cleanup() {
   set +e
@@ -106,7 +127,7 @@ as_user() {
 }
 
 as_root() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 127
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 77
   local env_args
   env_args=(
     "HOME=$ROOT_HOME"
@@ -135,7 +156,7 @@ as_root() {
 }
 
 as_sudo_from_user() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 127
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 77
   local env_args
   env_args=(
     "HOME=$ROOT_HOME"
@@ -331,6 +352,12 @@ run_test() {
   set -e
   if [ "$rc" -eq 0 ]; then
     pass "$desc"
+  elif [ "$rc" -eq 77 ]; then
+    if [ "${SIGMUND_REQUIRE_ROOT_TESTS:-0}" -eq 1 ]; then
+      fail "$desc (skipped, but SIGMUND_REQUIRE_ROOT_TESTS=1)"
+    else
+      skip_note "$desc"
+    fi
   else
     fail "$desc"
   fi
@@ -338,6 +365,7 @@ run_test() {
 }
 
 setup_suite_actors
+require_tools
 
 extract_id() {
   sed -n -e '/^[0-9a-f]\{8\}$/p' -e 's/^sigmund: id=\([0-9a-f][0-9a-f]*\).*/\1/p' | head -n1
@@ -1049,7 +1077,9 @@ test_transactional_record_write_failure() {
   rc=$?
   set -e
   [ "$rc" -eq 1 ] || return 1
-  pids=$(pgrep -f 'sigmund_txn_test_sleep' || true)
+  # Detect a leaked process via ps (a required tool) rather than pgrep with
+  # `|| true`, which would pass vacuously if pgrep were absent.
+  pids=$(ps -eo pid=,args= | awk '/sigmund_txn_test_sleep/ && !/awk/ {print $1}')
   [ -z "$pids" ]
 }
 
@@ -1274,7 +1304,7 @@ test_system_alias_start_self_elevates_alias() {
 }
 
 test_grant_revoke_writes_hash_scoped_sudoers() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 0
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local safe safe_real out id hash sudoers_dir sudoers_file rc visudo_ok sh_bin
   safe="$TEST_ROOT/sigmund-safe"
   sh_bin="$(resolve_path /bin/sh)" || return 1
@@ -1324,7 +1354,7 @@ test_grant_revoke_writes_hash_scoped_sudoers() {
 }
 
 test_elevated_capability_start_and_stop_validate_alias_hash() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 0
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local safe out id hash start_out cap_id rc
   safe="$TEST_ROOT/sigmund-cap"
   cp "$SIGMUND_REAL_BIN" "$safe" || return 1
@@ -1446,7 +1476,7 @@ test_sudo_exec_failure_returns_clean_error() {
 }
 
 test_tail_ctrl_c_detaches_from_tail_and_keeps_run() {
-  command -v setsid >/dev/null 2>&1 || return 0
+  command -v setsid >/dev/null 2>&1 || skip "setsid not available"
   local out id pgid tail_pid rc
   out=$("$SIGMUND_BIN" bash -c 'while :; do echo tail-still-running; sleep 1; done' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
@@ -1551,7 +1581,7 @@ test_normal_start_writes_user_local_state() {
 }
 
 test_root_start_writes_system_store_and_public_unknown() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 0
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local out id mode list_out
   out=$(as_root "$SIGMUND_REAL_BIN" true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
@@ -1572,7 +1602,7 @@ test_root_start_writes_system_store_and_public_unknown() {
 }
 
 test_sudo_start_writes_system_store_with_invoking_metadata() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 0
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local out id json
   out=$(as_sudo_from_user "$SIGMUND_REAL_BIN" true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
@@ -1620,7 +1650,7 @@ assert_home_system_start_is_user_local() {
 }
 
 test_sudo_system_start_of_home_executable_uses_user_store() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 0
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local app out
   app=$(make_home_executable) || return 1
   out=$(as_sudo_from_user "$SIGMUND_REAL_BIN" --system "$app" 2>&1) || return 1
@@ -1628,7 +1658,7 @@ test_sudo_system_start_of_home_executable_uses_user_store() {
 }
 
 test_home_elevated_run_alias_stays_user_local() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 0
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local app out id aliases
   app=$(make_home_executable) || return 1
   out=$(as_sudo_from_user "$SIGMUND_REAL_BIN" --system "$app" 2>&1) || return 1
@@ -1642,7 +1672,7 @@ test_home_elevated_run_alias_stays_user_local() {
 }
 
 test_sudo_context_can_stop_unique_user_local_run() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 0
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local out id pgid
   out=$("$SIGMUND_BIN" sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
@@ -1747,6 +1777,11 @@ run_test "--elevated requires root authority" test_elevated_requires_root
 run_test "build artifacts for static and dynamic coexist" test_build_artifact_coexistence
 run_test "concurrent starts produce unique ids" test_concurrent_unique_ids
 
+echo "----------------------------------------------------------------"
+echo "summary: $PASSES passed, $FAILS failed, $SKIPS skipped"
+if [ "$SKIPS" -ne 0 ]; then
+  echo "  (some tests skipped; run as root and/or set SIGMUND_REQUIRE_ROOT_TESTS=1 for full coverage)"
+fi
 if [ "$FAILS" -ne 0 ]; then
   exit 1
 fi

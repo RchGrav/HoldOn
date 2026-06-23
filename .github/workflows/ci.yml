@@ -41,7 +41,7 @@ jobs:
           mkdir "$tmpdir/src"
           tar --exclude=.git --exclude=sigmund --exclude=sigmund-dynamic -cf - . | tar -xf - -C "$tmpdir/src"
           chmod -R a+rX "$tmpdir"
-          sudo bash -c 'cd "$1"; umask 022; make clean; make test CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"' bash "$tmpdir/src"
+          sudo bash -c 'cd "$1"; umask 022; make clean; SIGMUND_REQUIRE_ROOT_TESTS=1 make test CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"' bash "$tmpdir/src"
 
   macos-runtime:
     name: macOS runtime test (${{ matrix.arch }})
