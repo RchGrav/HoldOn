@@ -10,12 +10,84 @@
 
 static volatile sig_atomic_t g_tail_interrupted = 0;
 
+enum signal_validation_state { SIGNAL_TARGET_RUNNING, SIGNAL_TARGET_EXITED };
+
 static void handle_tail_sigint(int signo);
 static int do_print_signal_command(const struct sigmund_store *store, const char *id, int sig);
+static int validate_signal_target(const char *id,
+                                  const struct sigmund_run_record *r,
+                                  bool require_live,
+                                  enum signal_validation_state *state_out);
 
 static void handle_tail_sigint(int signo) {
     (void)signo;
     g_tail_interrupted = 1;
+}
+
+static int validate_signal_target(const char *id,
+                                  const struct sigmund_run_record *r,
+                                  bool require_live,
+                                  enum signal_validation_state *state_out) {
+    if (state_out) {
+        *state_out = SIGNAL_TARGET_RUNNING;
+    }
+    if (r->pgid <= 1) {
+        fprintf(stderr, "sigmund: error: invalid pgid %ld in record file\n", (long)r->pgid);
+        return 5;
+    }
+    if (r->sid <= 0) {
+        fprintf(stderr, "sigmund: error: invalid sid %ld in record file\n", (long)r->sid);
+        return 5;
+    }
+
+    char boot[128] = {0};
+    if (!r->has_boot || !sigmund_current_boot_id(boot, sizeof(boot))) {
+        fprintf(stderr, "sigmund: error: run %s could not be validated for signaling (missing boot_id)\n", id);
+        return 2;
+    }
+    if (strcmp(r->boot_id, boot) != 0) {
+        fprintf(stderr, "sigmund: error: run %s is stale and cannot be signaled\n", id);
+        return 2;
+    }
+
+    char leader_state = 0;
+    uint64_t leader_starttime = 0;
+    bool have_leader_stat = sigmund_read_proc_stat_tokens(r->pid, &leader_state, &leader_starttime) == 0;
+    if (have_leader_stat && leader_state != 'Z') {
+        if (r->proc_starttime_ticks == 0 || leader_starttime != r->proc_starttime_ticks) {
+            fprintf(stderr, "sigmund: error: run %s process identity differs from the record and cannot be signaled\n", id);
+            return 2;
+        }
+        pid_t current_pgid = getpgid(r->pid);
+        pid_t current_sid = getsid(r->pid);
+        if (current_pgid != r->pgid || current_sid != r->sid) {
+            fprintf(stderr, "sigmund: error: run %s process group/session differs from the record and cannot be signaled\n", id);
+            return 2;
+        }
+        return 0;
+    }
+    if (have_leader_stat && r->proc_starttime_ticks != 0 && leader_starttime != r->proc_starttime_ticks) {
+        fprintf(stderr, "sigmund: error: run %s process identity differs from the record and cannot be signaled\n", id);
+        return 2;
+    }
+
+    enum group_liveness gl = sigmund_group_session_liveness(r->pgid, r->sid);
+    if (gl == GROUP_LIVE) {
+        return 0;
+    }
+    if (gl == GROUP_EMPTY || gl == GROUP_ZOMBIE_ONLY) {
+        if (require_live) {
+            fprintf(stderr, "sigmund: error: run %s is not running and cannot be printed as a signal command\n", id);
+            return 2;
+        }
+        if (state_out) {
+            *state_out = SIGNAL_TARGET_EXITED;
+        }
+        return 0;
+    }
+
+    fprintf(stderr, "sigmund: error: run %s could not be tied to its recorded process group/session and cannot be signaled\n", id);
+    return 2;
 }
 
 int sigmund_tail_log_until_exit(const struct sigmund_run_record *r, bool from_end, bool follow_until_exit) {
@@ -77,37 +149,23 @@ int sigmund_tail_log_until_exit(const struct sigmund_run_record *r, bool from_en
 
 int sigmund_do_signal_action(const struct sigmund_store *store, const char *id, int sig, bool graceful, bool *already_done) {
     struct sigmund_run_record r;
-    char path[SIGMUND_PATH_MAX], boot[128] = {0};
-    bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
+    char path[SIGMUND_PATH_MAX];
     if (already_done) {
         *already_done = false;
     }
     if (sigmund_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
         return 5;
     }
-    if (r.pgid <= 1) {
-        fprintf(stderr, "sigmund: error: invalid pgid %ld in record file\n", (long)r.pgid);
-        return 5;
+    enum signal_validation_state signal_state = SIGNAL_TARGET_RUNNING;
+    int validation_rc = validate_signal_target(id, &r, false, &signal_state);
+    if (validation_rc != 0) {
+        return validation_rc;
     }
-    if (r.has_boot && have_boot && strcmp(r.boot_id, boot) != 0) {
-        fprintf(stderr, "sigmund: error: run %s is stale (record boot_id differs from current boot)\n", id);
-        return 2;
-    }
-
-    enum run_state st = sigmund_eval_state(&r, have_boot ? boot : NULL);
-    if (st == STATE_STALE) {
-        fprintf(stderr, "sigmund: error: run %s is stale and cannot be signaled\n", id);
-        return 2;
-    }
-    if (st == STATE_EXITED || st == STATE_FAILED) {
+    if (signal_state == SIGNAL_TARGET_EXITED) {
         if (already_done) {
             *already_done = true;
         }
         return 0;
-    }
-    if (st == STATE_UNKNOWN) {
-        fprintf(stderr, "sigmund: error: run %s could not be validated and cannot be signaled\n", id);
-        return 2;
     }
 
     if (kill(-r.pgid, sig) != 0) {
@@ -146,27 +204,14 @@ int sigmund_do_signal_action(const struct sigmund_store *store, const char *id, 
 
 static int do_print_signal_command(const struct sigmund_store *store, const char *id, int sig) {
     struct sigmund_run_record r;
-    char path[SIGMUND_PATH_MAX], boot[128] = {0};
-    bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
+    char path[SIGMUND_PATH_MAX];
     if (sigmund_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
         return 5;
     }
-    if (r.pgid <= 1) {
-        fprintf(stderr, "sigmund: error: invalid pgid %ld in record file\n", (long)r.pgid);
-        return 5;
-    }
-    enum run_state st = sigmund_eval_state(&r, have_boot ? boot : NULL);
-    if (r.has_boot && have_boot && strcmp(r.boot_id, boot) != 0) {
-        fprintf(stderr, "sigmund: error: run %s is stale and cannot be signaled\n", id);
-        return 2;
-    }
-    if (st == STATE_STALE) {
-        fprintf(stderr, "sigmund: error: run %s is stale and cannot be signaled\n", id);
-        return 2;
-    }
-    if (st == STATE_UNKNOWN) {
-        fprintf(stderr, "sigmund: error: run %s could not be validated and cannot be signaled\n", id);
-        return 2;
+    enum signal_validation_state signal_state = SIGNAL_TARGET_RUNNING;
+    int validation_rc = validate_signal_target(id, &r, true, &signal_state);
+    if (validation_rc != 0) {
+        return validation_rc;
     }
     printf("kill -%s -- -%ld\n", sig == SIGKILL ? "KILL" : "TERM", (long)r.pgid);
     return 0;

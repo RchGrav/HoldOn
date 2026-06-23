@@ -232,6 +232,8 @@ new_env() {
   TEST_ROOT="$(mktemp -d "$SUITE_ROOT/test.XXXXXX")" || return 1
   chmod 755 "$TEST_ROOT" || return 1
   SIGMUND_TEST_SYSTEM_STATE_DIR="$TEST_ROOT/system"
+  SIGMUND_BOOT_ID_PATH="$TEST_ROOT/boot_id"
+  printf 'boot-main\n' >"$SIGMUND_BOOT_ID_PATH" || return 1
   ROOT_HOME="$TEST_ROOT/root-home"
   mkdir -p "$SIGMUND_TEST_SYSTEM_STATE_DIR" "$ROOT_HOME" || return 1
   chmod 755 "$SIGMUND_TEST_SYSTEM_STATE_DIR" || return 1
@@ -248,7 +250,7 @@ new_env() {
   fi
 
   HOME="$ACTOR_HOME"
-  export HOME TEST_ROOT SIGMUND_TEST_SYSTEM_STATE_DIR ROOT_HOME ACTOR_HOME
+  export HOME TEST_ROOT SIGMUND_TEST_SYSTEM_STATE_DIR SIGMUND_BOOT_ID_PATH ROOT_HOME ACTOR_HOME
   export SIGMUND_ACTOR_HOME="$ACTOR_HOME"
   export SIGMUND_ACTOR_USER="$TEST_USER"
   export SIGMUND_ACTOR_SUDO_BIN="$SUDO_BIN"
@@ -431,6 +433,11 @@ extract_id() {
 record_pgid() {
   local id="$1" store="${2:-$HOME/.local/state/sigmund}"
   sed -n 's/.*"pgid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$store/$id.json" | head -n1
+}
+
+record_sid() {
+  local id="$1" store="${2:-$HOME/.local/state/sigmund}"
+  sed -n 's/.*"sid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$store/$id.json" | head -n1
 }
 
 
@@ -653,6 +660,37 @@ test_print_signal_output() {
   [ "$got" = "kill -KILL -- -$pgid" ]
 }
 
+test_signal_refuses_tampered_live_group_identity() {
+  local out id rec real_pgid real_sid shell_pgid shell_sid rc
+  out=$("$SIGMUND_BIN" sleep 300 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  real_pgid=$(record_pgid "$id")
+  real_sid=$(record_sid "$id")
+  [ -n "$id" ] && [ -n "$real_pgid" ] && [ -n "$real_sid" ] || return 1
+  shell_pgid=$(ps -o pgid= -p $$ | tr -d ' ')
+  shell_sid=$(ps -o sid= -p $$ | tr -d ' ')
+  [ -n "$shell_pgid" ] && [ -n "$shell_sid" ] || return 1
+  [ "$shell_pgid" != "$real_pgid" ] || { "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true; skip "shell and target unexpectedly share pgid"; }
+  rec="$HOME/.local/state/sigmund/$id.json"
+  cp "$rec" "$rec.bak" || return 1
+  sed -i.tmp \
+    -e "s/\"pgid\":[[:space:]]*[0-9][0-9]*/\"pgid\":$shell_pgid/" \
+    -e "s/\"sid\":[[:space:]]*[0-9][0-9]*/\"sid\":$shell_sid/" \
+    "$rec" || return 1
+  rm -f "$rec.tmp"
+  set +e
+  "$SIGMUND_BIN" stop --print "$id" >/dev/null 2>"$TEST_ROOT/tampered-live-print.err"
+  rc=$?
+  set -e
+  mv "$rec.bak" "$rec" 2>/dev/null || true
+  "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+  [ "$rc" -eq 2 ] || { echo "--print on tampered live pgid/sid: rc=$rc (want 2 refused)" >&2; return 1; }
+  grep -Eq 'process group/session differs|cannot be signaled' "$TEST_ROOT/tampered-live-print.err" || {
+    cat "$TEST_ROOT/tampered-live-print.err" >&2
+    return 1
+  }
+}
+
 test_stop_multiple_ids() {
   local out1 out2 id1 id2 pgid1 pgid2 rc
   out1=$("$SIGMUND_BIN" sleep 300 2>&1) || return 1
@@ -780,7 +818,7 @@ test_persistent_stale_records() {
 
 
 test_boot_unavailable_does_not_force_stale() {
-  local out id bootfile list_out
+  local out id bootfile list_out rc
   bootfile="$TEST_ROOT/fake_boot_id"
   printf 'boot-a\n' >"$bootfile" || return 1
   out=$(SIGMUND_BOOT_ID_PATH="$bootfile" "$SIGMUND_BIN" sleep 60 2>&1) || return 1
@@ -790,6 +828,13 @@ test_boot_unavailable_does_not_force_stale() {
   list_out=$(SIGMUND_BOOT_ID_PATH="$bootfile" "$SIGMUND_BIN" list) || return 1
   printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+running[[:space:]]" || return 1
   ! printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+stale[[:space:]]" || return 1
+  set +e
+  SIGMUND_BOOT_ID_PATH="$bootfile" "$SIGMUND_BIN" stop "$id" >/dev/null 2>"$TEST_ROOT/missing-boot-stop.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 2 ] || { echo "stop with missing boot source: rc=$rc (want 2)" >&2; return 1; }
+  grep -q 'missing boot_id' "$TEST_ROOT/missing-boot-stop.err" || { cat "$TEST_ROOT/missing-boot-stop.err" >&2; return 1; }
+  printf 'boot-a\n' >"$bootfile" || return 1
   SIGMUND_BOOT_ID_PATH="$bootfile" "$SIGMUND_BIN" stop "$id" >/dev/null
 }
 
@@ -1058,7 +1103,13 @@ int main(int argc, char **argv) {
     memcpy(seen + seen_len, buf, copy);
     seen_len += copy;
     seen[seen_len] = '\0';
-    if (strstr(seen, expect)) break;
+    if (strstr(seen, expect)) {
+      if (strcmp(expect, "attach denied") == 0) {
+        close(fd);
+        return 0;
+      }
+      break;
+    }
   }
 
   if (write_frame(fd, 'X', NULL) != 0) return 10;
@@ -1068,6 +1119,56 @@ int main(int argc, char **argv) {
 EOF
   "${CC:-cc}" -std=c99 -Wall -Wextra -Werror "$TEST_ROOT/console_protocol_helper.c" -o "$helper"
   printf '%s\n' "$helper"
+}
+
+test_console_rejects_unrelated_peer_uid_before_replay() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  [ -n "$SUDO_BIN" ] || skip "sudo unavailable"
+  id nobody >/dev/null 2>&1 || skip "no nobody user"
+  local attacker_uid
+  attacker_uid=$(id -u nobody)
+  [ "$attacker_uid" != "0" ] && [ "$attacker_uid" != "$TEST_UID" ] || skip "nobody is not an unrelated user"
+  "$SUDO_BIN" -n -u nobody true >/dev/null 2>&1 || skip "cannot run as nobody"
+
+  local out id record sock helper rc log
+  out=$("$SIGMUND_BIN" --console /bin/sh -c 'echo replay-secret; while read line; do echo "got:$line"; [ "$line" = done ] && exit 0; done' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  record="$HOME/.local/state/sigmund/$id.json"
+  sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
+  [ -S "$sock" ] || return 1
+  log="$HOME/.local/state/sigmund/$id.log"
+
+  # Deliberately relax filesystem traversal and socket mode in this temp store
+  # so the kernel accepts the unrelated connection attempt; the broker's peer
+  # credential check must still reject it before replaying output or forwarding
+  # input.
+  chmod 0711 "$ACTOR_HOME" "$ACTOR_HOME/.local" "$ACTOR_HOME/.local/state" \
+    "$HOME/.local/state/sigmund" "$HOME/.local/state/sigmund/console" || return 1
+  chmod 0666 "$sock" || return 1
+
+  helper=$(build_console_protocol_helper) || return 1
+  mkdir -p "$TEST_ROOT/nobody-home" || return 1
+  chmod 755 "$TEST_ROOT/nobody-home" || return 1
+  set +e
+  "$SUDO_BIN" -n -u nobody env HOME="$TEST_ROOT/nobody-home" "$helper" "$sock" 'steal
+' 'attach denied' >"$TEST_ROOT/unauth-console.out" 2>"$TEST_ROOT/unauth-console.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/unauth-console.out" "$TEST_ROOT/unauth-console.err" >&2; return 1; }
+  grep -q 'attach denied' "$TEST_ROOT/unauth-console.out" || { cat "$TEST_ROOT/unauth-console.out" >&2; return 1; }
+  ! grep -q 'replay-secret' "$TEST_ROOT/unauth-console.out" || { echo "unauthorized attach received replay" >&2; return 1; }
+  sleep 0.2
+  ! grep -q 'got:steal' "$log" || { cat "$log" >&2; return 1; }
+
+  printf 'done\n' | "$SIGMUND_BIN" console "$id" >"$TEST_ROOT/authorized-console.out" 2>"$TEST_ROOT/authorized-console.err" || {
+    cat "$TEST_ROOT/authorized-console.out" "$TEST_ROOT/authorized-console.err" >&2
+    return 1
+  }
+  grep -q 'got:done' "$TEST_ROOT/authorized-console.out" || { cat "$TEST_ROOT/authorized-console.out" >&2; return 1; }
 }
 
 test_console_can_reattach_after_detach() {
@@ -2186,6 +2287,7 @@ run_test "invalid pgid=0 record is not listed as running" test_invalid_pgid_reco
 run_test "unreferenced logs are removed by prune" test_orphan_log_cleanup
 run_test "ID input sanitization rejects invalid ids" test_id_sanitization
 run_test "stop/kill --print emits group signal command" test_print_signal_output
+run_test "signal refuses tampered live process-group identity" test_signal_refuses_tampered_live_group_identity
 run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
 run_test "special characters are preserved in argv JSON" test_special_chars_args
@@ -2199,6 +2301,7 @@ run_test "tail <id> prints finished log output" test_tail_finished_log_prints_ex
 run_test "--console works without an external attach tool" test_console_does_not_require_external_attach_tool
 run_test "console reports a normal run has no console" test_console_reports_non_console_run
 run_test "console attach round-trips and tees to the log" test_console_round_trip_and_log_tee
+run_test "console rejects unrelated peer UID before replay" test_console_rejects_unrelated_peer_uid_before_replay
 run_test "console can reattach after detach" test_console_can_reattach_after_detach
 run_test "console socket lives in store dir, not /tmp, for long paths" test_console_socket_lives_in_store_dir
 run_test "console target runs in caller cwd (relative-bind restores cwd)" test_console_target_runs_in_caller_cwd
