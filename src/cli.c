@@ -45,6 +45,7 @@ static const struct sigmund_cli_command_spec command_specs[] = {
     {"show", 1, 2, 0, "usage: mund show <runs|profiles|running|dormant|failed|stale> [name]", "show"},
     {"clean", 0, 1, SIGMUND_CLI_ALLOW_ALL, "usage: mund clean [target|all]", "clean"},
     {"doctor", 0, 0, 0, "usage: mund doctor", "doctor"},
+    {"shell", 0, 0, 0, "usage: mund shell", "shell"},
     {"grant", 2, 3, 0, "usage: sigmund grant <alias> <user> [start,stop,kill,tail,dump,prune,console]", "grant"},
     {"revoke", 2, 3, 0, "usage: sigmund revoke <alias> <user> [start,stop,kill,tail,dump,prune,console]", "revoke"},
     {"help", 0, 1, 0, "usage: sigmund help [topic]", "help"},
@@ -192,6 +193,8 @@ static int help_action(const char *action) {
         printf("usage: mund clean [target|all]\n\nClear removable past run data.\n");
     } else if (!strcmp(action, "doctor")) {
         printf("usage: mund doctor\n\nCheck local Sigmund/Mund paths and build identity.\n");
+    } else if (!strcmp(action, "shell")) {
+        printf("usage: mund shell\n\nEnter the captive operator shell. Slash views map to normal commands: /profiles, /runs, /running, /stale.\n");
     } else if (!strcmp(action, "grant") || !strcmp(action, "revoke")) {
         printf("usage: sigmund %s <alias> <user> [start,stop,kill,tail,dump,prune,console]\n\nManage Sigmund-owned sudoers access for a root-managed alias.\n", action);
     } else {
