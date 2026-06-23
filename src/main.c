@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
                 quiet = true;
                 continue;
             }
-            if (!literal_owned_arg && sigmund_command_accepts_target_tokens(command) && !strcmp(argv[i], "--all")) {
+            if (!literal_owned_arg && sigmund_cli_command_allows_all(command) && !strcmp(argv[i], "--all")) {
                 all = true;
                 continue;
             }
@@ -127,6 +127,10 @@ int main(int argc, char **argv) {
                     if (sigmund_parse_positive_count(argv[i + 1], &parsed)) {
                         multi_count = parsed;
                         i++;
+                    } else if (argv[i + 1][0] != '-') {
+                        fprintf(stderr, "sigmund: error: invalid --multi count '%s'\n", argv[i + 1]);
+                        free(cmd_argv);
+                        return 5;
                     }
                 }
                 continue;
@@ -178,6 +182,13 @@ int main(int argc, char **argv) {
         fprintf(stderr, "sigmund: error: --console applies only to starts\n");
         free(cmd_argv);
         return 5;
+    }
+    if (owned) {
+        int arity_rc = sigmund_validate_owned_command_arity(command, cmd_argc);
+        if (arity_rc != 0) {
+            free(cmd_argv);
+            return arity_rc;
+        }
     }
 
     struct sigmund_invocation inv;

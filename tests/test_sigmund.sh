@@ -380,7 +380,7 @@ print_timeout_diagnostics() {
 }
 
 run_test() {
-  local desc="$1" fn="$2" rc pid deadline
+  local desc="$1" fn="$2" rc="" pid deadline
   echo "RUN: $desc"
   new_env || { fail "$desc"; return; }
   export HOME TEST_ROOT SIGMUND_BIN SIGMUND_REAL_BIN SIGMUND_TEST_SYSTEM_STATE_DIR ROOT_HOME ACTOR_HOME
@@ -402,9 +402,7 @@ run_test() {
     fi
     sleep 0.1
   done
-  if [ "${rc+x}" != x ]; then
-    :
-  else
+  if [ -z "$rc" ]; then
     wait "$pid"
     rc=$?
   fi
@@ -898,7 +896,7 @@ test_console_socket_lives_in_store_dir() {
   # /tmp, even though the harness's store path is longer than the AF_UNIX
   # sun_path limit (~104). This exercises the relative-bind path.
   local out id store record sock
-  out=$("$SIGMUND_BIN" --console /bin/sh -c 'sleep 30' 2>&1) || {
+  out=$("$SIGMUND_BIN" --console /bin/sh -c 'while read line; do [ "$line" = noop ] && exit 0; done' 2>&1) || {
     printf '%s\n' "$out" >&2
     return 1
   }
@@ -2065,6 +2063,31 @@ test_misc_action_guards() {
   grep -q 'STARTED_AT' "$TEST_ROOT/l.out" || { echo "list -l missing ISO header" >&2; return 1; }
 }
 
+test_owned_command_exact_arity() {
+  local rc
+  set +e; "$SIGMUND_BIN" tail deadbeef extra >/dev/null 2>"$TEST_ROOT/tail-extra.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "tail extra: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund tail <target>' "$TEST_ROOT/tail-extra.err" || { cat "$TEST_ROOT/tail-extra.err" >&2; return 1; }
+
+  set +e; "$SIGMUND_BIN" dump deadbeef extra >/dev/null 2>"$TEST_ROOT/dump-extra.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "dump extra: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund dump <target>' "$TEST_ROOT/dump-extra.err" || { cat "$TEST_ROOT/dump-extra.err" >&2; return 1; }
+
+  set +e; "$SIGMUND_BIN" console deadbeef extra >/dev/null 2>"$TEST_ROOT/console-extra.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "console extra: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund console <target>' "$TEST_ROOT/console-extra.err" || { cat "$TEST_ROOT/console-extra.err" >&2; return 1; }
+
+  set +e; "$SIGMUND_BIN" prune deadbeef extra >/dev/null 2>"$TEST_ROOT/prune-extra.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "prune extra: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund prune \[target|all\] \[--all\]' "$TEST_ROOT/prune-extra.err" || { cat "$TEST_ROOT/prune-extra.err" >&2; return 1; }
+
+  set +e; "$SIGMUND_BIN" tail --all deadbeef >/dev/null 2>"$TEST_ROOT/tail-all.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "tail --all: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund tail <target>' "$TEST_ROOT/tail-all.err" || { cat "$TEST_ROOT/tail-all.err" >&2; return 1; }
+
+  "$SIGMUND_BIN" prune >/dev/null || { echo "prune with zero targets should remain valid" >&2; return 1; }
+}
+
 test_grant_revoke_argument_refusals() {
   local rc
   # non-root cannot grant (privilege refusal)
@@ -2091,6 +2114,12 @@ test_multi_n_exact_count_and_invalid() {
   set +e; "$SIGMUND_BIN" start web-n --multi=abc >/dev/null 2>"$TEST_ROOT/m.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "--multi=abc: rc=$rc (want 5)" >&2; return 1; }
   grep -q "invalid --multi count" "$TEST_ROOT/m.err" || { cat "$TEST_ROOT/m.err" >&2; return 1; }
+  set +e; "$SIGMUND_BIN" start web-n --multi abc >/dev/null 2>"$TEST_ROOT/ms.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "--multi abc: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "invalid --multi count 'abc'" "$TEST_ROOT/ms.err" || { cat "$TEST_ROOT/ms.err" >&2; return 1; }
+  set +e; "$SIGMUND_BIN" start web-n --multi 0 >/dev/null 2>"$TEST_ROOT/mz.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "--multi 0: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "invalid --multi count '0'" "$TEST_ROOT/mz.err" || { cat "$TEST_ROOT/mz.err" >&2; return 1; }
   "$SIGMUND_BIN" stop web-n --all >/dev/null 2>&1 || true
 }
 
@@ -2132,6 +2161,7 @@ run_test "--quiet prints bare id and silences stderr" test_quiet_suppresses_bann
 run_test "run id prefix resolves to the full run" test_run_id_prefix_resolution
 run_test "ambiguous alias tail lists ids; tail by run id still resolves" test_ambiguous_tail_resolvable_by_run_id
 run_test "action/help/list argument guards" test_misc_action_guards
+run_test "owned commands reject extra targets and unsupported --all" test_owned_command_exact_arity
 run_test "grant/revoke argument and privilege refusals" test_grant_revoke_argument_refusals
 run_test "system store directory modes are private (0700/0755)" test_system_store_directory_modes
 run_test "system store tightens a pre-existing loose dir" test_system_store_tightens_preexisting_loose_dir
