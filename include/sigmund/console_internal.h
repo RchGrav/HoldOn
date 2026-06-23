@@ -44,6 +44,7 @@ int sigmund_maybe_get_terminal_size(struct winsize *ws);
 int sigmund_broker_process_client_input(struct console_client_state *state, int master,
                                 const unsigned char *buf, size_t n);
 int sigmund_make_console_listener(const char *sock_path);
+int sigmund_console_peer_uid(int fd, uid_t *uid_out);
 int sigmund_open_console_pty(int *master_out, int *slave_out);
 int sigmund_connect_console_socket(const char *sock_path);
 void sigmund_make_raw_termios(const struct termios *in, struct termios *out);
