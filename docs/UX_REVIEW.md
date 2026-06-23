@@ -488,29 +488,28 @@ Runs
 
 Profiles: web, api, cache(system)
 
-Type: start <profile>, tail <name|id>, open <name|id>, stop <name|id>, profile, clean, help, quit
+Type: start <profile>, logs <name|id>, open <name|id>, stop <name|id>, profile, clean, help, quit
 sigmund> 
 ```
 
 ### Cisco/diskpart-style submodes
 
 ```text
-sigmund> profile web
-sigmund(profile:web)> show
-sigmund(profile:web)> set cwd /srv/web
-sigmund(profile:web)> set env NODE_ENV=development
-sigmund(profile:web)> set console on
-sigmund(profile:web)> set readiness tcp localhost:3000 timeout 10s
-sigmund(profile:web)> save
-sigmund(profile:web)> start
+mund> profile web
+mund(profile:web)> show
+mund(profile:web)> set cwd /srv/web
+mund(profile:web)> set env NODE_ENV=development
+mund(profile:web)> set console on
+mund(profile:web)> set readiness tcp localhost:3000 timeout 10s
+mund(profile:web)> save
+mund(profile:web)> start
+mund(profile:web)> exit
+mund> logs web
+mund> stop web
+mund> prune web
 ```
 
-```text
-sigmund> run api
-sigmund(run:fe21dfb8)> tail
-sigmund(run:fe21dfb8)> stop
-sigmund(run:fe21dfb8)> prune
-```
+Rejected historical sketch: do not use a `run` submode such as `run api; tail; stop; prune` for 0.4.0. `run` is launch-only, and management actions stay as natural verbs (`logs`, `stop`, `prune`) over a run ID or singular safe profile selector.
 
 ### Captive menu variant
 

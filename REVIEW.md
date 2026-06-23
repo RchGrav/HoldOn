@@ -88,7 +88,7 @@ grep -n "full .*product direction\|release criteria\|later minor\|implementation
 
 Result: local links in touched files resolved, static-artifact caveats were present in the expected docs, stale historical pass claims were absent, and 0.4.0 scope/alignment language was present.
 
-Caveat: `make test` was intentionally not run because this branch touched documentation only.
+Latest Autopilot alignment pass: `make test` was run on this branch and passed (101 shell tests, viewer filter engine, and profile-hash vectors). Earlier docs-only review notes above remain link/grep evidence only and should not be reused as runtime proof.
 
 ## Release-readiness checklist
 
