@@ -14,6 +14,7 @@ struct sigmund_log_filter_options {
     size_t visible_capacity;
     size_t match_ring_capacity;
     size_t max_results;
+    size_t scan_byte_budget;
 };
 
 struct sigmund_log_filter_result {
@@ -26,8 +27,10 @@ struct sigmund_log_filter_result {
     size_t match_ring_start;
     size_t bytes_read;
     size_t lines_scanned;
+    off_t prev_offset;
     off_t next_offset;
     bool reached_eof;
+    bool scan_limited;
 };
 
 typedef bool (*sigmund_log_viewer_running_fn)(void *userdata);
@@ -43,6 +46,11 @@ void sigmund_log_filter_result_free(struct sigmund_log_filter_result *result);
 int sigmund_log_filter_fd(int fd,
                          const struct sigmund_log_filter_options *opts,
                          struct sigmund_log_filter_result *result);
+int sigmund_log_filter_backward_fd(int fd,
+                                  const struct sigmund_log_filter_options *opts,
+                                  off_t anchor_offset,
+                                  size_t byte_budget,
+                                  struct sigmund_log_filter_result *result);
 int sigmund_log_viewer_tty_fd(int fd,
                              const char *title,
                              const struct sigmund_log_filter_options *opts,

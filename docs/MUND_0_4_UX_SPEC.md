@@ -454,6 +454,13 @@ while filtered_before has fewer than viewport_rows + overscan_rows:
 
 Carry partial lines across block boundaries.
 
+0.4.0 implementation note: the filter engine now supports a bounded backward
+window from a byte anchor. At the live edge, active TTY filters scan backward
+from EOF to fill the visible screen with the most recent matching rows instead
+of restarting at line 1. If the match set is outside the current scan budget,
+the viewer renders the local partial result and marks it `partial` rather than
+blocking on a full-log scan.
+
 ### 8.6 Directional fill behavior
 
 On `PgDn`:
@@ -502,6 +509,7 @@ Default behavior is local and immediate.
 For growing logs:
 
 - v1 implementation: `mund logs <target> --follow` routes through `mund view --follow` for a dynamic TTY filter field. `--filter TEXT` can seed/script the same engine, but the human design is type-to-filter after the viewer is open. Plain `mund logs <target>` remains tail-compatible.
+- active live filters are anchored at the tail by default; PgUp moves to older matching windows, and PgDn walks back toward the live edge;
 - keep a raw tail ring of recent bytes/lines;
 - append new lines as they arrive;
 - fingerprint/score new lines against active filters;

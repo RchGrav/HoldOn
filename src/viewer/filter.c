@@ -4,6 +4,7 @@
 #define VIEWER_READ_CHUNK 4096
 #define VIEWER_DEFAULT_VISIBLE 50
 #define VIEWER_DEFAULT_MATCH_RING 256
+#define VIEWER_DEFAULT_SCAN_BUDGET (1024u * 1024u)
 #define VIEWER_MAX_TERMS 64
 #define FNV_OFFSET 2166136261u
 #define FNV_PRIME 16777619u
@@ -236,6 +237,10 @@ int sigmund_log_filter_fd(int fd,
             return -1;
         }
         result->bytes_read += (size_t)nr;
+        if (opts.scan_byte_budget > 0 && result->bytes_read > opts.scan_byte_budget) {
+            result->scan_limited = true;
+            break;
+        }
         for (ssize_t i = 0; i < nr; i++) {
             char c = read_buf[i];
             if (line_len + 2 > line_cap) {
@@ -267,4 +272,163 @@ oom:
     sigmund_log_filter_result_free(result);
     errno = ENOMEM;
     return -1;
+}
+
+int sigmund_log_filter_backward_fd(int fd,
+                                  const struct sigmund_log_filter_options *in_opts,
+                                  off_t anchor_offset,
+                                  size_t byte_budget,
+                                  struct sigmund_log_filter_result *result) {
+    if (fd < 0 || !in_opts || !result) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    struct sigmund_log_filter_options opts = *in_opts;
+    if (opts.visible_capacity == 0) opts.visible_capacity = VIEWER_DEFAULT_VISIBLE;
+    if (opts.max_results == 0 || opts.max_results > opts.visible_capacity) opts.max_results = opts.visible_capacity;
+    if (opts.similar_threshold <= 0.0) opts.similar_threshold = 0.45;
+    if (byte_budget == 0) byte_budget = VIEWER_DEFAULT_SCAN_BUDGET;
+
+    memset(result, 0, sizeof(*result));
+    if (ensure_result_storage(&opts, result) != 0) {
+        sigmund_log_filter_result_free(result);
+        return -1;
+    }
+
+    struct filter_state state;
+    if (prepare_state(&opts, &state) != 0) {
+        sigmund_log_filter_result_free(result);
+        return -1;
+    }
+
+    off_t file_end = lseek(fd, 0, SEEK_END);
+    if (file_end < 0) {
+        sigmund_log_filter_result_free(result);
+        return -1;
+    }
+    if (anchor_offset < 0 || anchor_offset > file_end) anchor_offset = file_end;
+    result->reached_eof = anchor_offset >= file_end;
+    result->next_offset = anchor_offset;
+    result->prev_offset = anchor_offset;
+    if (anchor_offset == 0) return 0;
+
+    off_t start = 0;
+    if ((uintmax_t)anchor_offset > (uintmax_t)byte_budget) {
+        start = anchor_offset - (off_t)byte_budget;
+        result->scan_limited = true;
+    }
+    size_t span = (size_t)(anchor_offset - start);
+    char *buf = malloc(span + 1);
+    if (!buf) {
+        sigmund_log_filter_result_free(result);
+        errno = ENOMEM;
+        return -1;
+    }
+    if (lseek(fd, start, SEEK_SET) < 0) {
+        free(buf);
+        sigmund_log_filter_result_free(result);
+        return -1;
+    }
+    size_t got = 0;
+    while (got < span) {
+        ssize_t nr = read(fd, buf + got, span - got);
+        if (nr < 0) {
+            if (errno == EINTR) continue;
+            free(buf);
+            sigmund_log_filter_result_free(result);
+            return -1;
+        }
+        if (nr == 0) break;
+        got += (size_t)nr;
+    }
+    buf[got] = '\0';
+    result->bytes_read = got;
+
+    size_t parse = 0;
+    if (start > 0) {
+        while (parse < got && buf[parse] != '\n') parse++;
+        if (parse < got) parse++;
+    }
+
+    char **ring_lines = calloc(opts.visible_capacity ? opts.visible_capacity : 1, sizeof(char *));
+    off_t *ring_offsets = calloc(opts.visible_capacity ? opts.visible_capacity : 1, sizeof(off_t));
+    if (!ring_lines || !ring_offsets) {
+        free(ring_lines);
+        free(ring_offsets);
+        free(buf);
+        sigmund_log_filter_result_free(result);
+        errno = ENOMEM;
+        return -1;
+    }
+    size_t ring_start = 0, ring_count = 0;
+    size_t line_start = parse;
+    for (size_t i = parse; i <= got; i++) {
+        if (i < got && buf[i] != '\n') continue;
+        size_t line_len = i < got ? i + 1 - line_start : i - line_start;
+        off_t line_off = start + (off_t)line_start;
+        if (line_off >= anchor_offset) break;
+        if (line_len > 0) {
+            result->lines_scanned++;
+            char saved = buf[line_start + line_len];
+            buf[line_start + line_len] = '\0';
+            bool matches = line_matches(&state, buf + line_start);
+            buf[line_start + line_len] = saved;
+            if (matches) {
+                result->match_count++;
+                push_match_offset(result, &opts, line_off);
+                char *copy = dup_line(buf + line_start, line_len);
+                if (!copy) {
+                    free(buf);
+                    for (size_t j = 0; j < ring_count; j++) {
+                        size_t pos = (ring_start + j) % opts.visible_capacity;
+                        free(ring_lines[pos]);
+                    }
+                    free(ring_lines);
+                    free(ring_offsets);
+                    sigmund_log_filter_result_free(result);
+                    errno = ENOMEM;
+                    return -1;
+                }
+                size_t cap = opts.visible_capacity ? opts.visible_capacity : 1;
+                if (ring_count < cap) {
+                    size_t pos = (ring_start + ring_count) % cap;
+                    ring_lines[pos] = copy;
+                    ring_offsets[pos] = line_off;
+                    ring_count++;
+                } else {
+                    free(ring_lines[ring_start]);
+                    ring_lines[ring_start] = copy;
+                    ring_offsets[ring_start] = line_off;
+                    ring_start = (ring_start + 1) % cap;
+                }
+            }
+        }
+        line_start = i + 1;
+    }
+
+    size_t out_count = ring_count;
+    if (out_count > opts.max_results) out_count = opts.max_results;
+    size_t skip = ring_count - out_count;
+    for (size_t j = 0; j < out_count; j++) {
+        size_t pos = (ring_start + skip + j) % (opts.visible_capacity ? opts.visible_capacity : 1);
+        result->lines[j] = ring_lines[pos];
+        result->line_offsets[j] = ring_offsets[pos];
+        ring_lines[pos] = NULL;
+        result->line_count++;
+    }
+    if (result->line_count > 0) {
+        result->prev_offset = result->line_offsets[0];
+        size_t last = result->line_count - 1;
+        result->next_offset = result->line_offsets[last] + (off_t)strlen(result->lines[last]);
+    }
+
+    for (size_t j = 0; j < ring_count; j++) {
+        size_t pos = (ring_start + j) % (opts.visible_capacity ? opts.visible_capacity : 1);
+        free(ring_lines[pos]);
+    }
+    free(ring_lines);
+    free(ring_offsets);
+    free(buf);
+    return 0;
 }

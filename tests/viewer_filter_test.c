@@ -154,12 +154,60 @@ static void test_next_offset_resumes_next_screen(void) {
     close(fd);
 }
 
+static void test_backward_tail_window_finds_recent_matches_without_full_scan(void) {
+    int fd = temp_log_fd();
+    for (int i = 0; i < 20000; i++) {
+        write_all_or_die(fd, "boring filler line that should not be scanned from the live edge\n");
+    }
+    write_all_or_die(fd, "recent needle one\nrecent needle two\nrecent needle three\n");
+    off_t end = lseek(fd, 0, SEEK_END);
+
+    struct sigmund_log_filter_options opts;
+    sigmund_log_filter_options_init(&opts);
+    opts.literal = "recent needle";
+    opts.max_results = 2;
+    opts.visible_capacity = 2;
+    struct sigmund_log_filter_result result;
+    EXPECT_TRUE("backward tail filter succeeds", sigmund_log_filter_backward_fd(fd, &opts, end, 65536, &result) == 0);
+    EXPECT_TRUE("backward tail returns requested visible lines", result.line_count == 2);
+    EXPECT_TRUE("backward tail keeps chronological order", result.line_count > 1 &&
+                    strstr(result.lines[0], "recent needle two") &&
+                    strstr(result.lines[1], "recent needle three"));
+    EXPECT_TRUE("backward tail did not scan whole file", result.bytes_read < (size_t)end / 4);
+    sigmund_log_filter_result_free(&result);
+    close(fd);
+}
+
+static void test_backward_sparse_window_reports_partial(void) {
+    int fd = temp_log_fd();
+    write_all_or_die(fd, "ancient needle\n");
+    for (int i = 0; i < 20000; i++) {
+        write_all_or_die(fd, "boring filler line after old match\n");
+    }
+    off_t end = lseek(fd, 0, SEEK_END);
+
+    struct sigmund_log_filter_options opts;
+    sigmund_log_filter_options_init(&opts);
+    opts.literal = "ancient needle";
+    opts.max_results = 1;
+    opts.visible_capacity = 1;
+    struct sigmund_log_filter_result result;
+    EXPECT_TRUE("backward sparse filter succeeds", sigmund_log_filter_backward_fd(fd, &opts, end, 32768, &result) == 0);
+    EXPECT_TRUE("sparse backward window does not scan to ancient match", result.line_count == 0);
+    EXPECT_TRUE("sparse backward window reports limited scan", result.scan_limited);
+    EXPECT_TRUE("sparse backward window bounded bytes", result.bytes_read < (size_t)end / 4);
+    sigmund_log_filter_result_free(&result);
+    close(fd);
+}
+
 int main(void) {
     test_literal_filter();
     test_similarity_filter();
     test_match_ring_wraps();
     test_lazy_large_file_stops_after_first_screen();
     test_next_offset_resumes_next_screen();
+    test_backward_tail_window_finds_recent_matches_without_full_scan();
+    test_backward_sparse_window_reports_partial();
     if (failures) {
         fprintf(stderr, "viewer_filter_test: %d failure(s)\n", failures);
         return 1;
