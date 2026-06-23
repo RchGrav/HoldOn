@@ -165,9 +165,8 @@ note "deploy: source       $current_branch @ $head_sha"
 note "deploy: remote       $remote"
 
 if [[ "$run_tests" -eq 1 ]]; then
-  note "deploy: running local release smoke test"
-  make clean
-  make test
+  note "deploy: running full local rigor (scripts/ci.sh)"
+  bash scripts/ci.sh
 else
   note "deploy: skipping local tests"
 fi

@@ -66,8 +66,18 @@ hash-vector:
 
 check: test
 
+# Full local CI mirror (one command, same rigor as GitHub CI): static + dynamic
+# -Werror builds, the regression suite + hash-vector, ASan/UBSan, cppcheck, and
+# the layer-dependency lint. Skips (visibly) only what the local toolchain lacks.
+ci:
+	@bash scripts/ci.sh
+
+# Layer dependency-direction lint, shared verbatim with the GitHub CI job.
+lint:
+	@bash scripts/lint_layers.sh
+
 clean:
 	rm -f sigmund sigmund-dynamic hash-vector
 	rm -rf obj obj-test
 
-.PHONY: all clean test check hash-vector
+.PHONY: all clean test check ci lint hash-vector
