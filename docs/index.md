@@ -163,6 +163,7 @@ Every subsystem page links back here, names the quickstart step it explains, res
 ## Reference
 
 - [Current implementation specification](SPEC.md)
+- [Mund 0.4 UX and CLI implementation plan](MUND_0_4_UX_SPEC.md)
 - [Documentation plan and review notes](PLAN.md)
 - [Repository README](../README.md)
 
