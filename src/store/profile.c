@@ -187,10 +187,7 @@ static int write_profiles_atomic(const struct sigmund_store *store, const struct
         return -1;
     }
     *slash = '\0';
-    if (sigmund_checked_snprintf(tmp, sizeof(tmp), "%s/.profiles.tmp", dir) != 0) {
-        return -1;
-    }
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    int fd = sigmund_open_unique_temp(dir, "profiles", 0600, tmp, sizeof(tmp));
     if (fd < 0) {
         return -1;
     }

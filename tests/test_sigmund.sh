@@ -2034,6 +2034,65 @@ test_aliases_json_symlink_not_followed() {
   fi
 }
 
+test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local out id store fixed attacker before leftovers
+
+  ensure_user_fixture_store || return 1
+  store="$HOME/.local/state/sigmund"
+  attacker="$TEST_ROOT/user-alias-attacker"
+  printf 'do-not-touch-alias-symlink\n' >"$attacker" || return 1
+  fixed="$store/.aliases.tmp"
+  ln -s "$attacker" "$fixed" || return 1
+  out=$("$SIGMUND_BIN" /bin/sleep 60 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  "$SIGMUND_BIN" alias "$id" fixedlink >/dev/null 2>&1 || return 1
+  "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+  [ "$(cat "$attacker")" = "do-not-touch-alias-symlink" ] || { echo "alias writer followed fixed symlink temp" >&2; return 1; }
+  [ -L "$fixed" ] || { echo "alias writer replaced fixed symlink temp" >&2; return 1; }
+  rm -f "$fixed" || return 1
+  printf 'do-not-touch-alias-file\n' >"$fixed" || return 1
+  out=$("$SIGMUND_BIN" /bin/sleep 60 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  "$SIGMUND_BIN" alias "$id" fixedfile >/dev/null 2>&1 || return 1
+  "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+  [ "$(cat "$fixed")" = "do-not-touch-alias-file" ] || { echo "alias writer truncated fixed temp file" >&2; return 1; }
+  leftovers=$(find "$store" -maxdepth 1 -name '.aliases.*.tmp' -print 2>/dev/null || true)
+  [ -z "$leftovers" ] || { echo "alias writer left temp files: $leftovers" >&2; return 1; }
+
+  # System aliases write both profiles.json in the private base and aliases.json
+  # in public; cover fixed symlink and fixed regular temp names for both writers.
+  out=$(as_root "$SIGMUND_REAL_BIN" /bin/sleep 60 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  printf 'do-not-touch-profile-symlink\n' >"$TEST_ROOT/profile-attacker" || return 1
+  printf 'do-not-touch-public-alias-symlink\n' >"$TEST_ROOT/public-alias-attacker" || return 1
+  as_root ln -s "$TEST_ROOT/profile-attacker" "$SIGMUND_TEST_SYSTEM_STATE_DIR/.profiles.tmp" || return 1
+  as_root ln -s "$TEST_ROOT/public-alias-attacker" "$SIGMUND_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
+  as_root "$SIGMUND_REAL_BIN" alias "$id" syslink >/dev/null 2>&1 || return 1
+  [ "$(cat "$TEST_ROOT/profile-attacker")" = "do-not-touch-profile-symlink" ] || { echo "profile writer followed fixed symlink temp" >&2; return 1; }
+  [ "$(cat "$TEST_ROOT/public-alias-attacker")" = "do-not-touch-public-alias-symlink" ] || { echo "system alias writer followed fixed symlink temp" >&2; return 1; }
+  root_file_exists "$SIGMUND_TEST_SYSTEM_STATE_DIR/profiles.json" || return 1
+  root_file_exists "$SIGMUND_TEST_SYSTEM_STATE_DIR/public/aliases.json" || return 1
+  as_root rm -f "$SIGMUND_TEST_SYSTEM_STATE_DIR/.profiles.tmp" "$SIGMUND_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
+
+  out=$(as_root "$SIGMUND_REAL_BIN" /bin/sleep 61 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  as_root sh -c 'printf "%s\n" "do-not-touch-profile-file" >"$1"; printf "%s\n" "do-not-touch-public-alias-file" >"$2"' sh \
+    "$SIGMUND_TEST_SYSTEM_STATE_DIR/.profiles.tmp" "$SIGMUND_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
+  as_root "$SIGMUND_REAL_BIN" alias "$id" sysfile >/dev/null 2>&1 || return 1
+  before=$(as_root cat "$SIGMUND_TEST_SYSTEM_STATE_DIR/.profiles.tmp") || return 1
+  [ "$before" = "do-not-touch-profile-file" ] || { echo "profile writer truncated fixed temp file" >&2; return 1; }
+  before=$(as_root cat "$SIGMUND_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp") || return 1
+  [ "$before" = "do-not-touch-public-alias-file" ] || { echo "system alias writer truncated fixed temp file" >&2; return 1; }
+  leftovers=$(as_root find "$SIGMUND_TEST_SYSTEM_STATE_DIR" "$SIGMUND_TEST_SYSTEM_STATE_DIR/public" -maxdepth 1 \
+    \( -name '.profiles.*.tmp' -o -name '.aliases.*.tmp' \) -print 2>/dev/null || true)
+  [ -z "$leftovers" ] || { echo "system alias/profile writer left temp files: $leftovers" >&2; return 1; }
+}
+
 test_grant_sudoers_file_is_root_only() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local safe sudoers_file mode owner
@@ -2306,6 +2365,7 @@ run_test "system store refuses symlinked critical dirs without chmod-following" 
 run_test "system store artifacts are owned by root:root" test_system_store_artifacts_owned_by_root
 run_test "non-root process ignores spoofed SUDO_* provenance" test_nonroot_ignores_spoofed_sudo_provenance
 run_test "symlinked aliases.json is not followed (O_NOFOLLOW)" test_aliases_json_symlink_not_followed
+run_test "alias/profile atomic writers ignore fixed temp file and symlink attacks" test_alias_profile_atomic_writers_ignore_fixed_temp_attacks
 run_test "managed sudoers file is mode 0440 root:root" test_grant_sudoers_file_is_root_only
 run_test "grant aborts and writes nothing when visudo rejects" test_grant_aborts_when_visudo_rejects
 run_test "grant refuses an unsafe sigmund self-binary" test_grant_refuses_unsafe_self_binary
