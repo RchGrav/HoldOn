@@ -858,6 +858,13 @@ test_console_socket_lives_in_store_dir() {
     "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
     return 1
   fi
+  # The socket must be owner-only (0600): it is an exec channel into the run.
+  sock_mode=$(file_mode "$sock") || { "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true; return 1; }
+  if [ "$sock_mode" != 600 ]; then
+    echo "console socket mode=$sock_mode (want 600)" >&2
+    "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+    return 1
+  fi
   # The relative path must also be connectable when the store path is long.
   printf 'noop\n' | "$SIGMUND_BIN" console "$id" >/dev/null 2>"$TEST_ROOT/console-store.err" || {
     cat "$TEST_ROOT/console-store.err" >&2
@@ -1712,6 +1719,198 @@ test_concurrent_unique_ids() {
 }
 
 set -e
+# ---------------------------------------------------------------------------
+# Security-invariant enforcement tests (audit hardening). Each fails loudly if
+# the corresponding privilege/privacy invariant regresses, rather than only
+# exercising the happy path.
+# ---------------------------------------------------------------------------
+
+# Run the binary as the unprivileged user with spoofed sudo provenance injected
+# AFTER any privilege drop, so even the root-runner can test the euid gate.
+as_user_spoof_sudo() {
+  local args
+  args=(
+    "HOME=$ACTOR_HOME"
+    "SIGMUND_TEST_SYSTEM_STATE_DIR=$SIGMUND_TEST_SYSTEM_STATE_DIR"
+    "PATH=$PATH"
+    "SUDO_UID=0" "SUDO_GID=0" "SUDO_USER=root"
+  )
+  [ "${SIGMUND_BOOT_ID_PATH+x}" = x ] && args+=("SIGMUND_BOOT_ID_PATH=$SIGMUND_BOOT_ID_PATH")
+  if [ "$USER_ACTOR_NEEDS_SUDO" -eq 1 ]; then
+    "$SUDO_BIN" -n -u "$TEST_USER" env "${args[@]}" "$@"
+  else
+    env "${args[@]}" "$@"
+  fi
+}
+
+# Pin a root system alias 'web-sys' with a safe (root-owned, 0755, no-space-path)
+# sigmund copy and a passing visudo stub. Call directly (NOT in $(...)) so the
+# exported SIGMUND_TEST_SUDOERS_DIR/VISUDO_PROG reach the caller; sets globals
+# GRANT_SAFE and GRANT_SUDOERS_DIR.
+grant_fixture() {
+  local id
+  GRANT_SAFE="$TEST_ROOT/sigmund-safe"
+  cp "$SIGMUND_REAL_BIN" "$GRANT_SAFE" || return 1
+  as_root chown 0:0 "$GRANT_SAFE" || return 1
+  as_root chmod 755 "$GRANT_SAFE" || return 1
+  GRANT_SUDOERS_DIR="$TEST_ROOT/sudoers.d"
+  mkdir -p "$GRANT_SUDOERS_DIR" || return 1
+  chmod 755 "$GRANT_SUDOERS_DIR" || return 1
+  export SIGMUND_TEST_SUDOERS_DIR="$GRANT_SUDOERS_DIR"
+  GRANT_VISUDO_OK="$TEST_ROOT/visudo-ok"
+  printf '#!/usr/bin/env sh\nexit 0\n' >"$GRANT_VISUDO_OK" || return 1
+  chmod 755 "$GRANT_VISUDO_OK" || return 1
+  export SIGMUND_TEST_VISUDO_PROG="$GRANT_VISUDO_OK"
+  id=$(as_root "$GRANT_SAFE" /bin/sh -c ':' 2>&1 | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  as_root "$GRANT_SAFE" alias "$id" web-sys >/dev/null 2>&1 || return 1
+}
+
+test_system_store_directory_modes() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local id d mode
+  id=$(as_root "$SIGMUND_REAL_BIN" true 2>&1 | extract_id)
+  [ -n "$id" ] || return 1
+  for d in runs logs console; do
+    mode=$(root_file_mode "$SIGMUND_TEST_SYSTEM_STATE_DIR/$d") || return 1
+    [ "$mode" = 700 ] || { echo "$d/ mode=$mode (want 700 -- private state would be world-visible)" >&2; return 1; }
+  done
+  mode=$(root_file_mode "$SIGMUND_TEST_SYSTEM_STATE_DIR") || return 1
+  [ "$mode" = 755 ] || { echo "base mode=$mode (want 755)" >&2; return 1; }
+  mode=$(root_file_mode "$SIGMUND_TEST_SYSTEM_STATE_DIR/public") || return 1
+  [ "$mode" = 755 ]
+}
+
+test_system_store_tightens_preexisting_loose_dir() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local id mode
+  as_root mkdir -p "$SIGMUND_TEST_SYSTEM_STATE_DIR/runs" || return 1
+  as_root chmod 0777 "$SIGMUND_TEST_SYSTEM_STATE_DIR/runs" || return 1
+  id=$(as_root "$SIGMUND_REAL_BIN" true 2>&1 | extract_id)
+  [ -n "$id" ] || return 1
+  mode=$(root_file_mode "$SIGMUND_TEST_SYSTEM_STATE_DIR/runs") || return 1
+  [ "$mode" = 700 ] || { echo "pre-existing loose runs/ not tightened: mode=$mode" >&2; return 1; }
+}
+
+test_system_store_artifacts_owned_by_root() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local id owner
+  id=$(as_root "$SIGMUND_REAL_BIN" true 2>&1 | extract_id)
+  [ -n "$id" ] || return 1
+  owner=$(root_file_owner "$SIGMUND_TEST_SYSTEM_STATE_DIR/runs/$id.json") || return 1
+  [ "$owner" = "0:0" ] || { echo "record owner=$owner (want 0:0)" >&2; return 1; }
+  owner=$(root_file_owner "$SIGMUND_TEST_SYSTEM_STATE_DIR/logs/$id.log") || return 1
+  [ "$owner" = "0:0" ] || { echo "log owner=$owner (want 0:0)" >&2; return 1; }
+}
+
+test_nonroot_ignores_spoofed_sudo_provenance() {
+  local out id json
+  out=$(as_user_spoof_sudo "$SIGMUND_REAL_BIN" true 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  json="$ACTOR_HOME/.local/state/sigmund/$id.json"
+  [ -e "$json" ] || { echo "spoofed-SUDO run did not land in the user store" >&2; return 1; }
+  [ ! -e "$SIGMUND_TEST_SYSTEM_STATE_DIR/runs/$id.json" ] || { echo "spoofed SUDO_* escalated into the system store" >&2; return 1; }
+  if grep -q '"invoked_via_sudo": true' "$json" 2>/dev/null; then
+    echo "spoofed SUDO_* was trusted by a non-root process" >&2
+    return 1
+  fi
+}
+
+test_aliases_json_symlink_not_followed() {
+  local out id aliases attacker
+  out=$("$SIGMUND_BIN" /bin/sleep 60 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  "$SIGMUND_BIN" alias "$id" myweb >/dev/null 2>&1 || return 1
+  "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
+  aliases="$HOME/.local/state/sigmund/aliases.json"
+  [ -f "$aliases" ] || return 1
+  # sanity: the alias is visible when the file is a real regular file
+  "$SIGMUND_BIN" aliases 2>/dev/null | grep -q myweb || { echo "alias not visible before symlink (test setup)" >&2; return 1; }
+  # replace it with a symlink to an identical attacker-controlled file
+  attacker="$TEST_ROOT/attacker-aliases.json"
+  cp "$aliases" "$attacker" || return 1
+  rm -f "$aliases"
+  ln -s "$attacker" "$aliases" || return 1
+  # O_NOFOLLOW must reject the symlinked alias dictionary: myweb must not load
+  if "$SIGMUND_BIN" aliases 2>/dev/null | grep -q myweb; then
+    echo "symlinked aliases.json was followed (myweb loaded through the symlink)" >&2
+    return 1
+  fi
+}
+
+test_grant_sudoers_file_is_root_only() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local safe sudoers_file mode owner
+  grant_fixture || return 1
+  as_root "$GRANT_SAFE" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/grant.err" || { cat "$TEST_ROOT/grant.err" >&2; return 1; }
+  sudoers_file="$SIGMUND_TEST_SUDOERS_DIR/sigmund_web-sys_$TEST_USER"
+  root_file_exists "$sudoers_file" || return 1
+  mode=$(root_file_mode "$sudoers_file") || return 1
+  [ "$mode" = 440 ] || { echo "managed sudoers mode=$mode (want 440)" >&2; return 1; }
+  owner=$(root_file_owner "$sudoers_file") || return 1
+  [ "$owner" = "0:0" ] || { echo "managed sudoers owner=$owner (want 0:0)" >&2; return 1; }
+}
+
+test_grant_aborts_when_visudo_rejects() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local safe visudo_bad sudoers_file rc
+  grant_fixture || return 1
+  visudo_bad="$TEST_ROOT/visudo-bad"
+  printf '#!/usr/bin/env sh\nexit 1\n' >"$visudo_bad" || return 1
+  chmod 755 "$visudo_bad" || return 1
+  export SIGMUND_TEST_VISUDO_PROG="$visudo_bad"
+  sudoers_file="$SIGMUND_TEST_SUDOERS_DIR/sigmund_web-sys_$TEST_USER"
+  set +e
+  as_root "$GRANT_SAFE" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/visudo.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || { echo "grant succeeded despite visudo rejecting the candidate" >&2; return 1; }
+  root_path_absent "$sudoers_file" || { echo "unvalidated sudoers file was installed" >&2; return 1; }
+  root_path_absent "$sudoers_file.tmp" 2>/dev/null || true
+}
+
+test_grant_refuses_unsafe_self_binary() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local safe bad sudoers_file rc
+  grant_fixture || return 1
+  sudoers_file="$SIGMUND_TEST_SUDOERS_DIR/sigmund_web-sys_$TEST_USER"
+  # (a) non-root-owned sigmund binary
+  bad="$TEST_ROOT/sigmund-userowned"
+  cp "$SIGMUND_REAL_BIN" "$bad" || return 1
+  as_root chown "$TEST_UID:$TEST_GID" "$bad" || return 1
+  as_root chmod 755 "$bad" || return 1
+  set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/u.err"; rc=$?; set -e
+  [ "$rc" -ne 0 ] || { echo "granted via a non-root-owned binary" >&2; return 1; }
+  root_path_absent "$sudoers_file" || { echo "sudoers written via non-root-owned binary" >&2; return 1; }
+  # (b) group/world-writable sigmund binary
+  bad="$TEST_ROOT/sigmund-writable"
+  cp "$SIGMUND_REAL_BIN" "$bad" || return 1
+  as_root chown 0:0 "$bad" || return 1
+  as_root chmod 0777 "$bad" || return 1
+  set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/w.err"; rc=$?; set -e
+  [ "$rc" -ne 0 ] || { echo "granted via a world-writable binary" >&2; return 1; }
+  root_path_absent "$sudoers_file" || { echo "sudoers written via world-writable binary" >&2; return 1; }
+  # (c) whitespace in the binary path
+  mkdir -p "$TEST_ROOT/bad dir" || return 1
+  bad="$TEST_ROOT/bad dir/sigmund"
+  cp "$SIGMUND_REAL_BIN" "$bad" || return 1
+  as_root chown 0:0 "$bad" || return 1
+  as_root chmod 755 "$bad" || return 1
+  set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/s.err"; rc=$?; set -e
+  [ "$rc" -ne 0 ] || { echo "granted via a whitespace-in-path binary" >&2; return 1; }
+  root_path_absent "$sudoers_file" || { echo "sudoers written via whitespace-path binary" >&2; return 1; }
+}
+
+run_test "system store directory modes are private (0700/0755)" test_system_store_directory_modes
+run_test "system store tightens a pre-existing loose dir" test_system_store_tightens_preexisting_loose_dir
+run_test "system store artifacts are owned by root:root" test_system_store_artifacts_owned_by_root
+run_test "non-root process ignores spoofed SUDO_* provenance" test_nonroot_ignores_spoofed_sudo_provenance
+run_test "symlinked aliases.json is not followed (O_NOFOLLOW)" test_aliases_json_symlink_not_followed
+run_test "managed sudoers file is mode 0440 root:root" test_grant_sudoers_file_is_root_only
+run_test "grant aborts and writes nothing when visudo rejects" test_grant_aborts_when_visudo_rejects
+run_test "grant refuses an unsafe sigmund self-binary" test_grant_refuses_unsafe_self_binary
 run_test "start/stop lifecycle" test_lifecycle
 run_test "kill subcommand kills process group" test_kill_subcommand
 run_test "start output includes stop helper" test_start_output_stop_hint
