@@ -138,10 +138,7 @@ static int write_aliases_atomic(const struct sigmund_store *store, const struct 
     const char *dir = store->kind == STORE_SYSTEM_MANAGED ? store->public_dir : store->base;
     char tmp[SIGMUND_PATH_MAX];
     mode_t mode = store->kind == STORE_SYSTEM_MANAGED ? 0644 : 0600;
-    if (sigmund_checked_snprintf(tmp, sizeof(tmp), "%s/.aliases.tmp", dir) != 0) {
-        return -1;
-    }
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
+    int fd = sigmund_open_unique_temp(dir, "aliases", mode, tmp, sizeof(tmp));
     if (fd < 0) {
         return -1;
     }

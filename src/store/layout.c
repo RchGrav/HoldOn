@@ -14,20 +14,14 @@ int sigmund_chown_root_if_root(const char *path) {
     if (geteuid() != 0) {
         return 0;
     }
-    if (chown(path, 0, 0) != 0) {
+    if (lchown(path, 0, 0) != 0) {
         return -1;
     }
     return 0;
 }
 
 static int chown_if_root(const char *path, uid_t uid, gid_t gid) {
-    if (geteuid() != 0) {
-        return 0;
-    }
-    if (chown(path, uid, gid) != 0) {
-        return -1;
-    }
-    return 0;
+    return sigmund_chown_dir_no_symlink_if_root(path, uid, gid);
 }
 
 int sigmund_init_user_store_from_home(const char *home, struct sigmund_store *store) {
@@ -65,11 +59,11 @@ int sigmund_ensure_user_store_for_current_user(struct sigmund_store *store) {
     if (sigmund_mkdir_p0700(store->base) != 0) {
         return -1;
     }
-    if (chmod(store->base, 0700) != 0) {
+    if (sigmund_chmod_dir_no_symlink(store->base, 0700) != 0) {
         return -1;
     }
     if (sigmund_mkdir_p0700(store->console_dir) != 0 ||
-        chmod(store->console_dir, 0700) != 0) {
+        sigmund_chmod_dir_no_symlink(store->console_dir, 0700) != 0) {
         return -1;
     }
     return 0;
@@ -85,16 +79,16 @@ static int ensure_user_store_from_home_owned(const char *home, uid_t uid, gid_t 
         return -1;
     }
     if (sigmund_mkdir_p0700(store->base) != 0 ||
-        chmod(local_dir, 0700) != 0 ||
+        sigmund_chmod_dir_no_symlink(local_dir, 0700) != 0 ||
         chown_if_root(local_dir, uid, gid) != 0 ||
-        chmod(state_dir, 0700) != 0 ||
+        sigmund_chmod_dir_no_symlink(state_dir, 0700) != 0 ||
         chown_if_root(state_dir, uid, gid) != 0 ||
-        chmod(store->base, 0700) != 0 ||
+        sigmund_chmod_dir_no_symlink(store->base, 0700) != 0 ||
         chown_if_root(store->base, uid, gid) != 0) {
         return -1;
     }
     if (sigmund_mkdir_p0700(store->console_dir) != 0 ||
-        chmod(store->console_dir, 0700) != 0 ||
+        sigmund_chmod_dir_no_symlink(store->console_dir, 0700) != 0 ||
         chown_if_root(store->console_dir, uid, gid) != 0) {
         return -1;
     }
@@ -136,28 +130,28 @@ int sigmund_ensure_system_store(struct sigmund_store *store) {
         return -1;
     }
     if (sigmund_mkdir_p_mode(store->base, 0755) != 0 ||
-        chmod(store->base, 0755) != 0 ||
-        sigmund_chown_root_if_root(store->base) != 0) {
+        sigmund_chmod_dir_no_symlink(store->base, 0755) != 0 ||
+        sigmund_chown_dir_no_symlink_if_root(store->base, 0, 0) != 0) {
         return -1;
     }
     if (sigmund_mkdir_p_mode(store->record_dir, 0700) != 0 ||
-        chmod(store->record_dir, 0700) != 0 ||
-        sigmund_chown_root_if_root(store->record_dir) != 0) {
+        sigmund_chmod_dir_no_symlink(store->record_dir, 0700) != 0 ||
+        sigmund_chown_dir_no_symlink_if_root(store->record_dir, 0, 0) != 0) {
         return -1;
     }
     if (sigmund_mkdir_p_mode(store->log_dir, 0700) != 0 ||
-        chmod(store->log_dir, 0700) != 0 ||
-        sigmund_chown_root_if_root(store->log_dir) != 0) {
+        sigmund_chmod_dir_no_symlink(store->log_dir, 0700) != 0 ||
+        sigmund_chown_dir_no_symlink_if_root(store->log_dir, 0, 0) != 0) {
         return -1;
     }
     if (sigmund_mkdir_p_mode(store->console_dir, 0700) != 0 ||
-        chmod(store->console_dir, 0700) != 0 ||
-        sigmund_chown_root_if_root(store->console_dir) != 0) {
+        sigmund_chmod_dir_no_symlink(store->console_dir, 0700) != 0 ||
+        sigmund_chown_dir_no_symlink_if_root(store->console_dir, 0, 0) != 0) {
         return -1;
     }
     if (sigmund_mkdir_p_mode(store->public_dir, 0755) != 0 ||
-        chmod(store->public_dir, 0755) != 0 ||
-        sigmund_chown_root_if_root(store->public_dir) != 0) {
+        sigmund_chmod_dir_no_symlink(store->public_dir, 0755) != 0 ||
+        sigmund_chown_dir_no_symlink_if_root(store->public_dir, 0, 0) != 0) {
         return -1;
     }
     return 0;

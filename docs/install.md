@@ -2,7 +2,7 @@
 
 [Docs index](index.md) | [Quickstart](quickstart.md) | [Using Sigmund in CI](ci.md) | [Repository README](../README.md)
 
-Sigmund publishes small release artifacts for supported Linux and macOS targets. The installer detects your platform, chooses the matching artifact, verifies its SHA-256 checksum, installs the `sigmund` binary, and prints the absolute path it installed.
+Sigmund publishes small release artifacts for supported Linux and macOS targets. The installer detects your platform, chooses the matching artifact, verifies it against the release `SHA256SUMS`, validates the archive layout, installs the `sigmund` binary, and prints the absolute path it installed. It refuses to install when checksums are missing, malformed, or mismatched.
 
 ## One-line install
 
@@ -147,6 +147,12 @@ SIGMUND_FLAVOR=gnu-static sh install.sh
 ```
 
 The installer fails clearly instead of guessing when the platform is unsupported or libc cannot be detected safely.
+
+## Checksum and archive validation
+
+Every release must include a `SHA256SUMS` asset next to the tarballs and installer. The installer does not trust release-note text or optional sidecar checksum files as a fallback; if `SHA256SUMS` is missing or does not contain a valid 64-hex SHA-256 entry for the selected artifact, installation stops before extraction.
+
+Release tarballs are expected to place the executable at the archive root as `sigmund`. The installer rejects archives that omit that root-level binary or contain unsafe absolute/parent-directory paths, rather than searching recursively for the first file named `sigmund`.
 
 ## Manual build
 

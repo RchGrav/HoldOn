@@ -24,6 +24,17 @@ for file in LICENSE* README*; do
 done
 shopt -u nullglob
 
-tar -C "${stage_dir}" -czf "${output_dir}/${archive_name}" .
+archive_path="${output_dir}/${archive_name}"
+if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
+  tar -C "${stage_dir}" \
+    --sort=name \
+    --mtime='UTC 1970-01-01' \
+    --owner=0 \
+    --group=0 \
+    --numeric-owner \
+    -cf - . | gzip -n > "${archive_path}"
+else
+  tar -C "${stage_dir}" -czf "${archive_path}" .
+fi
 
-echo "${output_dir}/${archive_name}"
+echo "${archive_path}"

@@ -19,7 +19,7 @@ int sigmund_write_record_atomic(const char *dir, const struct sigmund_run_record
         return -1;
     }
 
-    fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) {
         return -1;
     }
@@ -159,7 +159,7 @@ int sigmund_write_public_index_atomic(const struct sigmund_store *store, const s
         return -1;
     }
 
-    fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644);
     if (fd < 0) {
         return -1;
     }
@@ -203,9 +203,6 @@ int sigmund_write_public_index_atomic(const struct sigmund_store *store, const s
     f = NULL;
     fd = -1;
     if (rename(tmp, fin) != 0) {
-        goto out;
-    }
-    if (chmod(fin, 0644) != 0 || sigmund_chown_root_if_root(fin) != 0) {
         goto out;
     }
     int dfd = open(store->public_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);

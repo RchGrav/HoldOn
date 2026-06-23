@@ -11,7 +11,7 @@ STATIC_LDFLAGS ?= -static
 endif
 TEST_LDFLAGS ?=
 VERSION_BASE ?= $(shell sed -n '1s/[[:space:]]*$$//p' VERSION 2>/dev/null || printf dev)
-VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || printf '%s-%s%s\n' "$(VERSION_BASE)" "$$(git rev-parse --short HEAD 2>/dev/null || echo dev)" "$$(git diff --quiet 2>/dev/null || echo -dirty)")
+VERSION ?= $(shell if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git describe --tags --exact-match 2>/dev/null || printf '%s-%s%s\n' "$(VERSION_BASE)" "$$(git rev-parse --short HEAD)" "$$(git diff --quiet 2>/dev/null || echo -dirty)"; else printf '%s\n' "$(VERSION_BASE)"; fi)
 VERSION_CPPFLAG := -DSIGMUND_VERSION=\"$(VERSION)\"
 
 # Every translation unit. wildcard is portable in GNU make; one glob per layer
@@ -58,11 +58,16 @@ test: $(TEST_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o sigmund $(TEST_OBJS)
 	@bash tests/test_sigmund.sh
 	@$(MAKE) hash-vector
+	@bash tests/test_version_makefile.sh
+	@bash tests/test_release_installer.sh
 
 # Guards the profile-hash capability key against accidental framing changes.
 hash-vector:
 	$(CC) $(ALL_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o hash-vector tests/profile_hash_vector.c $(HASH_VECTOR_SRCS)
 	@./hash-vector
+
+print-version:
+	@printf '%s\n' '$(VERSION)'
 
 check: test
 
@@ -80,4 +85,4 @@ clean:
 	rm -f sigmund sigmund-dynamic hash-vector
 	rm -rf obj obj-test
 
-.PHONY: all clean test check ci lint hash-vector
+.PHONY: all clean test check ci lint hash-vector print-version
