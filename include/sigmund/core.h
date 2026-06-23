@@ -23,6 +23,8 @@ bool sigmund_valid_profile_hash(const char *hash);
 bool sigmund_valid_alias(const char *alias);
 bool sigmund_valid_record(const struct sigmund_run_record *r);
 int sigmund_mkdir_p0700(const char *dir);
+int sigmund_chmod_dir_no_symlink(const char *dir, mode_t mode);
+int sigmund_chown_dir_no_symlink_if_root(const char *dir, uid_t uid, gid_t gid);
 int sigmund_read_file_trim(const char *path, char *buf, size_t n);
 bool sigmund_path_exists(const char *path);
 void sigmund_sha256_init(struct sha256_ctx *c);

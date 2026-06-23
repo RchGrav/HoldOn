@@ -1950,6 +1950,42 @@ test_system_store_tightens_preexisting_loose_dir() {
   [ "$mode" = 700 ] || { echo "pre-existing loose runs/ not tightened: mode=$mode" >&2; return 1; }
 }
 
+test_system_store_refuses_symlinked_critical_dirs() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local old_store name root state target rc mode
+  old_store="$SIGMUND_TEST_SYSTEM_STATE_DIR"
+  for name in base runs logs console public; do
+    root="$TEST_ROOT/syslink-$name"
+    state="$root/state"
+    target="$root/target"
+    as_root mkdir -p "$root" "$target" || return 1
+    as_root chmod 0777 "$target" || return 1
+    if [ "$name" = base ]; then
+      as_root rm -rf "$state" || return 1
+      as_root ln -s "$target" "$state" || return 1
+    else
+      as_root mkdir -p "$state" || return 1
+      case "$name" in
+        public) as_root mkdir -p "$state/runs" "$state/logs" "$state/console" || return 1 ;;
+        console) as_root mkdir -p "$state/runs" "$state/logs" || return 1 ;;
+        logs) as_root mkdir -p "$state/runs" || return 1 ;;
+      esac
+      as_root ln -s "$target" "$state/$name" || return 1
+    fi
+    SIGMUND_TEST_SYSTEM_STATE_DIR="$state"
+    export SIGMUND_TEST_SYSTEM_STATE_DIR
+    set +e
+    as_root "$SIGMUND_REAL_BIN" true >/dev/null 2>"$TEST_ROOT/syslink-$name.err"
+    rc=$?
+    set -e
+    SIGMUND_TEST_SYSTEM_STATE_DIR="$old_store"
+    export SIGMUND_TEST_SYSTEM_STATE_DIR
+    [ "$rc" -ne 0 ] || { echo "system store accepted symlinked $name directory" >&2; return 1; }
+    mode=$(root_file_mode "$target") || return 1
+    [ "$mode" = 777 ] || { echo "symlink target for $name was chmod-followed: mode=$mode" >&2; return 1; }
+  done
+}
+
 test_system_store_artifacts_owned_by_root() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local id owner
@@ -2266,6 +2302,7 @@ run_test "owned commands reject extra targets and unsupported --all" test_owned_
 run_test "grant/revoke argument and privilege refusals" test_grant_revoke_argument_refusals
 run_test "system store directory modes are private (0700/0755)" test_system_store_directory_modes
 run_test "system store tightens a pre-existing loose dir" test_system_store_tightens_preexisting_loose_dir
+run_test "system store refuses symlinked critical dirs without chmod-following" test_system_store_refuses_symlinked_critical_dirs
 run_test "system store artifacts are owned by root:root" test_system_store_artifacts_owned_by_root
 run_test "non-root process ignores spoofed SUDO_* provenance" test_nonroot_ignores_spoofed_sudo_provenance
 run_test "symlinked aliases.json is not followed (O_NOFOLLOW)" test_aliases_json_symlink_not_followed
