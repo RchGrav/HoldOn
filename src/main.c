@@ -8,8 +8,296 @@
 #include "sigmund/platform.h"
 #include "sigmund/core.h"
 
+static const char *program_basename(const char *path);
+static bool invoked_as_mund(const char *path);
+static int shell_split_line(const char *line, char ***argv_out, int *argc_out);
+static void shell_free_argv(char **argv, int argc);
+static int shell_exec_command(const char *program, int argc, char **argv);
+static int shell_map_slash_view(char **argv, int argc, char ***mapped_out, int *mapped_argc_out);
+static int sigmund_run_captive_shell(const char *program);
+
+static const char *program_basename(const char *path) {
+    if (!path || !*path) {
+        return "";
+    }
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+static bool invoked_as_mund(const char *path) {
+    const char *base = program_basename(path);
+    return !strcmp(base, "mund");
+}
+
+static void shell_free_argv(char **argv, int argc) {
+    if (!argv) {
+        return;
+    }
+    for (int i = 0; i < argc; i++) {
+        free(argv[i]);
+    }
+    free(argv);
+}
+
+static int shell_push_char(char **buf, size_t *len, size_t *cap, char c) {
+    if (*len + 1 >= *cap) {
+        size_t next_cap = *cap ? *cap * 2 : 32;
+        char *next = realloc(*buf, next_cap);
+        if (!next) {
+            return -1;
+        }
+        *buf = next;
+        *cap = next_cap;
+    }
+    (*buf)[(*len)++] = c;
+    return 0;
+}
+
+static int shell_push_token(char ***argv, int *argc, int *cap, char *token) {
+    if (*argc == *cap) {
+        int next_cap = *cap ? *cap * 2 : 8;
+        char **next = realloc(*argv, (size_t)next_cap * sizeof(*next));
+        if (!next) {
+            return -1;
+        }
+        *argv = next;
+        *cap = next_cap;
+    }
+    (*argv)[(*argc)++] = token;
+    return 0;
+}
+
+static int shell_split_line(const char *line, char ***argv_out, int *argc_out) {
+    *argv_out = NULL;
+    *argc_out = 0;
+    char **argv = NULL;
+    int argc = 0, argv_cap = 0;
+    const char *p = line;
+    while (*p) {
+        while (*p && isspace((unsigned char)*p)) {
+            p++;
+        }
+        if (!*p || *p == '#') {
+            break;
+        }
+        char *buf = NULL;
+        size_t len = 0, cap = 0;
+        bool in_single = false, in_double = false;
+        while (*p) {
+            unsigned char c = (unsigned char)*p;
+            if (!in_single && !in_double && (isspace(c) || c == '#')) {
+                break;
+            }
+            if (!in_double && c == '\'') {
+                in_single = !in_single;
+                p++;
+                continue;
+            }
+            if (!in_single && c == '"') {
+                in_double = !in_double;
+                p++;
+                continue;
+            }
+            if (!in_single && c == '\\') {
+                p++;
+                if (!*p) {
+                    free(buf);
+                    shell_free_argv(argv, argc);
+                    errno = EINVAL;
+                    return -1;
+                }
+                c = (unsigned char)*p;
+            }
+            if (shell_push_char(&buf, &len, &cap, (char)c) != 0) {
+                free(buf);
+                shell_free_argv(argv, argc);
+                return -1;
+            }
+            p++;
+        }
+        if (in_single || in_double || shell_push_char(&buf, &len, &cap, '\0') != 0) {
+            free(buf);
+            shell_free_argv(argv, argc);
+            errno = EINVAL;
+            return -1;
+        }
+        if (shell_push_token(&argv, &argc, &argv_cap, buf) != 0) {
+            free(buf);
+            shell_free_argv(argv, argc);
+            return -1;
+        }
+        while (*p && isspace((unsigned char)*p)) {
+            p++;
+        }
+        if (*p == '#') {
+            break;
+        }
+    }
+    *argv_out = argv;
+    *argc_out = argc;
+    return 0;
+}
+
+static char *shell_strdup(const char *s) {
+    char *copy = strdup(s);
+    if (!copy) {
+        sigmund_die_errno("sigmund: shell allocation failed");
+    }
+    return copy;
+}
+
+static int shell_map_slash_view(char **argv, int argc, char ***mapped_out, int *mapped_argc_out) {
+    *mapped_out = NULL;
+    *mapped_argc_out = 0;
+    if (argc <= 0 || argv[0][0] != '/') {
+        return 0;
+    }
+    const char *view = argv[0] + 1;
+    const char *mapped_view = NULL;
+    if (!strcmp(view, "profiles") || !strcmp(view, "profile")) {
+        mapped_view = "profiles";
+    } else if (!strcmp(view, "runs") || !strcmp(view, "run")) {
+        mapped_view = "runs";
+    } else if (!strcmp(view, "running") || !strcmp(view, "active")) {
+        mapped_view = "running";
+    } else if (!strcmp(view, "dormant") || !strcmp(view, "inactive")) {
+        mapped_view = "dormant";
+    } else if (!strcmp(view, "failed")) {
+        mapped_view = "failed";
+    } else if (!strcmp(view, "stale")) {
+        mapped_view = "stale";
+    } else if (!strcmp(view, "time") || !strcmp(view, "uptime")) {
+        mapped_view = view;
+    } else {
+        fprintf(stderr, "mund: unknown view '/%s'\n", view);
+        return 5;
+    }
+    int out_argc = !strcmp(mapped_view, "profiles") ? argc : argc + 1;
+    char **out = calloc((size_t)out_argc, sizeof(*out));
+    if (!out) {
+        return 3;
+    }
+    int o = 0;
+    if (!strcmp(mapped_view, "profiles")) {
+        out[o++] = shell_strdup("profiles");
+    } else {
+        out[o++] = shell_strdup("show");
+        out[o++] = shell_strdup(mapped_view);
+    }
+    for (int i = 1; i < argc; i++) {
+        out[o++] = shell_strdup(argv[i]);
+    }
+    *mapped_out = out;
+    *mapped_argc_out = out_argc;
+    return 1;
+}
+
+static int shell_exec_command(const char *program, int argc, char **argv) {
+    char **child_argv = calloc((size_t)argc + 2, sizeof(*child_argv));
+    if (!child_argv) {
+        return 3;
+    }
+    child_argv[0] = (char *)program;
+    for (int i = 0; i < argc; i++) {
+        child_argv[i + 1] = argv[i];
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        free(child_argv);
+        sigmund_die_errno("sigmund: shell fork failed");
+    }
+    if (pid == 0) {
+        execv(program, child_argv);
+        execvp(program, child_argv);
+        fprintf(stderr, "mund: failed to execute %s: %s\n", program, strerror(errno));
+        _exit(127);
+    }
+    free(child_argv);
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            sigmund_die_errno("sigmund: shell wait failed");
+        }
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return 1;
+}
+
+static int sigmund_run_captive_shell(const char *program) {
+    bool interactive = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+    char *line = NULL;
+    size_t cap = 0;
+    int last_rc = 0;
+    if (interactive) {
+        printf("mund shell — type help, /profiles, /runs, or exit\n");
+    }
+    while (1) {
+        if (interactive) {
+            printf("mund> ");
+            fflush(stdout);
+        }
+        ssize_t n = getline(&line, &cap, stdin);
+        if (n < 0) {
+            break;
+        }
+        while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
+            line[--n] = '\0';
+        }
+        char **argv = NULL;
+        int argc = 0;
+        if (shell_split_line(line, &argv, &argc) != 0) {
+            fprintf(stderr, "mund: invalid shell syntax\n");
+            last_rc = 5;
+            continue;
+        }
+        if (argc == 0) {
+            shell_free_argv(argv, argc);
+            continue;
+        }
+        if (!strcmp(argv[0], "exit") || !strcmp(argv[0], "quit")) {
+            shell_free_argv(argv, argc);
+            break;
+        }
+        if (!strcmp(argv[0], "cd")) {
+            if (argc != 2 || chdir(argv[1]) != 0) {
+                fprintf(stderr, "mund: cd failed%s%s\n", argc == 2 ? ": " : "", argc == 2 ? strerror(errno) : "usage: cd <dir>");
+                last_rc = 5;
+            } else {
+                last_rc = 0;
+            }
+            shell_free_argv(argv, argc);
+            continue;
+        }
+        char **mapped = NULL;
+        int mapped_argc = 0;
+        int mapped_rc = shell_map_slash_view(argv, argc, &mapped, &mapped_argc);
+        if (mapped_rc < 0 || mapped_rc > 1) {
+            last_rc = mapped_rc;
+            shell_free_argv(argv, argc);
+            continue;
+        }
+        if (mapped_rc == 1) {
+            last_rc = shell_exec_command(program, mapped_argc, mapped);
+            shell_free_argv(mapped, mapped_argc);
+        } else {
+            last_rc = shell_exec_command(program, argc, argv);
+        }
+        shell_free_argv(argv, argc);
+    }
+    free(line);
+    return last_rc;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
+        if (invoked_as_mund(argv[0]) && isatty(STDIN_FILENO)) {
+            return sigmund_run_captive_shell(argv[0]);
+        }
         sigmund_usage();
         return 1;
     }
@@ -297,6 +585,11 @@ int main(int argc, char **argv) {
         int rc = sigmund_perform_start(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, NULL);
         free(cmd_argv);
         return rc;
+    }
+
+    if (owned && !strcmp(command, "shell")) {
+        free(cmd_argv);
+        return sigmund_run_captive_shell(argv[0]);
     }
 
     if (!owned) {

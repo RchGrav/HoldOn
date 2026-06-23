@@ -1937,6 +1937,15 @@ test_mund_unified_cli_surface() {
   "$SIGMUND_BIN" clean mund-web >/dev/null || return 1
 }
 
+test_mund_shell_scripted_commands() {
+  printf 'doctor\n/profiles\nexit\n' | "$SIGMUND_BIN" shell >"$TEST_ROOT/mund-shell.out" 2>"$TEST_ROOT/mund-shell.err" || {
+    cat "$TEST_ROOT/mund-shell.out" "$TEST_ROOT/mund-shell.err" >&2
+    return 1
+  }
+  grep -q 'version:' "$TEST_ROOT/mund-shell.out" || { cat "$TEST_ROOT/mund-shell.out" >&2; return 1; }
+  grep -q 'NAME' "$TEST_ROOT/mund-shell.out" || { cat "$TEST_ROOT/mund-shell.out" >&2; return 1; }
+}
+
 test_build_artifact_coexistence() {
   make clean >/dev/null || return 1
   make sigmund mund STATIC_LDFLAGS= EXTRA_CPPFLAGS=-DSIGMUND_TESTING >/dev/null || return 1
@@ -2478,6 +2487,7 @@ run_test "signal refuses tampered live process-group identity" test_signal_refus
 run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
 run_test "mund unified CLI surface" test_mund_unified_cli_surface
+run_test "mund shell runs scripted commands" test_mund_shell_scripted_commands
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "-f starts and follows output" test_start_follow_short_form
