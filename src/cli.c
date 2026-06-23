@@ -11,6 +11,48 @@ static int help_scripting(void);
 static int help_console(void);
 static int help_action(const char *action);
 
+enum {
+    SIGMUND_CLI_ALLOW_ALL = 1 << 0,
+    SIGMUND_CLI_ALLOW_DDASH = 1 << 1
+};
+
+struct sigmund_cli_command_spec {
+    const char *name;
+    int min_args;
+    int max_args; /* -1 means unbounded. */
+    unsigned flags;
+    const char *usage;
+    const char *help_topic;
+};
+
+static const struct sigmund_cli_command_spec command_specs[] = {
+    {"list", 0, 1, 0, "usage: sigmund list [alias]", "list"},
+    {"start", 1, -1, SIGMUND_CLI_ALLOW_DDASH, "usage: sigmund start <alias> [--multi [N]] [--console]\n       sigmund start <cmd> [args...]", "start"},
+    {"stop", 1, -1, SIGMUND_CLI_ALLOW_ALL, "usage: sigmund stop [--print] [--all] <target>...", "stop"},
+    {"kill", 1, -1, SIGMUND_CLI_ALLOW_ALL, "usage: sigmund kill [--print] [--all] <target>...", "kill"},
+    {"tail", 1, 1, 0, "usage: sigmund tail <target>", "tail"},
+    {"dump", 1, 1, 0, "usage: sigmund dump <target>", "dump"},
+    {"console", 1, 1, 0, "usage: sigmund console <target>", "console"},
+    {"prune", 0, 1, SIGMUND_CLI_ALLOW_ALL, "usage: sigmund prune [target|all] [--all]", "prune"},
+    {"alias", 2, 3, 0, "usage: sigmund alias <id> <name> [-v]", "alias"},
+    {"aliases", 0, 1, 0, "usage: sigmund aliases [-v]", "aliases"},
+    {"grant", 2, 3, 0, "usage: sigmund grant <alias> <user> [start,stop,kill,tail,dump,prune,console]", "grant"},
+    {"revoke", 2, 3, 0, "usage: sigmund revoke <alias> <user> [start,stop,kill,tail,dump,prune,console]", "revoke"},
+    {"help", 0, 1, 0, "usage: sigmund help [topic]", "help"},
+};
+
+static const struct sigmund_cli_command_spec *find_command_spec(const char *s) {
+    if (!s) {
+        return NULL;
+    }
+    for (size_t i = 0; i < sizeof(command_specs) / sizeof(command_specs[0]); i++) {
+        if (!strcmp(command_specs[i].name, s)) {
+            return &command_specs[i];
+        }
+    }
+    return NULL;
+}
+
 static int help_profiles(void) {
     printf("sigmund help profiles\n\n"
            "Pin a run's exact command (resolved binary path + argv) under a reusable\n"
@@ -150,13 +192,29 @@ int sigmund_show_help(const char *topic) {
 }
 
 bool sigmund_is_sigmund_owned_command(const char *s) {
-    return s && (!strcmp(s, "list") || !strcmp(s, "stop") || !strcmp(s, "kill") ||
-                 !strcmp(s, "tail") || !strcmp(s, "dump") || !strcmp(s, "prune") ||
-                 !strcmp(s, "console") ||
-                 !strcmp(s, "start") ||
-                 !strcmp(s, "alias") || !strcmp(s, "aliases") ||
-                 !strcmp(s, "grant") || !strcmp(s, "revoke") ||
-                 !strcmp(s, "help"));
+    return find_command_spec(s) != NULL;
+}
+
+bool sigmund_cli_command_allows_all(const char *s) {
+    const struct sigmund_cli_command_spec *spec = find_command_spec(s);
+    return spec && (spec->flags & SIGMUND_CLI_ALLOW_ALL);
+}
+
+const char *sigmund_cli_command_usage(const char *s) {
+    const struct sigmund_cli_command_spec *spec = find_command_spec(s);
+    return spec ? spec->usage : NULL;
+}
+
+int sigmund_validate_owned_command_arity(const char *command, int argc) {
+    const struct sigmund_cli_command_spec *spec = find_command_spec(command);
+    if (!spec) {
+        return 0;
+    }
+    if (argc < spec->min_args || (spec->max_args >= 0 && argc > spec->max_args)) {
+        fprintf(stderr, "%s\n", spec->usage);
+        return 5;
+    }
+    return 0;
 }
 
 bool sigmund_parse_positive_count(const char *s, int *out) {

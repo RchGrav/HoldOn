@@ -11,6 +11,7 @@ jobs:
   build-and-test:
     name: Linux user-runner (${{ matrix.cc }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +29,7 @@ jobs:
   privilege-delegation-test:
     name: Linux privilege-delegation lane (non-root, elevates per-test)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Run the suite as a non-root user that sudo-elevates per test (skips are failures)
@@ -36,6 +38,7 @@ jobs:
   macos-runtime:
     name: macOS runtime test (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -57,6 +60,7 @@ jobs:
 
   sanitizers:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Run tests with ASan/UBSan to catch memory and UB regressions
@@ -66,6 +70,7 @@ jobs:
 
   static-analysis:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - name: Install cppcheck
@@ -76,6 +81,7 @@ jobs:
   layer-dependencies:
     name: Enforce layer dependency direction
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: No lower layer may include a higher-layer header

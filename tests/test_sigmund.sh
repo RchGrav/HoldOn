@@ -22,6 +22,7 @@ USER_ACTOR_NEEDS_SUDO=0
 ROOT_ACTOR_AVAILABLE=0
 SUDO_BIN="$(command -v sudo || true)"
 USER_CREATED=0
+SIGMUND_TEST_TIMEOUT="${SIGMUND_TEST_TIMEOUT:-25}"
 
 PASSES=0
 SKIPS=0
@@ -45,6 +46,12 @@ require_tools() {
     echo "  install them (e.g. 'procps' provides ps) and re-run; the suite refuses to pass vacuously." >&2
     exit 1
   fi
+  case "$SIGMUND_TEST_TIMEOUT" in
+    ''|*[!0-9]*|0)
+      echo "FATAL: SIGMUND_TEST_TIMEOUT must be a positive integer number of seconds" >&2
+      exit 1
+      ;;
+  esac
 }
 
 suite_cleanup() {
@@ -340,15 +347,65 @@ root_grep() {
   as_root grep -F -q -- "$pattern" "$path"
 }
 
+terminate_pid_tree() {
+  local pid="$1" signal_name="${2:-TERM}" child
+  [ -n "$pid" ] || return 0
+  for child in $(ps -eo pid=,ppid= 2>/dev/null | awk -v p="$pid" '$2 == p { print $1 }'); do
+    terminate_pid_tree "$child" "$signal_name"
+  done
+  kill "-$signal_name" "$pid" 2>/dev/null || true
+}
+
+print_timeout_diagnostics() {
+  local desc="$1" fn="$2"
+  {
+    echo "TIMEOUT: $fn ($desc) exceeded ${SIGMUND_TEST_TIMEOUT}s"
+    echo "TEST_ROOT: ${TEST_ROOT:-}"
+    echo "--- relevant ps output ---"
+    ps -eo pid=,ppid=,pgid=,stat=,etime=,args= 2>/dev/null |
+      awk -v root="${TEST_ROOT:-}" -v suite="$SUITE_ROOT" '
+        NR == 1 || $0 ~ /sigmund/ || (root != "" && index($0, root)) || index($0, suite) || $0 ~ /sleep|bash|sh/ {
+          print
+          shown++
+          if (shown >= 120) exit
+        }
+      ' || true
+    echo "--- bounded find listing for TEST_ROOT ---"
+    if [ -n "${TEST_ROOT:-}" ] && [ -d "$TEST_ROOT" ]; then
+      find "$TEST_ROOT" -maxdepth 4 -print 2>/dev/null | sort | head -n 200 || true
+    else
+      echo "(TEST_ROOT unavailable)"
+    fi
+  } >&2
+}
+
 run_test() {
-  local desc="$1" fn="$2" rc
+  local desc="$1" fn="$2" rc="" pid deadline
+  echo "RUN: $desc"
   new_env || { fail "$desc"; return; }
   export HOME TEST_ROOT SIGMUND_BIN SIGMUND_REAL_BIN SIGMUND_TEST_SYSTEM_STATE_DIR ROOT_HOME ACTOR_HOME
   export TEST_USER TEST_UID TEST_GID USER_ACTOR_NEEDS_SUDO ROOT_ACTOR_AVAILABLE SUDO_BIN
   export SIGMUND_ACTOR_HOME SIGMUND_ACTOR_USER SIGMUND_ACTOR_SUDO_BIN SIGMUND_USER_ACTOR_NEEDS_SUDO
   set +e
-  ( set -Eeuo pipefail; "$fn" )
-  rc=$?
+  ( set -Eeuo pipefail; "$fn" ) &
+  pid=$!
+  deadline=$((SECONDS + SIGMUND_TEST_TIMEOUT))
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      print_timeout_diagnostics "$desc" "$fn"
+      terminate_pid_tree "$pid" TERM
+      sleep 0.5
+      terminate_pid_tree "$pid" KILL
+      wait "$pid" 2>/dev/null || true
+      rc=124
+      break
+    fi
+    sleep 0.1
+  done
+  if [ -z "$rc" ]; then
+    wait "$pid"
+    rc=$?
+  fi
   set -e
   if [ "$rc" -eq 0 ]; then
     pass "$desc"
@@ -839,7 +896,7 @@ test_console_socket_lives_in_store_dir() {
   # /tmp, even though the harness's store path is longer than the AF_UNIX
   # sun_path limit (~104). This exercises the relative-bind path.
   local out id store record sock
-  out=$("$SIGMUND_BIN" --console /bin/sh -c 'sleep 30' 2>&1) || {
+  out=$("$SIGMUND_BIN" --console /bin/sh -c 'while read line; do [ "$line" = noop ] && exit 0; done' 2>&1) || {
     printf '%s\n' "$out" >&2
     return 1
   }
@@ -2006,6 +2063,31 @@ test_misc_action_guards() {
   grep -q 'STARTED_AT' "$TEST_ROOT/l.out" || { echo "list -l missing ISO header" >&2; return 1; }
 }
 
+test_owned_command_exact_arity() {
+  local rc
+  set +e; "$SIGMUND_BIN" tail deadbeef extra >/dev/null 2>"$TEST_ROOT/tail-extra.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "tail extra: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund tail <target>' "$TEST_ROOT/tail-extra.err" || { cat "$TEST_ROOT/tail-extra.err" >&2; return 1; }
+
+  set +e; "$SIGMUND_BIN" dump deadbeef extra >/dev/null 2>"$TEST_ROOT/dump-extra.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "dump extra: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund dump <target>' "$TEST_ROOT/dump-extra.err" || { cat "$TEST_ROOT/dump-extra.err" >&2; return 1; }
+
+  set +e; "$SIGMUND_BIN" console deadbeef extra >/dev/null 2>"$TEST_ROOT/console-extra.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "console extra: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund console <target>' "$TEST_ROOT/console-extra.err" || { cat "$TEST_ROOT/console-extra.err" >&2; return 1; }
+
+  set +e; "$SIGMUND_BIN" prune deadbeef extra >/dev/null 2>"$TEST_ROOT/prune-extra.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "prune extra: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund prune \[target|all\] \[--all\]' "$TEST_ROOT/prune-extra.err" || { cat "$TEST_ROOT/prune-extra.err" >&2; return 1; }
+
+  set +e; "$SIGMUND_BIN" tail --all deadbeef >/dev/null 2>"$TEST_ROOT/tail-all.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "tail --all: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: sigmund tail <target>' "$TEST_ROOT/tail-all.err" || { cat "$TEST_ROOT/tail-all.err" >&2; return 1; }
+
+  "$SIGMUND_BIN" prune >/dev/null || { echo "prune with zero targets should remain valid" >&2; return 1; }
+}
+
 test_grant_revoke_argument_refusals() {
   local rc
   # non-root cannot grant (privilege refusal)
@@ -2032,6 +2114,12 @@ test_multi_n_exact_count_and_invalid() {
   set +e; "$SIGMUND_BIN" start web-n --multi=abc >/dev/null 2>"$TEST_ROOT/m.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "--multi=abc: rc=$rc (want 5)" >&2; return 1; }
   grep -q "invalid --multi count" "$TEST_ROOT/m.err" || { cat "$TEST_ROOT/m.err" >&2; return 1; }
+  set +e; "$SIGMUND_BIN" start web-n --multi abc >/dev/null 2>"$TEST_ROOT/ms.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "--multi abc: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "invalid --multi count 'abc'" "$TEST_ROOT/ms.err" || { cat "$TEST_ROOT/ms.err" >&2; return 1; }
+  set +e; "$SIGMUND_BIN" start web-n --multi 0 >/dev/null 2>"$TEST_ROOT/mz.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "--multi 0: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "invalid --multi count '0'" "$TEST_ROOT/mz.err" || { cat "$TEST_ROOT/mz.err" >&2; return 1; }
   "$SIGMUND_BIN" stop web-n --all >/dev/null 2>&1 || true
 }
 
@@ -2073,6 +2161,7 @@ run_test "--quiet prints bare id and silences stderr" test_quiet_suppresses_bann
 run_test "run id prefix resolves to the full run" test_run_id_prefix_resolution
 run_test "ambiguous alias tail lists ids; tail by run id still resolves" test_ambiguous_tail_resolvable_by_run_id
 run_test "action/help/list argument guards" test_misc_action_guards
+run_test "owned commands reject extra targets and unsupported --all" test_owned_command_exact_arity
 run_test "grant/revoke argument and privilege refusals" test_grant_revoke_argument_refusals
 run_test "system store directory modes are private (0700/0755)" test_system_store_directory_modes
 run_test "system store tightens a pre-existing loose dir" test_system_store_tightens_preexisting_loose_dir
