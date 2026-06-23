@@ -429,17 +429,93 @@ static int print_view_result(const struct sigmund_log_filter_result *result, boo
     return 0;
 }
 
+static int stream_view_result(const struct sigmund_log_filter_result *result) {
+    return print_view_result(result, false);
+}
+
+static int stream_view_follow_until_exit(int fd,
+                                         const struct sigmund_run_record *r,
+                                         const struct sigmund_log_filter_options *opts,
+                                         bool from_end,
+                                         bool follow_until_exit,
+                                         bool debug_stats) {
+    char boot[128] = {0};
+    bool have_boot = r->has_boot && sigmund_current_boot_id(boot, sizeof(boot));
+    if (from_end) {
+        lseek(fd, 0, SEEK_END);
+    }
+
+    struct sigaction sa = {0}, old_sa = {0};
+    sa.sa_handler = handle_tail_sigint;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, &old_sa);
+    g_tail_interrupted = 0;
+
+    int sleep_polls = 0;
+    int rc = 0;
+    while (!g_tail_interrupted) {
+        struct sigmund_log_filter_result result;
+        if (sigmund_log_filter_fd(fd, opts, &result) != 0) {
+            sigaction(SIGINT, &old_sa, NULL);
+            sigmund_die_errno("sigmund: failed while filtering followed log");
+        }
+        if (result.line_count > 0) {
+            if (stream_view_result(&result) != 0) rc = -1;
+            if (result.next_offset > 0) lseek(fd, result.next_offset, SEEK_SET);
+            sigmund_log_filter_result_free(&result);
+            if (rc != 0) break;
+            continue;
+        }
+        bool reached_eof = result.reached_eof;
+        sigmund_log_filter_result_free(&result);
+        if (!follow_until_exit) {
+            break;
+        }
+        if (!reached_eof) {
+            continue;
+        }
+        struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
+        nanosleep(&sl, NULL);
+        sleep_polls++;
+        if (sleep_polls % 10 == 0) {
+            enum run_state st = sigmund_eval_state(r, have_boot ? boot : NULL);
+            if (st != STATE_RUNNING) {
+                struct sigmund_log_filter_result final_result;
+                if (sigmund_log_filter_fd(fd, opts, &final_result) == 0) {
+                    if (final_result.line_count > 0) rc = stream_view_result(&final_result);
+                    if (debug_stats) {
+                        fprintf(stderr,
+                                "mund view follow: bytes_read=%zu lines_scanned=%zu matches=%zu visible=%zu eof=%s\n",
+                                final_result.bytes_read,
+                                final_result.lines_scanned,
+                                final_result.match_count,
+                                final_result.line_count,
+                                final_result.reached_eof ? "yes" : "no");
+                    }
+                    sigmund_log_filter_result_free(&final_result);
+                }
+                break;
+            }
+        }
+    }
+    sigaction(SIGINT, &old_sa, NULL);
+    if (rc != 0) sigmund_die_errno("sigmund: failed writing followed view output");
+    return 0;
+}
+
 static int elevate_view_target(const char *program,
                                const struct sigmund_resolved_target *target,
                                const struct sigmund_log_filter_options *opts,
                                bool debug_stats,
-                               bool interactive) {
+                               bool interactive,
+                               bool follow) {
     const char *prefix = target->scope == RESOLVE_SYSTEM_MANAGED ? "system:" : "user:";
     char token[sizeof("system:") + sizeof(target->id)];
     snprintf(token, sizeof(token), "%s%s", prefix, target->id);
 
     int canonical_argc = 2 + (opts->literal ? 2 : 0) + (int)(opts->similar_example_count * 2) +
-                         (opts->max_results ? 2 : 0) + (debug_stats ? 1 : 0) + (interactive ? 1 : 0);
+                         (opts->max_results ? 2 : 0) + (debug_stats ? 1 : 0) + (interactive ? 1 : 0) +
+                         (follow ? 1 : 0);
     char **canon = calloc((size_t)canonical_argc, sizeof(char *));
     char limit_buf[32];
     if (!canon) return 3;
@@ -466,6 +542,9 @@ static int elevate_view_target(const char *program,
     if (interactive) {
         canon[n++] = "--interactive";
     }
+    if (follow) {
+        canon[n++] = "--follow";
+    }
     int rc = sigmund_elevate_with_sudo_canonical(program, n, canon);
     free(canon);
     return rc;
@@ -478,7 +557,7 @@ int sigmund_cmd_view_action(const struct sigmund_invocation *inv,
                            int argc,
                            char **argv) {
     if (argc < 1) {
-        fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--plain|--interactive] [--debug-stats]\n");
+        fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive] [--debug-stats]\n");
         return 5;
     }
 
@@ -487,17 +566,18 @@ int sigmund_cmd_view_action(const struct sigmund_invocation *inv,
     bool debug_stats = false;
     bool force_plain = false;
     bool force_interactive = false;
+    bool follow = false;
     const char *target_token = NULL;
     for (int i = 0; i < argc; i++) {
         if (!strcmp(argv[i], "--filter")) {
             if (++i >= argc) {
-                fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--plain|--interactive] [--debug-stats]\n");
+                fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive] [--debug-stats]\n");
                 return 5;
             }
             opts.literal = argv[i];
         } else if (!strcmp(argv[i], "--similar")) {
             if (++i >= argc || opts.similar_example_count >= SIGMUND_LOG_VIEWER_MAX_EXAMPLES) {
-                fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--plain|--interactive] [--debug-stats]\n");
+                fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive] [--debug-stats]\n");
                 return 5;
             }
             opts.similar_examples[opts.similar_example_count++] = argv[i];
@@ -513,13 +593,15 @@ int sigmund_cmd_view_action(const struct sigmund_invocation *inv,
             force_plain = true;
         } else if (!strcmp(argv[i], "--interactive")) {
             force_interactive = true;
+        } else if (!strcmp(argv[i], "--follow") || !strcmp(argv[i], "-f")) {
+            follow = true;
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
-            printf("usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--plain|--interactive] [--debug-stats]\n");
+            printf("usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive] [--debug-stats]\n");
             return 0;
         } else if (!target_token) {
             target_token = argv[i];
         } else {
-            fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--plain|--interactive] [--debug-stats]\n");
+            fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive] [--debug-stats]\n");
             return 5;
         }
     }
@@ -528,7 +610,7 @@ int sigmund_cmd_view_action(const struct sigmund_invocation *inv,
         return 5;
     }
     if (!target_token) {
-        fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--plain|--interactive] [--debug-stats]\n");
+        fprintf(stderr, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive] [--debug-stats]\n");
         return 5;
     }
 
@@ -552,7 +634,7 @@ int sigmund_cmd_view_action(const struct sigmund_invocation *inv,
         return 5;
     }
     if (target.needs_elevation) {
-        rc = elevate_view_target(program, &target, &opts, debug_stats, interactive);
+        rc = elevate_view_target(program, &target, &opts, debug_stats, interactive, follow);
         free(targets);
         return rc;
     }
@@ -573,12 +655,24 @@ int sigmund_cmd_view_action(const struct sigmund_invocation *inv,
         sigmund_die_errno("sigmund: failed to open log for view");
     }
     if (interactive) {
-        rc = sigmund_log_viewer_tty_fd(fd, target_token, &opts, debug_stats);
+        if (follow) {
+            char boot[128] = {0};
+            bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
+            if (sigmund_eval_state(&r, have_boot ? boot : NULL) == STATE_RUNNING) {
+                lseek(fd, 0, SEEK_END);
+            }
+        }
+        rc = sigmund_log_viewer_tty_fd(fd, target_token, &opts, follow, debug_stats);
         if (rc != 0) {
             close(fd);
             free(targets);
             sigmund_die_errno("sigmund: failed while viewing log");
         }
+    } else if (follow) {
+        char boot[128] = {0};
+        bool have_boot = sigmund_current_boot_id(boot, sizeof(boot));
+        enum run_state st = sigmund_eval_state(&r, have_boot ? boot : NULL);
+        rc = stream_view_follow_until_exit(fd, &r, &opts, st == STATE_RUNNING, st == STATE_RUNNING, debug_stats);
     } else {
         struct sigmund_log_filter_result result;
         if (sigmund_log_filter_fd(fd, &opts, &result) != 0) {

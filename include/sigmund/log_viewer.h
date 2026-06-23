@@ -38,6 +38,7 @@ int sigmund_log_filter_fd(int fd,
 int sigmund_log_viewer_tty_fd(int fd,
                              const char *title,
                              const struct sigmund_log_filter_options *opts,
+                             bool follow,
                              bool debug_stats);
 
 #endif /* SIGMUND_LOG_VIEWER_H */

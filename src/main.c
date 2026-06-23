@@ -492,7 +492,9 @@ int main(int argc, char **argv) {
         return 3;
     }
 
-    if (owned && !strcmp(command, "logs")) command = "tail";
+    if (owned && !strcmp(command, "logs")) {
+        command = cmd_argc == 1 ? "tail" : "view";
+    }
     if (owned && !strcmp(command, "inspect")) command = "dump";
     if (owned && !strcmp(command, "status")) command = "list";
     if (owned && !strcmp(command, "profiles")) command = "aliases";

@@ -32,11 +32,11 @@ static const struct sigmund_cli_command_spec command_specs[] = {
     {"stop", 1, -1, SIGMUND_CLI_ALLOW_ALL, "usage: sigmund stop [--print] [--all] <target>...", "stop"},
     {"kill", 1, -1, SIGMUND_CLI_ALLOW_ALL, "usage: sigmund kill [--print] [--all] <target>...", "kill"},
     {"tail", 1, 1, 0, "usage: sigmund tail <target>", "tail"},
-    {"logs", 1, 1, 0, "usage: mund logs <target>", "logs"},
+    {"logs", 1, -1, 0, "usage: mund logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]", "logs"},
     {"status", 0, 1, 0, "usage: mund status [profile|target]", "status"},
     {"inspect", 1, 1, 0, "usage: mund inspect <target>", "inspect"},
     {"dump", 1, 1, 0, "usage: sigmund dump <target>", "dump"},
-    {"view", 1, -1, 0, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--plain|--interactive]", "view"},
+    {"view", 1, -1, 0, "usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive]", "view"},
     {"console", 1, 1, 0, "usage: sigmund console <target>", "console"},
     {"prune", 0, 1, SIGMUND_CLI_ALLOW_ALL, "usage: sigmund prune [target|all] [--all]", "prune"},
     {"alias", 2, 3, 0, "usage: sigmund alias <id> <name> [-v]", "alias"},
@@ -171,13 +171,17 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "run")) {
         printf("usage: mund run [--tail|-f] [--console] -- <cmd> [args...]\n\nStart an ad-hoc command explicitly. The -- delimiter keeps command args unambiguous.\n");
     } else if (!strcmp(action, "tail") || !strcmp(action, "logs")) {
-        printf("usage: %s <target>\n\nFollow live output for a profile match, or follow an id's log directly.\n", !strcmp(action, "logs") ? "mund logs" : "sigmund tail");
+        if (!strcmp(action, "logs")) {
+            printf("usage: mund logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]\n\nRead a run log. With filtering or --follow, this routes through the unified mund view engine; plain mund logs <target> remains tail-compatible.\n");
+        } else {
+            printf("usage: sigmund tail <target>\n\nFollow live output for a profile match, or follow an id's log directly.\n");
+        }
     } else if (!strcmp(action, "console")) {
         printf("usage: sigmund console <target>\n\nAttach to a running console-enabled run.\n");
     } else if (!strcmp(action, "dump")) {
         printf("usage: sigmund dump <target>\n\nPrint a run log and exit.\n");
     } else if (!strcmp(action, "view")) {
-        printf("usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--plain|--interactive] [--debug-stats]\n\nOpen an interactive TTY log viewer, or print the first lazily discovered matching lines when stdout/stdin are not TTYs. Type to filter, Backspace edits, and Space toggles the highlighted line as a similarity example.\n");
+        printf("usage: mund view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive] [--debug-stats]\n\nOpen an interactive TTY log viewer, stream filtered live logs with --follow, or print the first lazily discovered matching lines when stdout/stdin are not TTYs. Type to filter, Backspace edits, and Space toggles the highlighted line as a similarity example.\n");
     } else if (!strcmp(action, "prune")) {
         printf("usage: sigmund prune [target|all] [--all]\n\nClear removable past run data. Running valid runs are never pruned.\n");
     } else if (!strcmp(action, "alias")) {

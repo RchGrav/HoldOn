@@ -20,6 +20,7 @@ struct viewer_state {
     int fd;
     const char *title;
     bool debug_stats;
+    bool follow;
     struct sigmund_log_filter_options base_opts;
     char filter[VIEWER_FILTER_MAX + 1];
     char *examples[SIGMUND_LOG_VIEWER_MAX_EXAMPLES];
@@ -99,9 +100,22 @@ static int read_byte(unsigned char *out) {
     }
 }
 
-static enum viewer_key read_key(unsigned char *printable) {
+static enum viewer_key read_key(unsigned char *printable, int timeout_ms) {
     unsigned char c = 0;
     *printable = 0;
+    if (timeout_ms >= 0) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(STDIN_FILENO, &rfds);
+        struct timeval tv;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        int ready;
+        do {
+            ready = select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv);
+        } while (ready < 0 && errno == EINTR);
+        if (ready <= 0) return VIEWER_KEY_NONE;
+    }
     if (read_byte(&c) != 0) return VIEWER_KEY_QUIT;
     if (c == 3 || c == 4 || c == 'q' || c == 'Q') return VIEWER_KEY_QUIT;
     if (c == ' ' || c == '\r' || c == '\n') return c == ' ' ? VIEWER_KEY_TOGGLE : VIEWER_KEY_DOWN;
@@ -199,8 +213,9 @@ static int render(struct viewer_state *state, struct sigmund_log_filter_result *
     char header[512];
     snprintf(header,
              sizeof(header),
-             "\033[H\033[2Jmund view %s | filter: %s%s | similar: %zu | q quit\033[K\r\n",
+             "\033[H\033[2Jmund view %s%s | filter: %s%s | similar: %zu | q quit\033[K\r\n",
              state->title ? state->title : "",
+             state->follow ? " [follow]" : "",
              state->filter[0] ? state->filter : "(type to filter)",
              result->reached_eof ? " | EOF" : "",
              state->example_count);
@@ -224,16 +239,18 @@ static int render(struct viewer_state *state, struct sigmund_log_filter_result *
     if (state->debug_stats) {
         snprintf(footer,
                  sizeof(footer),
-                 "offset=%lld next=%lld scanned=%zu bytes=%zu matches=%zu | arrows/j/k PgUp/PgDn space=similar backspace=filter\033[K",
+                 "offset=%lld next=%lld scanned=%zu bytes=%zu matches=%zu%s | arrows/j/k PgUp/PgDn space=similar backspace=filter\033[K",
                  (long long)state->start_offset,
                  (long long)result->next_offset,
                  result->lines_scanned,
                  result->bytes_read,
-                 result->match_count);
+                 result->match_count,
+                 state->follow ? " follow=on" : "");
     } else {
         snprintf(footer,
                  sizeof(footer),
-                 "arrows/j/k move | PgUp/PgDn page | type filters | Backspace clears | Space toggles similarity\033[K");
+                 "arrows/j/k move | PgUp/PgDn page | type filters | Backspace clears | Space toggles similarity%s\033[K",
+                 state->follow ? " | Follow refresh on" : "");
     }
     return viewer_puts(footer);
 }
@@ -267,6 +284,7 @@ static void page_up(struct viewer_state *state) {
 int sigmund_log_viewer_tty_fd(int fd,
                              const char *title,
                              const struct sigmund_log_filter_options *opts,
+                             bool follow,
                              bool debug_stats) {
     if (fd < 0 || !opts || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
         errno = ENOTTY;
@@ -277,6 +295,7 @@ int sigmund_log_viewer_tty_fd(int fd,
     state.fd = fd;
     state.title = title;
     state.debug_stats = debug_stats;
+    state.follow = follow;
     state.base_opts = *opts;
     if (opts->literal) {
         snprintf(state.filter, sizeof(state.filter), "%s", opts->literal);
@@ -292,7 +311,14 @@ int sigmund_log_viewer_tty_fd(int fd,
             break;
         }
         unsigned char printable = 0;
-        enum viewer_key key = read_key(&printable);
+        enum viewer_key key = read_key(&printable, follow ? 250 : -1);
+        if (key == VIEWER_KEY_NONE && follow) {
+            if (result.line_count > 0 && !result.reached_eof) {
+                page_down(&state, &result);
+            }
+            sigmund_log_filter_result_free(&result);
+            continue;
+        }
         if (key == VIEWER_KEY_QUIT) {
             sigmund_log_filter_result_free(&result);
             break;

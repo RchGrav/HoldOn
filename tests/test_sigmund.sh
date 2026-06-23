@@ -788,6 +788,36 @@ test_log_view_filter_cli() {
   grep -q -- '--interactive requires a TTY' "$TEST_ROOT/view-interactive.err"
 }
 
+test_log_view_follow_filters_live_output() {
+  local out id rc
+  out=$("$SIGMUND_BIN" run -- /bin/sh -c 'sleep 0.2; echo ignore-before; sleep 0.2; echo "live-needle one"; sleep 0.2; echo ignore-after; sleep 0.2; echo "live-needle two"' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  set +e
+  "$SIGMUND_BIN" view "$id" --follow --filter live-needle >"$TEST_ROOT/view-follow.out" 2>"$TEST_ROOT/view-follow.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow.err" >&2; return 1; }
+  grep -q 'live-needle one' "$TEST_ROOT/view-follow.out" || { cat "$TEST_ROOT/view-follow.out" >&2; return 1; }
+  grep -q 'live-needle two' "$TEST_ROOT/view-follow.out" || { cat "$TEST_ROOT/view-follow.out" >&2; return 1; }
+  ! grep -q 'ignore-before' "$TEST_ROOT/view-follow.out" || { cat "$TEST_ROOT/view-follow.out" >&2; return 1; }
+  ! grep -q 'ignore-after' "$TEST_ROOT/view-follow.out" || { cat "$TEST_ROOT/view-follow.out" >&2; return 1; }
+}
+
+test_mund_logs_follow_routes_through_view_filter() {
+  local out id rc
+  out=$("$SIGMUND_BIN" run -- /bin/sh -c 'sleep 0.2; echo logs-ignore; sleep 0.2; echo "logs-live-needle"; sleep 0.2' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  set +e
+  "$SIGMUND_BIN" logs "$id" --follow --filter logs-live >"$TEST_ROOT/logs-follow.out" 2>"$TEST_ROOT/logs-follow.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/logs-follow.err" >&2; return 1; }
+  grep -q 'logs-live-needle' "$TEST_ROOT/logs-follow.out" || { cat "$TEST_ROOT/logs-follow.out" >&2; return 1; }
+  ! grep -q 'logs-ignore' "$TEST_ROOT/logs-follow.out" || { cat "$TEST_ROOT/logs-follow.out" >&2; return 1; }
+}
+
 test_start_follow_short_form() {
   local out id
   out=$("$SIGMUND_BIN" -f bash -c 'echo follow-short' 2>&1) || return 1
@@ -2514,6 +2544,8 @@ run_test "mund shell runs scripted commands" test_mund_shell_scripted_commands
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "view filters run logs literally and by similarity" test_log_view_filter_cli
+run_test "view follows live logs through filter engine" test_log_view_follow_filters_live_output
+run_test "logs follow routes through view filter engine" test_mund_logs_follow_routes_through_view_filter
 run_test "-f starts and follows output" test_start_follow_short_form
 run_test "tail <id> tails an existing run log" test_tail_verb_existing_id
 run_test "persistent stale records remain visible and dumpable" test_persistent_stale_records
