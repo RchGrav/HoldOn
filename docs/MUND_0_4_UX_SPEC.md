@@ -1,15 +1,15 @@
 # Mund 0.4 UX and CLI specification draft
 
 Date: 2026-06-23
-Status: implementation plan for the 0.4.0 breaking CLI redesign
+Status: authoritative 0.4.0 branch UX specification and release-plan target
 
 ## 1. Product stance
 
-Sigmund remains the project identity, but the proposed user-facing command is `mund`.
+Sigmund remains the project identity; the intended 0.4.0 user-facing command is `mund`.
 
 `mund` is a guardian shell for background jobs: run it, leave it, find it, watch it, stop it safely.
 
-Version 0.4.0 is intentionally allowed to break the current CLI because the tool has no established user base. It should ship the full product direction in this document, not only a compatibility shim or partial rename. The goal is to replace the legacy action-first/alias-based surface with one coherent command language shared by:
+Version 0.4.0 is intentionally allowed to break the current CLI because the tool has no established user base. This document defines the target product direction for that release. Until the tracked alignment matrix marks a section implemented, treat it as a requirement or follow-up rather than a release claim. The goal is to replace the legacy action-first/alias-based surface with one coherent command language shared by:
 
 1. one-shot CLI commands;
 2. captive shell commands;
@@ -17,7 +17,7 @@ Version 0.4.0 is intentionally allowed to break the current CLI because the tool
 
 JSON remains the canonical on-disk profile storage format. CLI transcript config is a human editing/import/export format that compiles to the JSON profile model.
 
-The hardening backlog in section 11 is part of the same 0.4.0 release plan. The redesigned CLI should not be released as stable until the product surface and hardening work are both complete.
+The hardening backlog in section 11 is part of the same 0.4.0 release plan. The redesigned CLI should not be released as stable until the product surface and hardening work are both complete. `VERSION` is still `0.3.9` in the current branch, so wording in this document is branch/spec status unless explicitly tied to implemented source and tests. See [0.4.0 branch alignment and follow-up matrix](0.4.0-alignment.md) for the current implemented/deferred split.
 
 ## 2. Core model
 
@@ -133,6 +133,7 @@ mund show tree <view>
 mund status <target>
 mund inspect <target>
 mund logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]
+mund view <target> [--follow|-f] [--filter TEXT] [--plain|--interactive]
 mund open <target>
 mund stop <target> [--all]
 mund kill <target> [--all]
@@ -263,7 +264,7 @@ q                quit viewer
 
 Backspace to an empty query restores the full view immediately. A dedicated clear key is optional, not required.
 
-0.4.0 v1 status: `mund view <target>` now keeps plain output for scripts and opens an interactive TTY viewer by default when stdin/stdout are TTYs. `--plain` forces script-style output and `--interactive` fails closed when no TTY is available. The intended live-log UX is dynamic: `mund logs <target> --follow` / `mund view <target> --follow` opens the live viewer, printable keys update the top filter field per keystroke, Backspace relaxes the filter, and matching live output appears without restarting the command. `--filter TEXT` remains a scripting/seed option, not the primary human flow. Non-TTY follow streams matching lines until the recorded run exits; TTY follow refreshes while running and marks the view exited when the run ends. The v1 keys are printable type-to-filter, Backspace, Space to toggle the highlighted line as a similarity example, arrows/`j`/`k`, PgUp/PgDn, and `q`.
+Current branch v1 evidence: `mund view <target>` keeps plain output for scripts and opens an interactive TTY viewer by default when stdin/stdout are TTYs. `--plain` forces script-style output and `--interactive` fails closed when no TTY is available. The intended live-log UX is dynamic: `mund logs <target> --follow` / `mund view <target> --follow` opens the live viewer, printable keys update the top filter field per keystroke, Backspace relaxes the filter, and matching live output appears without restarting the command. `--filter TEXT` remains a scripting/seed option, not the primary human flow. Non-TTY follow streams matching lines until the recorded run exits; TTY follow refreshes while running and marks the view exited when the run ends. The v1 keys are printable type-to-filter, Backspace, Space to toggle the highlighted line as a similarity example, arrows/`j`/`k`, PgUp/PgDn, and `q`.
 
 ### 6.1 Search vs filter
 
@@ -375,7 +376,7 @@ Examples:
 
 The UI should feel as if the file was instantly filtered, even though only enough data was processed to satisfy the visible view.
 
-0.4.0 v1 status: the filter engine records byte offsets for visible matches plus previous/next scan anchors. PgDn can resume from the already-discovered newer boundary, and PgUp uses bounded backward scanning from the oldest visible match to fill older windows without reading the whole file. The TTY viewer owns a visible-row cache, so simple selection movement re-renders cached rows instead of invoking another filter scan.
+Current branch v1 evidence: the filter engine records byte offsets for visible matches plus previous/next scan anchors. PgDn can resume from the already-discovered newer boundary, and PgUp uses bounded backward scanning from the oldest visible match to fill older windows without reading the whole file. The TTY viewer owns a visible-row cache, so simple selection movement re-renders cached rows instead of invoking another filter scan.
 
 ### 8.2 Two-buffer model
 
@@ -400,7 +401,7 @@ Maintain before/visible/after match caches:
 [filtered before cache] [visible page] [filtered after cache]
 ```
 
-A single deque with a visible slice is also acceptable, but the behavior should preserve fast PgUp/PgDn movement. The 0.4.0 TTY implementation uses a smaller first step: one cached visible page plus byte anchors/history for directional rescans. That gives the intended responsiveness without yet claiming a full persistent before/after deque.
+A single deque with a visible slice is also acceptable, but the behavior should preserve fast PgUp/PgDn movement. The current branch TTY implementation uses a smaller first step: one cached visible page plus byte anchors/history for directional rescans. That gives the intended responsiveness without claiming a full persistent before/after deque as current behavior.
 
 ### 8.3 Text is byte-random-access, not line-random-access
 
@@ -454,7 +455,7 @@ while filtered_before has fewer than viewport_rows + overscan_rows:
 
 Carry partial lines across block boundaries.
 
-0.4.0 implementation note: the filter engine now supports a bounded backward
+Current branch implementation note: the filter engine supports a bounded backward
 window from a byte anchor. At the live edge, active TTY filters scan backward
 from EOF to fill the visible screen with the most recent matching rows instead
 of restarting at line 1. If the match set is outside the current scan budget,
@@ -512,12 +513,12 @@ For growing logs:
 - active live filters are anchored at the tail by default; PgUp moves to older matching windows, and PgDn walks back toward the live edge;
 - when the user is browsing older matches, new log data does not yank the viewport to EOF; follow ticks filter bounded appended slices and keep a separate scan-progress cursor, so sparse matches in large bursts are deferred across ticks rather than skipped; the header reports `newer below` only after a new matching row is found;
 - `--debug-stats` includes `scan_gen`, which increments only when the filter engine refills the visible cache;
-- keep a raw tail ring of recent bytes/lines;
-- append new lines as they arrive;
-- fingerprint/score new lines against active filters;
-- append matching lines to the filtered after-cache;
-- auto-scroll only if the user is already at the bottom;
-- otherwise show a “new matching lines below” indicator.
+- future/full model: keep a raw tail ring of recent bytes/lines;
+- future/full model: append new lines as they arrive;
+- future/full model: fingerprint/score new lines against active filters;
+- future/full model: append matching lines to the filtered after-cache;
+- current and future behavior: auto-scroll only if the user is already at the bottom;
+- current and future behavior: otherwise show a “new matching lines below” indicator after a matching row is found.
 
 ## 9. Output contract
 
@@ -537,12 +538,22 @@ id="$(mund run -- sleep 30)"
 
 The command should print only the run ID to stdout on success.
 
-## 10. Open decisions
+## 10. Alignment status and decisions
 
-1. Should the binary be renamed to `mund` while the project remains Sigmund?
-2. Should `mund profile <name> restart` be allowed as sugar for resolving/stopping singular or all current profile runs plus starting a new one, or should restart require explicit policy?
-3. Should `profile <name> stop` be omitted entirely to preserve the definition/run distinction?
-4. What is the minimum viable similarity scorer for the first implementation?
+Current branch status is tracked in [0.4.0 branch alignment and follow-up matrix](0.4.0-alignment.md). That matrix is part of this specification: if the matrix says a feature is a follow-up, this document describes the intended product target rather than current release readiness.
+
+Resolved decisions for the current 0.4.0 direction:
+
+1. Use **Sigmund** for the project and **`mund`** for the intended 0.4.0 operator command.
+2. Keep `run` launch-only. Do not make `mund run <target> stop/logs/open` a management namespace.
+3. Omit `profile <name> stop` as a primary command so the definition/run distinction stays clear; use `mund stop <target>` with singular profile resolution rules.
+4. Treat current Space-selected, local deterministic similarity as the minimum implemented v1 slice until the fuller `S/X/A/D/U` interaction model is implemented.
+
+Still-open release decisions:
+
+1. Whether `mund profile <name> restart` is safe sugar or must require explicit policy such as singular-only vs `--all`.
+2. Whether `/active` and `/history` are primary shell namespaces or aliases over `/running` and state-specific history views.
+3. Whether full before/visible/after deques, raw tail ring, sparse indexes, and richer similarity controls are required before the 0.4.0 release or can remain post-0.4 follow-up with the current dynamic filter as the core feature.
 
 ## 11. 0.4.0 engineering hardening backlog
 

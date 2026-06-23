@@ -1,5 +1,6 @@
 # Sigmund Specification
 
+> Status: This page describes the current 0.3.x/legacy implementation contract. For the 0.4.0 `mund` redesign target and current branch gap matrix, see [Mund 0.4 UX and CLI specification](MUND_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
 [Docs index](index.md) | [Quickstart](quickstart.md) | [Documentation plan](PLAN.md) | [Repository README](../README.md)
 
 This document describes the current Sigmund implementation contract: user-local state, root-managed state, public redacted discovery, alias/profile resolution, sudo-aware target resolution, argv-preserving fork/wait self-elevation, and process-safety behavior.

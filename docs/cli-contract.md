@@ -1,5 +1,6 @@
 # CLI contract
 
+> Status: This page documents the current 0.3.x/legacy parser and scripting contract. The 0.4.0 `mund` command language is tracked separately in [Mund 0.4 UX and CLI specification](MUND_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
 [Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Console](console.md) | [Next: Using Sigmund in CI](ci.md) | Related: [Launcher](launcher.md), [Target resolution](target-resolution.md)
 
 Outer loop bridge: deep dive for quickstart Step 2, Manage It Later; Step 3, Understand Automatic Choices; and Step 7, Use It In CI.

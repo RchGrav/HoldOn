@@ -11,15 +11,15 @@ The implementation-oriented version of these decisions now lives in [Mund 0.4 UX
 
 Sigmund already has a strong product core: `sigmund <cmd>` is simpler than `nohup`, safer than PID files, and far lighter than `systemd`. The current CLI is scriptable and technically coherent, but it exposes internal concepts too early: run IDs, aliases, profiles, public/root stores, target scopes, grants, console mode, pruning, and validation semantics all appear as separate pieces the user must assemble.
 
-The highest-leverage UX move is to add an interactive command mode that turns Sigmund from a collection of verbs into a guided workspace for long-running jobs. This should not replace the existing CLI contract; it should sit above it as a discoverable, forgiving, human-first layer while preserving the current stdout/stderr behavior for scripts.
+The highest-leverage UX move is to turn Sigmund from a collection of legacy verbs into one guided command language for long-running jobs. For 0.4.0, the new `mund` UX is intended to replace the legacy primary surface, while preserving the good stdout/stderr, exit-code, and scriptability contracts for automation.
 
 Recommended direction:
 
 1. Move to one unified stacked command grammar shared by normal CLI, captive shell, and Cisco-style config files.
 2. Make `profile`, `run`, `show`, `start`, `stop`, `logs`, `grant`, `clean`, `doctor`, `import`, and `export` the primary language everywhere.
-3. Let users stack captive-shell commands directly from the normal prompt, e.g. `sigmund profile web set env PORT=3000`, `sigmund show profile web`, `sigmund run web logs --follow`.
+3. Let users stack captive-shell commands directly from the normal prompt, e.g. `mund profile web set env PORT=3000`, `mund show profile web`, `mund logs web --follow`.
 4. Make this a deliberate breaking CLI redesign for 0.4.0: replace current legacy commands (`alias`, `aliases`, `list`, `tail`, `dump`, `console`, `prune`, action-first forms) with the unified stacked grammar instead of carrying them as primary UX.
-5. Add a profile editor: `sigmund profile web edit` and an interactive `profile web` submode for advanced recipe, cwd, env, console, restart/readiness metadata, and access policy.
+5. Add a profile editor: `mund profile web edit` and an interactive `profile web` submode for advanced recipe, cwd, env, console, restart/readiness metadata, and access policy.
 6. Add profile config import/export so every captive-shell edit can be represented as a Cisco-style command transcript, while JSON remains canonical on disk.
 7. Add safer lifecycle affordances: adopt current run into profile, “start or attach/tail”, “doctor/status”, suggested next commands, and cleanup prompts.
 
@@ -85,15 +85,15 @@ For normal users, stop-then-prune is chore-like. The safe cleanup path should be
 
 Suggested fixes:
 
-- Add `sigmund rm <target>`: stop if running, then prune after confirmation / `--force`.
-- Add `sigmund stop --prune <target>`.
+- Add `mund prune <target>`: stop if running, then prune after confirmation / `--force`.
+- Add `mund stop <target> --prune`.
 - In interactive mode, offer `stop`, `stop + prune`, and `prune exited`.
 
 ### 6. Advanced root/system profile features need a dedicated editor
 
 `grant` and root-managed profiles are powerful but currently command-shaped. An advanced “profile editing mode” would let Sigmund grow without turning every setting into a long flag list.
 
-Suggested fix: add `sigmund profile edit <name>` that opens `$EDITOR` or an interactive form with validation.
+Suggested fix: add `mund profile <name> edit` that opens `$EDITOR` or an interactive form with validation.
 
 
 
@@ -142,26 +142,27 @@ Examples:
 # one-shot CLI
 sigmund show runs
 sigmund show profile web
-sigmund profile web set command -- /usr/bin/python3 -m http.server 9000
-sigmund profile web set cwd /srv/web
-sigmund profile web set env PYTHONUNBUFFERED=1
-sigmund profile web start
-sigmund logs web --follow
-sigmund stop web
-sigmund clean exited --dry-run
+mund profile web set command -- /usr/bin/python3 -m http.server 9000
+mund profile web set cwd /srv/web
+mund profile web set env PYTHONUNBUFFERED=1
+mund profile web start
+mund logs web --follow
+mund stop web
+mund clean exited --dry-run
 ```
 
 The same operations in captive mode:
 
 ```text
-sigmund> show runs
-sigmund> profile web
-sigmund(profile:web)> set command -- /usr/bin/python3 -m http.server 9000
-sigmund(profile:web)> set cwd /srv/web
-sigmund(profile:web)> set env PYTHONUNBUFFERED=1
-sigmund(profile:web)> start
-sigmund(profile:web)> logs --follow
-sigmund(profile:web)> stop
+mund> show runs
+mund> profile web
+mund(profile:web)> set command -- /usr/bin/python3 -m http.server 9000
+mund(profile:web)> set cwd /srv/web
+mund(profile:web)> set env PYTHONUNBUFFERED=1
+mund(profile:web)> start
+mund(profile:web)> logs --follow
+mund(profile:web)> exit
+mund> stop web
 ```
 
 The same operations as an importable config transcript:
@@ -179,17 +180,17 @@ exit
 Recommended grammar shape:
 
 ```text
-sigmund show runs|profiles|profile <name>|run <target>|grants|config
-sigmund profile <name> create|edit|delete|start|restart|status|export
-sigmund profile <name> set command|cwd|env|console|multi|readiness|cleanup ...
-sigmund profile <name> unset env|readiness|description|tag ...
-sigmund status|inspect|logs|open|stop|kill|prune <id-or-singular-profile>
-sigmund adopt <run-id> <profile>
-sigmund grant <profile> <principal> <actions>
-sigmund revoke <profile> <principal> <actions>
-sigmund clean exited|stale|failed [--dry-run|--yes]
-sigmund import <file> [--dry-run|--yes]
-sigmund export profile <name> [--format cli|json]
+mund show runs|profiles|profile <name>|run <id-or-singular-profile>|grants|config
+mund profile <name> create|edit|delete|start|restart|status|export
+mund profile <name> set command|cwd|env|console|multi|readiness|cleanup ...
+mund profile <name> unset env|readiness|description|tag ...
+mund status|inspect|logs|open|stop|kill|prune <id-or-singular-profile>
+mund adopt <run-id> <profile>
+mund grant <profile> <principal> <actions>
+mund revoke <profile> <principal> <actions>
+mund clean exited|stale|failed [--dry-run|--yes]
+mund import <file> [--dry-run|--yes]
+mund export profile <name> [--format cli|json]
 ```
 
 This design lets users learn one mental model:
@@ -203,17 +204,17 @@ Because there are no existing users to protect, 0.4.0 should cut over cleanly in
 Breaking 0.4.0 replacements:
 
 ```text
-sigmund alias <id> <name>       => sigmund run <id> adopt <name> / sigmund profile <name> create-from-run <id>
-sigmund aliases                 => sigmund show profiles
-sigmund list                    => sigmund show runs
-sigmund tail <target>           => sigmund run <target> logs --follow
-sigmund dump <target>           => sigmund run <target> logs --dump
-sigmund console <target>        => sigmund run <target> open
-sigmund prune <target>          => sigmund run <target> prune
-sigmund start <alias>           => sigmund profile <name> start
-sigmund stop <target>           => sigmund run <target> stop
-sigmund kill <target>           => sigmund run <target> kill
-sigmund grant/revoke ...        => sigmund profile <name> grant/revoke ...
+sigmund alias <id> <name>       => mund adopt <run-id> <profile> / mund profile <name> create-from-run <id>
+sigmund aliases                 => mund show profiles
+sigmund list                    => mund show runs
+sigmund tail <target>           => mund logs <target> --follow
+sigmund dump <target>           => mund logs <target> --plain
+sigmund console <target>        => mund open <target>
+sigmund prune <target>          => mund prune <target>
+sigmund start <alias>           => mund profile <name> start
+sigmund stop <target>           => mund stop <target>
+sigmund kill <target>           => mund kill <target>
+sigmund grant/revoke ...        => mund profile <name> grant/revoke ...
 ```
 
 The cleaner product is one language, three surfaces. 0.4.0 should be the cutover point.
@@ -236,8 +237,8 @@ The 0.4.0 user promise should be:
 
 ```text
 Use the same words everywhere:
-  sigmund profile web start
-  sigmund> profile web; start
+  mund profile web start
+  mund> profile web; start
   profile web; start; exit   # config transcript
 ```
 
@@ -255,39 +256,39 @@ Then layer the UX:
 | Layer | Target user | Interface | Promise |
 | --- | --- | --- | --- |
 | Fast CLI | scripts and power users | `sigmund <cmd>`, `sigmund stop <id>` | stable, parseable, minimal |
-| Friendly CLI | everyday users | `sigmund run`, `sigmund ps`, `sigmund rm`, `sigmund logs` | memorable aliases, good defaults |
-| Interactive shell | humans operating jobs | `sigmund shell` / bare `sigmund` | discoverable dashboard and guided actions |
-| Profile editor | advanced setup | `sigmund profile edit web` | validated durable configuration |
+| Friendly CLI | everyday users | `mund run --`, `mund show runs`, `mund prune`, `mund logs` | memorable verbs, good defaults |
+| Interactive shell | humans operating jobs | `mund shell` / bare `mund` | discoverable dashboard and guided actions |
+| Profile editor | advanced setup | `mund profile web edit` | validated durable configuration |
 
 ## Recommended command additions
 
-### Friendly aliases for existing verbs
+### Friendly replacements for legacy verbs
 
-Keep current verbs, add familiar synonyms:
+Replace legacy primary verbs with memorable `mund` equivalents:
 
 ```text
-sigmund ps                    -> list
-sigmund logs <target>          -> tail or dump prompt/flag
-sigmund log <target>           -> dump
-sigmund rm <target>            -> safe stop/prune workflow
-sigmund restart <profile>      -> stop profile then start profile
-sigmund status [target]        -> richer inspection
-sigmund inspect <target>       -> dump record/profile metadata
-sigmund doctor                 -> explain stores, permissions, stale records
+mund show runs              -> list current runs
+mund logs <target>          -> follow/plain log viewer
+mund logs <target> --plain  -> plain dump-style output
+mund prune <target>         -> safe prune workflow
+mund restart <profile>      -> explicit restart sugar if release policy allows it
+mund status [target]        -> richer inspection
+mund inspect <target>       -> dump record/profile metadata
+mund doctor                 -> explain stores, permissions, stale records
 ```
 
 ### Profile commands
 
 ```text
-sigmund profile list
-sigmund profile show <name>
-sigmund profile create <name> -- <cmd> [args...]
-sigmund profile from-run <id> <name> [--adopt]
-sigmund profile edit <name>
-sigmund profile rename <old> <new>
-sigmund profile delete <name>
-sigmund profile grant <name> <user> [actions]
-sigmund profile revoke <name> <user> [actions]
+mund profile list
+mund profile <name> show
+mund profile <name> create -- <cmd> [args...]
+mund profile <name> create-from-run <id> [--adopt]
+mund profile <name> edit
+mund profile <old> rename <new>
+mund profile <name> delete
+mund profile <name> grant <user> [actions]
+mund profile <name> revoke <user> [actions]
 ```
 
 Compatibility:
@@ -295,17 +296,17 @@ Compatibility:
 ```text
 sigmund alias <id> <name>      -> profile from-run <id> <name> --adopt? or legacy recipe-only mode
 sigmund aliases                -> profile list
-sigmund start <name>           -> profile start <name>
+mund profile <name> start   -> start reusable profile
 ```
 
 ### Hybrid “do what I mean” commands
 
 ```text
-sigmund up web                 # start if stopped; if running, print status + tail/console hint
-sigmund down web               # stop all running runs for profile web
-sigmund restart web
-sigmund open web               # attach console if available, otherwise tail
-sigmund clean                  # prune exited/stale with preview
+mund up web                 # start if stopped; if running, print status + logs/open hint
+mund down web               # stop all running runs for profile web
+mund restart web
+mund open web               # attach console if available, otherwise logs
+mund clean                  # prune exited/stale with preview
 ```
 
 These make Sigmund feel like a daily tool, not just a process record API.
@@ -466,10 +467,10 @@ The important UX property: namespaces can connect backwards for discoverability,
 ### Entry points
 
 ```sh
-sigmund              # if no args and TTY: open dashboard, not usage error
-sigmund shell
-sigmund menu
-sigmund profile edit web
+mund                 # if no args and TTY: open dashboard, not usage error
+mund shell
+mund menu
+mund profile web edit
 ```
 
 For non-TTY/no args, keep usage and exit nonzero for compatibility.
@@ -804,13 +805,12 @@ mund logs web --similar 'missing config'
 
 ## Safety and automation compatibility
 
-Protect the current CLI contract:
+Protect the automation contract:
 
-- Existing commands and stdout/stderr behavior should remain stable.
+- Stdout/stderr separation, exit codes, `--quiet`, and `--json` should remain stable for scripts even while 0.4.0 replaces legacy primary verbs.
 - Add `--json` for machine-readable rich output rather than changing default parseable assumptions.
 - Interactive mode should only activate on TTY with no args or explicit `shell/menu`.
 - Destructive interactive actions should show a preview and require confirmation unless the action is already non-destructive or scoped.
-- Keep `--quiet`, exit codes, and current target resolution semantics for scripts.
 
 ## Phased roadmap
 
@@ -825,8 +825,8 @@ Protect the current CLI contract:
 
 ### Phase 2: Hybrid interactive shell
 
-- Add `sigmund shell` line-oriented REPL.
-- Support `help`, `list`, `select`, `tail`, `dump`, `open`, `stop`, `prune`, `start`, `profile`.
+- Add `mund shell` line-oriented REPL.
+- Support `help`, `show`, `select`, `logs`, `open`, `stop`, `prune`, `start`, and `profile`.
 - Implement command completion/history if practical.
 - Add contextual help and suggested next actions.
 
@@ -848,18 +848,12 @@ Protect the current CLI contract:
 
 The best drastic change for 0.4.0 is not to preserve old commands and add a menu beside them. It is to replace the legacy surface with a **one-language, three-surface product**:
 
-- **One-shot CLI**: `sigmund profile web start`, `sigmund logs web --follow`, `sigmund stop web`.
+- **One-shot CLI**: `mund profile web start`, `mund logs web --follow`, `mund stop web`.
 - **Captive shell**: `profile web`, then `start`, `logs`, `stop`, `set env ...`.
 - **Config transcript**: the same captive-shell commands saved in a file and imported/applied.
 
 This gives beginners an embarrassingly easy path while giving power users a composable, scriptable grammar. JSON remains the canonical on-disk store; the command language becomes the human UX contract.
 
-## Open product decisions
+## Product decisions status
 
-1. Should `alias <id> <name>` adopt/label the current run by default?
-2. Should “profile” replace “alias” in docs/help as the primary noun?
-3. Should bare `sigmund` open interactive mode on TTY, or should that require `sigmund shell` until the behavior is proven?
-4. Should profiles support cwd/env/readiness in v1 of editing mode, or should v1 only expose command/args/console/multi/grants?
-5. Should the interactive UI be line-oriented first or jump directly to a TUI?
-
-My recommendation: line-oriented shell first, profile noun now, adopt-on-alias by default, and defer full TUI until the command model is validated.
+The implementation-oriented decisions now live in [Mund 0.4 UX and CLI specification](MUND_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md). Current direction: use `mund` for the operator command, make `profile` the primary noun, keep `run` launch-only, omit `profile <name> stop` as a primary command, and start with a line-oriented captive shell before a richer TUI. Remaining release decisions include restart policy, `/active` and `/history` naming, and how much of the full similarity/deque architecture must ship before 0.4.0.

@@ -1,17 +1,23 @@
 # Review status
 
 Date: 2026-06-23
-Branch: `mund-0.4.0/docs-review`
-Scope: release-readiness notes for the 0.4.0 documentation and hardening plan.
+Branch: `mund-0.4.0-redesign`
+Scope: release-readiness notes for the 0.4.0 documentation, branch alignment, and hardening plan.
 
 ## Current status
 
-This file replaces an older review report whose test counts and file references described a previous implementation review. Treat this document as a status tracker, not proof that the current branch is release-ready.
+This file replaces an older review report whose test counts and file references described a previous implementation review. Treat this document as a status tracker, not proof that the current branch is release-ready. The current branch version file remains `0.3.9`; 0.4.0 wording is release-plan status unless backed by fresh verification.
 
 0.4.0 is release-ready only after both tracks are complete:
 
 1. the full `mund` CLI/product direction in `docs/MUND_0_4_UX_SPEC.md` is implemented and documented; and
 2. the hardening backlog in that same spec is implemented, tested, and reviewed.
+
+## Latest alignment pass
+
+Date: 2026-06-23
+
+The Autopilot spec-alignment pass added [0.4.0 branch alignment](docs/0.4.0-alignment.md) as the tracked matrix for implemented behavior, accepted v1 deviations, and follow-up gaps. It also labels legacy/current docs so they do not conflict with the 0.4.0 `mund` direction. This pass was docs-only and does not certify runtime release readiness.
 
 ## Verification policy
 

@@ -1,10 +1,12 @@
 # Sigmund documentation index
 
-[Repository README](../README.md) | [Outer onboarding loop](quickstart.md) | [Technical reference loop](#technical-reference-loop) | [Specification](SPEC.md)
+[Repository README](../README.md) | [Outer onboarding loop](quickstart.md) | [Technical reference loop](#technical-reference-loop) | [Current spec](SPEC.md) | [0.4.0 UX spec](MUND_0_4_UX_SPEC.md) | [0.4.0 alignment](0.4.0-alignment.md)
 
 This is the top-level guide to how Sigmund works. Start with the [quickstart](quickstart.md): it walks from the first command to deterministic targeting, aliases, and scoped root delegation with simple diagrams, and links into the deeper subsystem pages as each concept appears.
 
 Sigmund is a daemonless process launcher and recorder. It starts a command in a new session, writes a durable run record and log path, and later uses that record to inspect, tail, stop, kill, attach, or prune the tracked process group.
+
+> 0.4.0 redesign note: most reference pages describe the current 0.3.x/legacy command contract. The intended `mund` redesign and current branch gap matrix live in [Mund 0.4 UX and CLI specification](MUND_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
 
 The philosophy is simple:
 

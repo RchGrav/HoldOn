@@ -20,7 +20,7 @@ sigmund prune "$run_id"
 
 ## Install
 
-The one-line installer detects Linux or macOS, chooses the matching release artifact, verifies it against the release `SHA256SUMS`, validates the archive layout, and installs both `sigmund` and the 0.4.0 `mund` operator CLI. It refuses to install when checksums are missing or malformed.
+The one-line installer detects Linux or macOS, chooses the matching release artifact, verifies it against the release `SHA256SUMS`, validates the archive layout, and installs the CLIs included in that artifact. Current branch artifacts include both `sigmund` and the `mund` operator CLI; 0.4.0 has not been released while `VERSION` remains `0.3.9`. The installer refuses to install when checksums are missing or malformed.
 
 ```sh
 curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh | sh

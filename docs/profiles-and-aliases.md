@@ -1,5 +1,6 @@
 # Profiles and aliases
 
+> Status: This page documents the current alias-backed profile behavior. The 0.4.0 profile editor/transcript target and the gaps from the current branch are tracked in [Mund 0.4 UX and CLI specification](MUND_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
 [Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Target resolution](target-resolution.md) | [Next: Security](security.md) | Related: [Store](store.md), [Launcher](launcher.md)
 
 Outer loop bridge: deep dive for quickstart Step 5, Create an Alias.
