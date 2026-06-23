@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.3.9 - Layered internal architecture and a hardened, reproducible build
+
+No runtime behavior change from 0.3.8: the CLI, on-disk formats, the profile-hash
+capability key, sudoers semantics, and exit codes are identical (locked by a
+golden profile-hash vector and the regression suite). This release restructures
+the internals and makes the build and tests strict and reproducible everywhere.
+
+### Changed
+
+- The single ~8k-line translation unit is now a layered multi-translation-unit
+  architecture (core → platform → store → console/access → runtime → cli) with
+  header-enforced layer boundaries and `sigmund_`-prefixed cross-module symbols.
+  All objects still link into one `sigmund` binary; no archives, no new ABI.
+
+### Added
+
+- One command, same rigor everywhere: `make ci` runs strict static + dynamic
+  builds, the regression suite, the profile-hash golden vector, ASan/UBSan,
+  cppcheck, and a layer-dependency lint — with a real SKIP state so nothing
+  passes vacuously.
+- Reproducible Linux parity from a Mac via `scripts/linux.sh` (a committed CI
+  image), a privilege-delegation lane (`scripts/linux.sh root`) that runs the
+  suite as a non-root user which elevates per-test, and a local release-artifact
+  build (`scripts/linux.sh release` + `scripts/release_build.sh`).
+- Regression tests for security invariants that previously had none: system-store
+  modes/ownership, sudo provenance, sudoers generation + visudo validation,
+  no-symlink reads, console-socket permissions, and the signal exit-code contract.
+
+### Fixed
+
+- The privilege-delegation test lane runs as a non-root user that elevates per
+  test — matching how sigmund is actually used and what its `SUDO_*` provenance
+  checks require — instead of running the whole suite as root.
+
+### Release notes
+
+Internal-quality release: rebuilt multi-arch binaries with no runtime behavior
+change since 0.3.8.
+
 ## 0.3.8 - Console sockets bound relative to the private store
 
 This point release rebuilds the published binaries; the only runtime change
