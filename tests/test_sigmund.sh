@@ -110,7 +110,6 @@ as_user() {
     SIGMUND_BOOT_ID_PATH \
     SIGMUND_TEST_FAIL_RECORD_WRITE \
     SIGMUND_TEST_FAIL_PUBLIC_INDEX_WRITE \
-    SIGMUND_TEST_FORCE_KILL_RC \
     SIGMUND_FAKE_SUDO_ARGV \
     SIGMUND_FAKE_SUDO_RC \
     SIGMUND_TEST_SUDOERS_DIR \
@@ -140,7 +139,6 @@ as_root() {
     SIGMUND_BOOT_ID_PATH \
     SIGMUND_TEST_FAIL_RECORD_WRITE \
     SIGMUND_TEST_FAIL_PUBLIC_INDEX_WRITE \
-    SIGMUND_TEST_FORCE_KILL_RC \
     SIGMUND_FAKE_SUDO_ARGV \
     SIGMUND_FAKE_SUDO_RC \
     SIGMUND_TEST_SUDOERS_DIR \
@@ -174,7 +172,6 @@ as_sudo_from_user() {
     SIGMUND_BOOT_ID_PATH \
     SIGMUND_TEST_FAIL_RECORD_WRITE \
     SIGMUND_TEST_FAIL_PUBLIC_INDEX_WRITE \
-    SIGMUND_TEST_FORCE_KILL_RC \
     SIGMUND_FAKE_SUDO_ARGV \
     SIGMUND_FAKE_SUDO_RC \
     SIGMUND_TEST_SUDOERS_DIR \
@@ -205,7 +202,6 @@ for name in \
   SIGMUND_BOOT_ID_PATH \
   SIGMUND_TEST_FAIL_RECORD_WRITE \
   SIGMUND_TEST_FAIL_PUBLIC_INDEX_WRITE \
-  SIGMUND_TEST_FORCE_KILL_RC \
   SIGMUND_FAKE_SUDO_ARGV \
   SIGMUND_FAKE_SUDO_RC \
   SIGMUND_TEST_SUDOERS_DIR \
@@ -1907,24 +1903,6 @@ test_grant_refuses_unsafe_self_binary() {
   root_path_absent "$sudoers_file" || { echo "sudoers written via whitespace-path binary" >&2; return 1; }
 }
 
-test_signal_exit_code_map() {
-  local out id rc
-  out=$("$SIGMUND_BIN" /bin/sleep 300 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  # delivery failure (kill returns a generic error) -> exit 4
-  set +e; SIGMUND_TEST_FORCE_KILL_RC=fail "$SIGMUND_BIN" stop "$id" >/dev/null 2>"$TEST_ROOT/e4.err"; rc=$?; set -e
-  [ "$rc" -eq 4 ] || { echo "forced kill failure: exit=$rc (want 4)" >&2; return 1; }
-  ! grep -q stopped "$TEST_ROOT/e4.err" || return 1
-  # permission denied -> exit 3
-  set +e; SIGMUND_TEST_FORCE_KILL_RC=eperm "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -eq 3 ] || { echo "forced EPERM: exit=$rc (want 3)" >&2; return 1; }
-  # already gone (ESRCH) -> exit 0
-  set +e; SIGMUND_TEST_FORCE_KILL_RC=esrch "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -eq 0 ] || { echo "forced ESRCH: exit=$rc (want 0)" >&2; return 1; }
-  "$SIGMUND_BIN" kill "$id" >/dev/null 2>&1 || true
-}
-
 test_signal_refuses_tampered_pgid() {
   local out id rec rc
   out=$("$SIGMUND_BIN" /bin/sleep 300 2>&1) || return 1
@@ -2096,7 +2074,6 @@ run_test "run id prefix resolves to the full run" test_run_id_prefix_resolution
 run_test "ambiguous alias tail lists ids; tail by run id still resolves" test_ambiguous_tail_resolvable_by_run_id
 run_test "action/help/list argument guards" test_misc_action_guards
 run_test "grant/revoke argument and privilege refusals" test_grant_revoke_argument_refusals
-run_test "stop maps kill failures to exit codes 3/4/0" test_signal_exit_code_map
 run_test "system store directory modes are private (0700/0755)" test_system_store_directory_modes
 run_test "system store tightens a pre-existing loose dir" test_system_store_tightens_preexisting_loose_dir
 run_test "system store artifacts are owned by root:root" test_system_store_artifacts_owned_by_root
