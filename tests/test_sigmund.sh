@@ -1990,19 +1990,29 @@ test_run_id_prefix_resolution() {
   "$SIGMUND_BIN" stop "$id" >/dev/null 2>&1 || true
 }
 
-test_ambiguous_tail_exits_6_without_all_hint() {
-  local id1 id2
-  id1=$("$SIGMUND_BIN" sleep 60 2>&1 | extract_id) || return 1
+test_ambiguous_tail_resolvable_by_run_id() {
+  local id1 id2 rc tpid
+  # An alias whose runs emit output, so tailing one by id has something to follow.
+  id1=$("$SIGMUND_BIN" sh -c 'while :; do echo tick; sleep 0.2; done' 2>&1 | extract_id) || return 1
   "$SIGMUND_BIN" alias "$id1" web-amb >/dev/null || return 1
   "$SIGMUND_BIN" stop "$id1" >/dev/null; "$SIGMUND_BIN" prune "$id1" >/dev/null
   id1=$("$SIGMUND_BIN" start web-amb 2>&1 | extract_id); [ -n "$id1" ] || return 1
   id2=$("$SIGMUND_BIN" start web-amb --multi 2>&1 | extract_id); [ -n "$id2" ] || return 1
-  local rc
+  # tail by ALIAS with several running is ambiguous: exit 6, the candidate run ids
+  # are listed, and (since tail is not an --all command) --all must NOT be suggested.
   set +e; "$SIGMUND_BIN" tail web-amb >/dev/null 2>"$TEST_ROOT/amb.err"; rc=$?; set -e
   [ "$rc" -eq 6 ] || { echo "ambiguous tail: rc=$rc (want 6)" >&2; return 1; }
   grep -q 'matches more than one' "$TEST_ROOT/amb.err" || { cat "$TEST_ROOT/amb.err" >&2; return 1; }
-  # tail is not an --all command; the --all disambiguation hint must NOT appear
   ! grep -q -- '--all' "$TEST_ROOT/amb.err" || { echo "tail ambiguity wrongly suggested --all" >&2; return 1; }
+  grep -q "$id1" "$TEST_ROOT/amb.err" && grep -q "$id2" "$TEST_ROOT/amb.err" || { echo "ambiguity did not list the candidate run ids" >&2; return 1; }
+  # but you can always tail one specific instance BY RUN ID -- that is never ambiguous.
+  "$SIGMUND_BIN" tail "$id1" >"$TEST_ROOT/byid.out" 2>"$TEST_ROOT/byid.err" &
+  tpid=$!
+  sleep 0.6
+  kill "$tpid" 2>/dev/null
+  wait "$tpid" 2>/dev/null || true
+  ! grep -q 'matches more than one' "$TEST_ROOT/byid.err" || { echo "tail by run id was wrongly treated as ambiguous" >&2; return 1; }
+  grep -q tick "$TEST_ROOT/byid.out" || { echo "tail by run id followed nothing" >&2; cat "$TEST_ROOT/byid.err" >&2; return 1; }
   "$SIGMUND_BIN" stop web-amb --all >/dev/null 2>&1 || true
 }
 
@@ -2083,7 +2093,7 @@ run_test "signal-killed elevation child maps to 128+sig" test_elevated_child_sig
 run_test "public-index write failure rolls back the start" test_public_index_write_rollback
 run_test "--quiet prints bare id and silences stderr" test_quiet_suppresses_banner_keeps_id
 run_test "run id prefix resolves to the full run" test_run_id_prefix_resolution
-run_test "ambiguous tail exits 6 without an --all hint" test_ambiguous_tail_exits_6_without_all_hint
+run_test "ambiguous alias tail lists ids; tail by run id still resolves" test_ambiguous_tail_resolvable_by_run_id
 run_test "action/help/list argument guards" test_misc_action_guards
 run_test "grant/revoke argument and privilege refusals" test_grant_revoke_argument_refusals
 run_test "stop maps kill failures to exit codes 3/4/0" test_signal_exit_code_map
