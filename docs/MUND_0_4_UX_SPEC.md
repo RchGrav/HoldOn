@@ -375,7 +375,7 @@ Examples:
 
 The UI should feel as if the file was instantly filtered, even though only enough data was processed to satisfy the visible view.
 
-0.4.0 v1 status: the filter engine records byte offsets for visible matches plus the next scan offset, so PgDn can resume from the already-discovered boundary without reading the whole file. Reverse paging currently uses a bounded history of previous page offsets; full backward scanning/lookbehind remains a follow-up refinement.
+0.4.0 v1 status: the filter engine records byte offsets for visible matches plus previous/next scan anchors. PgDn can resume from the already-discovered newer boundary, and PgUp uses bounded backward scanning from the oldest visible match to fill older windows without reading the whole file. The TTY viewer owns a visible-row cache, so simple selection movement re-renders cached rows instead of invoking another filter scan.
 
 ### 8.2 Two-buffer model
 
@@ -510,6 +510,8 @@ For growing logs:
 
 - v1 implementation: `mund logs <target> --follow` routes through `mund view --follow` for a dynamic TTY filter field. `--filter TEXT` can seed/script the same engine, but the human design is type-to-filter after the viewer is open. Plain `mund logs <target>` remains tail-compatible.
 - active live filters are anchored at the tail by default; PgUp moves to older matching windows, and PgDn walks back toward the live edge;
+- when the user is browsing older matches, new log data does not yank the viewport to EOF; the header reports `newer below`;
+- `--debug-stats` includes `scan_gen`, which increments only when the filter engine refills the visible cache;
 - keep a raw tail ring of recent bytes/lines;
 - append new lines as they arrive;
 - fingerprint/score new lines against active filters;
