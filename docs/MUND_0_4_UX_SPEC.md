@@ -1,0 +1,735 @@
+# Mund 0.4 UX and CLI specification draft
+
+Date: 2026-06-23
+Status: draft proposal for the 0.4.0 breaking CLI redesign
+
+## 1. Product stance
+
+Sigmund remains the project identity, but the proposed user-facing command is `mund`.
+
+`mund` is a guardian shell for background jobs: run it, leave it, find it, watch it, stop it safely.
+
+Version 0.4.0 is intentionally allowed to break the current CLI because the tool has no established user base. The goal is to replace the legacy action-first/alias-based surface with one coherent command language shared by:
+
+1. one-shot CLI commands;
+2. captive shell commands;
+3. importable/exportable CLI transcript config files.
+
+JSON remains the canonical on-disk profile storage format. CLI transcript config is a human editing/import/export format that compiles to the JSON profile model.
+
+## 2. Core model
+
+### 2.1 Profile
+
+A profile is a reusable launch definition for a tool. It is not itself a running process.
+
+Profiles may contain:
+
+- command/argv;
+- working directory;
+- environment variables;
+- console preference;
+- multi-run policy;
+- readiness/health metadata;
+- cleanup settings;
+- grants/access policy;
+- description/tags.
+
+Profile operations are definition-oriented:
+
+```sh
+mund profile web show
+mund profile web set command -- /usr/bin/python3 -m http.server 9000
+mund profile web set cwd /srv/web
+mund profile web set env PYTHONUNBUFFERED=1
+mund profile web start
+mund profile web export --format cli
+```
+
+### 2.2 Run
+
+A run is one concrete execution. The run ID is the stable singular control handle.
+
+Runs have:
+
+- run ID;
+- process identity;
+- process group;
+- state;
+- log;
+- optional profile label;
+- scope;
+- timestamps;
+- console availability.
+
+Execution-control actions target runs. A profile name may be accepted as a convenience selector only when it resolves safely.
+
+```sh
+mund stop 04a7dda8       # exact run
+mund stop web            # valid only if web has exactly one running run
+mund stop web --all      # explicitly affect all running web runs
+mund logs web --follow   # valid only if web resolves to one relevant run
+```
+
+If profile `web` has zero matching runs, report that nothing matches and suggest a profile action such as `mund profile web start`. If it has multiple matching runs, refuse and show candidate run IDs unless `--all` or another explicit selector is supplied.
+
+### 2.3 Ad hoc run command
+
+`run` is a launch command, not a namespace for managing existing executions.
+
+```sh
+mund run -- npm run dev
+```
+
+Avoid awkward command forms such as:
+
+```sh
+mund run web stop       # do not use
+```
+
+Use natural execution verbs instead:
+
+```sh
+mund stop web
+mund logs web
+mund open web
+mund status web
+mund prune web
+```
+
+## 3. Proposed command grammar
+
+```text
+mund run -- <cmd> [args...]
+
+mund profile <name> show
+mund profile <name> create -- <cmd> [args...]
+mund profile <name> create-from-run <id> [--adopt]
+mund profile <name> edit [--format cli|json]
+mund profile <name> delete
+mund profile <name> rename <new-name>
+mund profile <name> start
+mund profile <name> restart
+mund profile <name> set command -- <cmd> [args...]
+mund profile <name> set cwd <path>
+mund profile <name> set env KEY=VALUE
+mund profile <name> unset env KEY
+mund profile <name> set console on|off
+mund profile <name> set multi allow|deny
+mund profile <name> export [--format cli|json]
+mund profile <name> grant <principal> [actions]
+mund profile <name> revoke <principal> [actions]
+
+mund show runs
+mund show profiles
+mund show profile <name>
+mund show grants [profile]
+mund show tree <view>
+
+mund status <target>
+mund inspect <target>
+mund logs <target> [--follow|--dump|--last N]
+mund open <target>
+mund stop <target> [--all]
+mund kill <target> [--all]
+mund prune <target> [--all]
+mund adopt <run-id> <profile>
+
+mund clean exited|stale|failed|all [--dry-run|--yes]
+mund doctor [target]
+mund import <file> [--dry-run|--yes]
+mund export profile <name> [--format cli|json]
+```
+
+## 4. Captive shell and navigation
+
+Bare `mund` on an interactive TTY should open a captive shell/dashboard. In non-TTY contexts, no-arg behavior should not unexpectedly enter an interactive UI.
+
+The shell supports the same command language as the one-shot CLI, plus navigation commands such as `cd`, `back`, `pwd`, `ls`, and `tree`.
+
+### 4.1 View namespaces
+
+The shell should expose navigable indexed views over the same underlying profile/run objects:
+
+```text
+/runs                 concrete executions
+/profiles             launch definitions
+/running              running executions grouped by profile
+/dormant              profiles with no running execution
+/stopped              cleanly stopped/exited runs
+/failed               failed runs grouped by profile
+/stale                records that cannot be safely validated
+/system               system-scoped visible objects
+/user                 user-scoped objects
+/grants               delegation/access view
+/logs                 recent log-centric view
+/time                 runs grouped by start time/calendar bucket
+/uptime               running runs grouped/sorted by uptime
+/recent               newest runs/events first
+/oldest               oldest running runs first
+```
+
+The tree is an indexed navigation system, not a single hierarchy. The same run can appear under profile, state, scope, time, uptime, failure, and log views while resolving to the same underlying run record.
+
+### 4.2 Reversible redirects
+
+Some paths are convenience paths that canonicalize to another view. Navigation should preserve the route the user took so `back` feels natural.
+
+Example:
+
+```text
+mund> cd profiles/web
+mund(/profiles/web)> cd running
+redirect: /profiles/web/running -> /running/web
+mund(/running/web)> back
+mund(/profiles/web)>
+```
+
+Direct navigation backs up canonically:
+
+```text
+mund> cd running/web
+mund(/running/web)> back
+mund(/running)>
+```
+
+## 5. CLI transcript config
+
+CLI transcript config is a human import/export format. JSON remains canonical on disk.
+
+Example:
+
+```text
+profile web
+  set description "local docs server"
+  set command -- /usr/bin/python3 -m http.server 9000
+  set cwd /srv/web
+  set env PYTHONUNBUFFERED=1
+  set console off
+  set multi deny
+  set readiness tcp 127.0.0.1 9000 timeout 10s
+  set cleanup stop-timeout 5s
+exit
+```
+
+Commands:
+
+```sh
+mund export profile web --format cli > web.mund
+mund export profile web --format json > web.json
+mund import web.mund --dry-run
+mund import web.mund --yes
+```
+
+Import/apply should validate and show a change summary before overwriting unless `--yes` is supplied.
+
+## 6. Pager-style live filter viewer
+
+The log/list/tree viewer is a key feature. It should feel like a vi/page-up-page-down viewer with immediate dynamic filtering.
+
+When the user is inside a viewer and types printable characters, a filter field appears at the top and the visible buffer is narrowed on every keystroke.
+
+Example:
+
+```text
+┌ filter: error_                         12/834 lines ┐
+├──────────────────────────────────────────────────────┤
+│ 10:04:12 web ERROR missing config                    │
+│ 10:05:01 web ERROR retry failed                      │
+│ 10:05:07 api ERROR timeout                           │
+└──────────────────────────────────────────────────────┘
+```
+
+Key model:
+
+```text
+plain typing     open/update live filter field
+Backspace        remove one character and redraw; repeated Backspace clears the filter
+Ctrl-u           optional acceleration to clear all filter text
+Esc              leave filter mode or dismiss overlay, depending on state
+Enter            pin current filter and return to navigation
+/                search mode: highlight/jump while keeping all rows
+f                filter mode: hide non-matches
+n/N              next/previous search match
+j/k              line down/up
+PgUp/PgDn        page up/down
+g/G              top/bottom
+q                quit viewer
+```
+
+Backspace to an empty query restores the full view immediately. A dedicated clear key is optional, not required.
+
+### 6.1 Search vs filter
+
+- Search mode highlights/jumps to matches but keeps the full buffer.
+- Filter mode hides non-matching rows and shows match counts.
+- Type-to-filter mode is the fast path when printable text has no other meaning in the current viewer.
+
+This viewer applies to:
+
+- logs;
+- run lists;
+- profile lists;
+- tree views;
+- `doctor` diagnostics;
+- grants/access tables.
+
+For follow-mode logs, filtering applies to the retained visible buffer and continues filtering new incoming lines. The UI must clearly indicate an active filter so users do not think logs have stopped.
+
+## 7. Example-line similarity filtering
+
+The viewer should support a fast deterministic “more like this” filter.
+
+Interaction model:
+
+```text
+Space            toggle current line as an example
+S                show similar lines to selected examples
+X                exclude lines similar to selected examples
+A                add current line to positive examples
+D                add current line to negative examples
+U                unmark all examples
+Enter            pin resulting similarity filter
+Esc              leave similarity mode / return to normal viewer
+```
+
+Example:
+
+```text
+10:04:12 web INFO  listening on :9000
+10:05:01 web ERROR missing config .env       [selected]
+10:05:07 api ERROR missing config config.yml [selected]
+10:06:44 api WARN  retrying database
+```
+
+After pressing `S`:
+
+```text
+┌ similar: 2 examples                    8/834 lines ┐
+│ 10:05:01 web ERROR missing config .env             │
+│ 10:05:07 api ERROR missing config config.yml        │
+│ 10:08:19 worker ERROR missing config worker.toml    │
+└─────────────────────────────────────────────────────┘
+```
+
+### 7.1 Similarity scoring
+
+The first implementation should be local, deterministic, and fast. It should not depend on network services or model embeddings.
+
+Suggested scoring approach:
+
+1. tokenize log lines into words, severity tokens, profile names, paths, exit/status terms, commands, and structured fragments;
+2. normalize case and obvious punctuation;
+3. downweight timestamps, PIDs, run IDs, UUIDs, hex IDs, ports, counters, and monotonic numbers;
+4. upweight severity, error class, command/profile, repeated message terms, path basenames, and exit codes;
+5. hash tokens to compact feature IDs;
+6. compare with weighted Jaccard or cosine-like scoring over sorted hashed token features;
+7. support positive and negative examples with a score such as `positive_similarity - penalty * negative_similarity`.
+
+Conceptual structs:
+
+```c
+struct token_feature {
+    uint64_t hash;
+    uint16_t weight;
+};
+
+struct line_fingerprint {
+    uint64_t line_no;
+    uint16_t feature_count;
+    struct token_feature features[LINE_FEATURE_MAX];
+};
+```
+
+Store byte offsets for rendering:
+
+```c
+struct match_ref {
+    off_t line_start;
+    uint32_t line_len;
+    float score;
+};
+```
+
+## 8. Directional lazy filtering for large logs
+
+This is the critical performance requirement for the killer log feature.
+
+The viewer must not eagerly process a million-line file just because a filter is active. Navigation should be viewport-driven and directional.
+
+### 8.1 Core rule
+
+On each navigation action, fill a complete viewport in the direction the user just moved, plus a small overscan/cache, before returning control. Do not scan the full file unless the user explicitly requests it.
+
+Examples:
+
+- User presses `PgDn`: scan forward only until the next filtered page plus lookahead is available, then render.
+- User presses `PgUp`: scan backward only until the previous filtered page plus lookbehind is available, then render.
+- User types another filter character: invalidate/refine filtered buffers and fill the current viewport from the current cursor region.
+
+The UI should feel as if the file was instantly filtered, even though only enough data was processed to satisfy the visible view.
+
+### 8.2 Two-buffer model
+
+Use two conceptual buffers:
+
+1. **raw/source scan buffer**: reads chunks from the file and splits them into candidate lines;
+2. **filtered match buffer**: stores only matching line references ready for viewport rendering and paging.
+
+Conceptually:
+
+```text
+file bytes
+  -> raw scan buffer / line splitter
+  -> scorer/filter
+  -> filtered match ring/deque
+  -> visible viewport
+```
+
+Maintain before/visible/after match caches:
+
+```text
+[filtered before cache] [visible page] [filtered after cache]
+```
+
+A single deque with a visible slice is also acceptable, but the behavior should preserve fast PgUp/PgDn movement.
+
+### 8.3 Text is byte-random-access, not line-random-access
+
+Text files do not provide O(1) access to arbitrary line numbers because lines have variable length. The viewer should use byte offsets, not line numbers, as the primary navigation primitive.
+
+Represent lines as byte ranges:
+
+```c
+struct line_ref {
+    off_t start;
+    uint32_t len;
+};
+```
+
+Rendering a matched line is then:
+
+```text
+bytes[line_start : line_start + line_len]
+```
+
+Use `mmap` for regular files when practical, with `pread` fallback. Store discovered line ranges in a sparse/chunked line index so revisiting nearby regions is instant.
+
+### 8.4 Forward scanning
+
+Forward scan algorithm:
+
+```text
+while filtered_after has fewer than viewport_rows + overscan_rows:
+    read next raw chunk from current byte offset
+    split chunk into lines, carrying partial line if needed
+    fingerprint/score each line
+    append matches to filtered_after
+    stop once enough matches exist
+```
+
+### 8.5 Backward scanning
+
+Backward scan algorithm:
+
+```text
+offset = current_start_offset
+while filtered_before has fewer than viewport_rows + overscan_rows:
+    start = max(0, offset - BLOCK_SIZE)
+    read bytes[start:offset]
+    scan backward for '\n'
+    emit line ranges in reverse order
+    fingerprint/score each line
+    prepend matches to filtered_before
+    offset = start
+```
+
+Carry partial lines across block boundaries.
+
+### 8.6 Directional fill behavior
+
+On `PgDn`:
+
+```text
+1. direction = forward
+2. consume existing filtered_after matches if available
+3. if not enough rows, scan forward from last forward scan offset
+4. score candidates and append matches
+5. stop when visible page + one extra page/lookahead is available
+6. render and return control
+```
+
+On `PgUp`:
+
+```text
+1. direction = backward
+2. consume existing filtered_before matches if available
+3. if not enough rows, scan backward from last backward scan offset
+4. score candidates and prepend matches
+5. stop when visible page + one extra page/lookbehind is available
+6. render and return control
+```
+
+### 8.7 Sparse matches and responsiveness
+
+If matches are sparse and the viewer cannot fill a complete page within a short budget, it may render a partial page with a clear status indicator and continue scanning opportunistically. However, the target behavior is to fill the page before yielding whenever it can do so quickly.
+
+Suggested status messages:
+
+```text
+similar: local matches, scanning forward…
+filter: 18 shown, scanning backward…
+```
+
+Full-file scanning should be explicit:
+
+```text
+F                complete full-file similarity/filter scan in background
+```
+
+Default behavior is local and immediate.
+
+### 8.8 Follow-mode logs
+
+For growing logs:
+
+- keep a raw tail ring of recent bytes/lines;
+- append new lines as they arrive;
+- fingerprint/score new lines against active filters;
+- append matching lines to the filtered after-cache;
+- auto-scroll only if the user is already at the bottom;
+- otherwise show a “new matching lines below” indicator.
+
+## 9. Output contract
+
+The new grammar should preserve Sigmund’s good scripting discipline:
+
+- stdout is for machine data when a command is intended to be captured;
+- stderr is for human status and diagnostics;
+- `--json` provides structured output;
+- `--quiet` suppresses routine human status;
+- exit codes remain meaningful and documented.
+
+Example:
+
+```sh
+id="$(mund run -- sleep 30)"
+```
+
+The command should print only the run ID to stdout on success.
+
+## 10. Open decisions
+
+1. Should the binary be renamed to `mund` while the project remains Sigmund?
+2. Should `mund profile <name> restart` be allowed as sugar for resolving/stopping singular or all current profile runs plus starting a new one, or should restart require explicit policy?
+3. Should `profile <name> stop` be omitted entirely to preserve the definition/run distinction?
+4. How much of the viewer ships in 0.4.0 vs later minor releases?
+5. What is the minimum viable similarity scorer for the first implementation?
+
+## 11. 0.4.0 engineering hardening backlog
+
+The 0.4.0 CLI redesign should ship with hardening work that makes the new surface safe to iterate on. These items are release criteria for the breaking 0.4.0 line, not optional polish.
+
+### 11.1 Stabilize the test suite
+
+Requirements:
+
+- Modify `tests/test_sigmund.sh` so every `run_test` invocation has a per-test timeout.
+- Default timeout: `SIGMUND_TEST_TIMEOUT=25` seconds.
+- Print `RUN: <description>` before each test.
+- On timeout, print:
+  - failing test name/description;
+  - `TEST_ROOT`;
+  - relevant `ps` output;
+  - bounded `find`/tree listing of the test directory.
+- Ensure cleanup still runs after timeout failures.
+- Add CI job-level timeouts where appropriate.
+
+Acceptance:
+
+- `make test` can no longer hang indefinitely.
+- A hung console/process test fails with actionable diagnostics.
+
+### 11.2 Tighten CLI argument validation
+
+Requirements:
+
+- In `src/main.c`, enforce exact arity for current owned commands while the parser is being replaced/refactored:
+  - `tail`: exactly one target;
+  - `dump`: exactly one target;
+  - `console`: exactly one target;
+  - `prune`: zero or one target.
+- Reject extra args with the correct usage message and exit code `5`.
+- Fix split-form `--multi` parsing so invalid non-option values after `--multi` are rejected instead of treated as target tokens.
+- Add regression tests.
+
+Acceptance:
+
+- No owned command silently ignores unexpected positional args.
+
+### 11.3 Move toward table-driven CLI command specs
+
+Requirements:
+
+- Introduce a small command-spec table for owned commands with:
+  - command name;
+  - min/max args;
+  - allowed flags;
+  - usage string/help topic;
+  - whether `--` is meaningful;
+  - whether target resolution permits `--all`.
+- Keep execution dispatch readable and minimize churn.
+- Use the table to reject unsupported flags/args consistently.
+- Ensure docs/help usage and parser behavior agree.
+
+Acceptance:
+
+- All owned commands have one parser truth source for arity/flag validation.
+- Help text and parser behavior agree for all owned commands.
+
+### 11.4 Harden console attach authorization
+
+Requirements:
+
+- Add a platform helper to retrieve AF_UNIX peer credentials:
+  - Linux: `SO_PEERCRED`;
+  - macOS/BSD: `getpeereid` or `LOCAL_PEERCRED` where available.
+- In the console broker, after `accept`, verify peer UID before replaying output or forwarding input.
+- Permit:
+  - run owner;
+  - root;
+  - any explicitly intended invoking user for elevated/system runs, if current behavior relies on that. Preserve this intentionally and test it.
+- Keep console socket file permissions at `0600`.
+- Add tests proving unrelated users cannot attach.
+
+Acceptance:
+
+- Console socket file permissions remain `0600`.
+- Peer credential checks are enforced before any output replay or input forwarding.
+
+### 11.5 Separate display liveness from signal safety
+
+Requirements:
+
+- Keep list/status behavior user-friendly, but make signal paths stricter.
+- Add a stricter validation function used by:
+  - `stop`;
+  - `kill`;
+  - `--print` before printing `kill(-pgid, sig)`.
+- Require positive validation of boot ID and either:
+  - group/session liveness; or
+  - direct leader PID/PGID/SID/start-time identity.
+- Refuse to signal uncertain records.
+- Add regression tests with tampered records.
+
+Acceptance:
+
+- `stop`/`kill` refuse records that cannot be tied to the recorded process group/session.
+
+### 11.6 Harden store filesystem operations
+
+Requirements:
+
+- Audit `sigmund_mkdir_p0700` and `sigmund_mkdir_p_mode`.
+- Replace stat-following path walks with `lstat`/`openat`-style symlink refusal where practical.
+- Ensure `chmod`/`chown` operations cannot be redirected through symlinks.
+- Rename `sigmund_read_owned_file_no_symlink` if ownership is not checked, or add ownership/mode checks where security-sensitive.
+- Add tests for symlinked store directories and temp files.
+
+Acceptance:
+
+- System store initialization refuses symlinked critical directories.
+
+### 11.7 Harden atomic writers
+
+Requirements:
+
+- Update aliases/profiles atomic writers to use unique temp names with:
+  - `O_EXCL`;
+  - `O_CLOEXEC`;
+  - `O_NOFOLLOW` where available.
+- Preserve:
+  - file `fsync`;
+  - `rename`;
+  - parent directory `fsync`.
+- Add tests for:
+  - pre-existing temp files;
+  - symlink temp files.
+
+Acceptance:
+
+- No fixed-name temp file can be truncated/followed unexpectedly.
+
+### 11.8 Fix source-tree versioning
+
+Requirements:
+
+- Update `Makefile` so builds outside a Git checkout use `VERSION` directly, without `-dev-dirty`.
+- Preserve Git tag/hash/dirty metadata inside a Git checkout.
+- Add a lightweight test or documented manual check.
+
+Acceptance:
+
+- Source ZIP builds report the `VERSION` file value.
+
+### 11.9 Clarify static build/install behavior
+
+Requirements:
+
+- Update `README.md` and `docs/install.md` to explain glibc static NSS caveats.
+- Recommend musl static artifacts for true standalone Linux installs.
+- Do not overstate GNU static portability.
+
+Acceptance:
+
+- Docs accurately describe GNU static, GNU dynamic, and musl static artifacts.
+
+### 11.10 Harden release and installer scripts
+
+Requirements:
+
+- Remove any release step that deletes an existing GitHub release before publishing.
+- Use `overwrite_files` or an immutable release policy instead.
+- Replace installer temp dir creation with `mktemp -d` and `umask 077`.
+- Prefer mandatory `SHA256SUMS` verification over release-body checksum scraping.
+- Validate archive layout instead of finding the first file named `sigmund`/`mund`.
+- Make `package_tarball.sh` deterministic where GNU tar is available.
+- Add installer tests for:
+  - missing/malformed checksum;
+  - checksum mismatch;
+  - unsupported platform;
+  - archive missing expected binary.
+
+Acceptance:
+
+- Release flow is non-destructive.
+- Installer fails closed.
+
+### 11.11 Remove or replace stale `REVIEW.md`
+
+Requirements:
+
+- Delete `REVIEW.md` or replace it with a current review-status document.
+- If replaced, list actual verification commands and caveats.
+- Do not claim all tests pass unless `make test` completes successfully.
+
+Acceptance:
+
+- No stale test counts or obsolete file references remain.
+
+## 12. 0.4.0 release acceptance summary
+
+0.4.0 should be considered ready only when both product and hardening criteria are met:
+
+- new `mund` command grammar is coherent and documented;
+- profile/run target semantics are unambiguous;
+- CLI transcript import/export is specified and tested;
+- pager/live-filter/similarity-filter behavior has an implementation plan, even if shipped incrementally;
+- test suite cannot hang indefinitely;
+- parser rejects unsupported flags and extra positionals;
+- console attach authorization is peer-credential enforced;
+- signal safety is stricter than display liveness;
+- system store and atomic writes reject symlink/temp-file attacks;
+- source ZIP builds report `VERSION` correctly;
+- installer/release flow fails closed and avoids destructive release deletion;
+- stale review claims are removed or replaced with current verification evidence.
