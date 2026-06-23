@@ -63,6 +63,21 @@ struct viewer_state {
     size_t cols;
 };
 
+/*
+ * The TTY viewer keeps exactly one rendered page in `visible`.
+ *
+ * cache_valid means that page was filtered from `start_offset` using
+ * `scan_mode`; `prev_offset` and `next_offset` are the directional anchors
+ * produced by that scan. Cursor movement inside `visible` must not invalidate
+ * the cache. PgUp/PgDn are the operations that deliberately move the anchor and
+ * request a new bounded scan.
+ *
+ * In follow mode, `at_live_edge` means the next refill is anchored at EOF and
+ * `tail_anchor` is the newest file size the viewer has observed. When the user
+ * browses away, appended bytes are filtered once in the follow tick; only an
+ * appended matching row sets `newer_available`.
+ */
+
 struct raw_terminal {
     struct termios original;
     bool active;
@@ -242,6 +257,8 @@ static void cache_invalidate(struct viewer_state *state) {
     state->cache_valid = false;
 }
 
+static void configure_filter_opts(const struct viewer_state *state, struct sigmund_log_filter_options *opts);
+
 static void reset_filter_navigation(struct viewer_state *state) {
     if (state->follow) {
         off_t end = lseek(state->fd, 0, SEEK_END);
@@ -261,16 +278,44 @@ static void reset_filter_navigation(struct viewer_state *state) {
     cache_invalidate(state);
 }
 
+static int appended_range_has_match(struct viewer_state *state, off_t start, off_t end, bool *has_match) {
+    *has_match = false;
+    if (end <= start) return 0;
+    if (lseek(state->fd, start, SEEK_SET) < 0) return -1;
+
+    struct sigmund_log_filter_options opts;
+    configure_filter_opts(state, &opts);
+    opts.visible_capacity = 1;
+    opts.max_results = 1;
+    opts.match_ring_capacity = 1;
+
+    size_t visible_rows = state->rows > 4 ? state->rows - 4 : 1;
+    opts.scan_byte_budget = visible_rows * VIEWER_SCAN_BYTES_PER_ROW;
+    off_t appended_bytes = end - start;
+    if (appended_bytes > 0 && (uintmax_t)appended_bytes < (uintmax_t)opts.scan_byte_budget) {
+        opts.scan_byte_budget = (size_t)appended_bytes;
+    }
+
+    struct sigmund_log_filter_result result;
+    if (sigmund_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
+    *has_match = result.match_count > 0;
+    sigmund_log_filter_result_free(&result);
+    return 0;
+}
+
 static int handle_follow_tick(struct viewer_state *state) {
     off_t end = lseek(state->fd, 0, SEEK_END);
     if (end >= 0 && end > state->tail_anchor) {
+        off_t old_tail = state->tail_anchor;
         state->tail_anchor = end;
         if (state->at_live_edge) {
             state->start_offset = end;
             state->newer_available = false;
             cache_invalidate(state);
         } else {
-            state->newer_available = true;
+            bool has_match = false;
+            if (appended_range_has_match(state, old_tail, end, &has_match) != 0) return -1;
+            if (has_match) state->newer_available = true;
         }
     }
     if (state->follow && state->cache_reached_eof && state->is_running && !state->is_running(state->running_userdata)) {
@@ -512,7 +557,10 @@ int sigmund_log_viewer_tty_fd(int fd,
         unsigned char printable = 0;
         enum viewer_key key = read_key(&printable, state.follow ? 250 : -1);
         if (key == VIEWER_KEY_NONE && state.follow) {
-            handle_follow_tick(&state);
+            if (handle_follow_tick(&state) != 0) {
+                rc = -1;
+                break;
+            }
             continue;
         }
         if (key == VIEWER_KEY_QUIT) {

@@ -400,7 +400,7 @@ Maintain before/visible/after match caches:
 [filtered before cache] [visible page] [filtered after cache]
 ```
 
-A single deque with a visible slice is also acceptable, but the behavior should preserve fast PgUp/PgDn movement.
+A single deque with a visible slice is also acceptable, but the behavior should preserve fast PgUp/PgDn movement. The 0.4.0 TTY implementation uses a smaller first step: one cached visible page plus byte anchors/history for directional rescans. That gives the intended responsiveness without yet claiming a full persistent before/after deque.
 
 ### 8.3 Text is byte-random-access, not line-random-access
 
@@ -510,7 +510,7 @@ For growing logs:
 
 - v1 implementation: `mund logs <target> --follow` routes through `mund view --follow` for a dynamic TTY filter field. `--filter TEXT` can seed/script the same engine, but the human design is type-to-filter after the viewer is open. Plain `mund logs <target>` remains tail-compatible.
 - active live filters are anchored at the tail by default; PgUp moves to older matching windows, and PgDn walks back toward the live edge;
-- when the user is browsing older matches, new log data does not yank the viewport to EOF; the header reports `newer below`;
+- when the user is browsing older matches, new log data does not yank the viewport to EOF; the follow tick filters the appended byte range and reports `newer below` only when the new range contains a row matching the active literal/similarity filter;
 - `--debug-stats` includes `scan_gen`, which increments only when the filter engine refills the visible cache;
 - keep a raw tail ring of recent bytes/lines;
 - append new lines as they arrive;
