@@ -1,7 +1,8 @@
 # Reproducible Linux build+test environment for sigmund, mirroring the GitHub CI
-# toolchain (ubuntu-latest). Used by scripts/linux.sh to run scripts/ci.sh (or
-# the root-runner lane) locally on any host that has Apple `container` or docker,
-# so "build+test on Linux exactly like CI" is one command from a Mac.
+# toolchain (ubuntu-latest). Used by scripts/linux.sh to run scripts/ci.sh, the
+# root-runner lane, or the release build matrix (scripts/release_build.sh)
+# locally on any host that has Apple `container` or docker, so "build+test on
+# Linux exactly like CI" is one command from a Mac.
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,5 +16,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       passwd \
       sudo \
       ca-certificates \
+      curl \
+      xz-utils \
+      file \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Pinned Zig for reproducible musl cross-builds, matching release.yml's
+# ZIG_VERSION. This makes the full musl matrix (amd64/arm64/armhf/mipsel/riscv64)
+# in scripts/release_build.sh reproducible and offline after the image is built.
+# Keep this version in lockstep with .github/workflows/release.yml.
+ARG ZIG_VERSION=0.13.0
+RUN arch="$(uname -m)" \
+ && curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${arch}-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz \
+ && mkdir -p /opt/zig \
+ && tar -C /opt/zig --strip-components=1 -xf /tmp/zig.tar.xz \
+ && ln -s /opt/zig/zig /usr/local/bin/zig \
+ && rm /tmp/zig.tar.xz \
+ && zig version
 WORKDIR /work
