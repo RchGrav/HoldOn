@@ -233,28 +233,30 @@ mund(profile:web)> s<Tab>    -> show/start/set/... local to the profile context
 mund> stop <Tab>             -> active run IDs plus profile names only when they resolve to one active run
 ```
 
-For OS shell integration, `Tab` should complete real text using the same
-namespace provider where possible. Ghost text is not required and generally
-should not be assumed in normal shell completion.
+For 0.4.0, the target is basic, reliable tab completion inside and outside the
+captive shell. OS shell integration should complete real text using the same
+namespace provider where possible. The captive shell should also use `Tab` to
+complete real text from the same provider. This is the release-relevant UX win.
 
-For the captive TTY shell, the same provider may additionally render typeahead
-ghost text and cycle sibling suggestions with arrow keys:
+Ghost text is explicitly not a 0.4.0 requirement. Normal Bash/Zsh/Fish
+completion should not attempt inline predictive ghost rendering. A future captive
+TTY shell may add ghost suffix rendering or arrow-key suggestion cycling after
+the basic provider is stable, but that is polish rather than release-gating
+behavior.
 
-```text
-mund> h▌elp                  # ghost suffix shown by the captive shell
-Tab                           # accepts `help `
-mund> s▌ave                  # first suggestion
-Down                          # cycles to status/stop/show/start as siblings
-Enter                         # accepts/runs the selected command, depending on cursor state
-```
+The reusable CLI library should therefore expose for 0.4.0:
 
-The reusable CLI library should therefore expose:
-
-- line editing and history;
+- line editing and history for the captive shell;
 - a pluggable completion namespace/provider API;
 - command/help metadata usable by both `help` and completion;
-- optional captive-TTY affordances: ghost suffix rendering and up/down suggestion cycling;
-- a plain shell-completion mode that emits candidates without terminal UI control.
+- a plain shell-completion mode that emits candidates without terminal UI control;
+- captive-shell `Tab` completion using the same candidates.
+
+Later optional polish:
+
+- captive-TTY ghost suffix rendering;
+- up/down suggestion cycling before command execution;
+- richer command-palette presentation.
 
 ## 5. CLI transcript config
 
