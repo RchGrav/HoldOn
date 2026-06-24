@@ -9,13 +9,12 @@ On Hold remains the project identity; the intended 0.4.0 user-facing command is 
 
 `hold` is a guardian shell for background jobs: run it, leave it, find it, watch it, stop it safely.
 
-Version 0.4.0 is intentionally allowed to break the current CLI because the tool has no established user base. This document defines the target product direction for that release. Until the tracked alignment matrix marks a section implemented, treat it as a requirement or follow-up rather than a release claim. The goal is to replace the legacy action-first/alias-based surface with one coherent command language shared by:
+Version 0.4.0 is intentionally allowed to break the current CLI because the tool has no established user base. This document defines the target product direction for that release. Until the tracked alignment matrix marks a section implemented, treat it as a requirement or follow-up rather than a release claim. The goal is to replace the legacy action-first/alias-based surface with two deliberately familiar surfaces:
 
-1. one-shot CLI commands;
-2. captive shell commands;
-3. importable/exportable CLI transcript config files.
+1. **Normal shell CLI:** mimic Docker command names, option names, and flag semantics as closely as Hold's host-process model allows. Ease-of-use tweak: `run` may be optional for ad-hoc launches, so `hold -d sleep 30` is equivalent to the Docker-shaped `hold run -d sleep 30`.
+2. **Captive CLI:** clone the Cisco IOS operator experience: User EXEC (`hold>`), Privileged EXEC (`hold#`), global configuration (`hold(config)#`), profile sub-configuration (`hold(config-profile:name)#`), `?` help, `enable`, `configure terminal`, `end`, `write`, `no`, `default`, staged config, and commit/install validation.
 
-JSON remains the canonical on-disk profile storage format. CLI transcript config is a human editing/import/export format that compiles to the JSON profile model.
+JSON remains the canonical on-disk profile storage format. CLI transcript config is a human Cisco-IOS-style editing/import/export format that compiles to the JSON profile model.
 
 The hardening backlog in section 11 is part of the same 0.4.0 release plan. The redesigned CLI should not be released as stable until the product surface and hardening work are both complete. `VERSION` is still `0.3.9` in the current branch, so wording in this document is branch/spec status unless explicitly tied to implemented source and tests. See [0.4.0 branch alignment and follow-up matrix](0.4.0-alignment.md) for the current implemented/deferred split.
 
@@ -77,7 +76,7 @@ Run records have:
 Run-ID lifecycle verbs should act on concrete executions:
 
 ```sh
-hold down 04a7dda8            # graceful stop for one concrete execution
+hold stop 04a7dda8            # graceful stop for one concrete execution, Docker-style
 hold kill 04a7dda8            # force stop for one concrete execution
 hold logs 04a7dda8            # log viewer for one concrete execution
 hold inspect 04a7dda8         # detailed JSON/object view, Docker-style
@@ -89,7 +88,7 @@ Profile names may be accepted by run-oriented commands only as safe selectors:
 
 ```sh
 hold logs web                 # valid only if web resolves to one relevant run
-hold down web                 # valid only if web resolves to one active run
+hold stop web                 # valid only if web resolves to one active run or profile instance
 ```
 
 If a profile selector has zero matching runs, say so and suggest `hold run <profile>`. If it has multiple matching runs, refuse and show candidate run IDs unless the command has an explicit `--all` policy.
@@ -152,57 +151,47 @@ Profile conversion uses normalized launch facts, while profile editing can show 
 
 ## 3. Proposed command grammar and namespace rules
 
-The 0.4.0 CLI surface should be a small set of top-level verbs plus navigable object namespaces. Top-level commands are fast paths; captive-shell contexts let users omit the target already selected.
+The 0.4.0 normal shell CLI should be Docker-shaped. Command names and switches should match Docker where Hold has an equivalent concept; deviations must be intentional and documented. The most important ease-of-use deviation is optional `run` for ad-hoc launches.
 
-### 3.1 Top-level command set
+### 3.1 Normal shell command set
+
+The normal shell CLI is Docker-shaped. `run` is supported for Docker familiarity, but optional for ad-hoc ease of use.
 
 ```text
-Ad-hoc launch:
-  hold [run-options] <cmd> [args...]
+Launch:
+  hold run [run-options] <cmd|profile> [args...]
+  hold [run-options] <cmd> [args...]            # ease-of-use alias for ad-hoc run
   hold [run-options] -- <cmd> [args...]         # only when cmd conflicts with Hold syntax
 
-Profile lifecycle:
-  hold run [run-options] <profile> [--force|--multi N]
-  hold stop <profile> [--all]
-
-Concrete execution lifecycle:
-  hold down <target>
-  hold kill <target>
-
-Viewing and inspection:
-  hold ps                                      # active run IDs
+Listing and inspection:
+  hold ps                                      # active run IDs, Docker-shaped
   hold ps -a                                   # active + inactive retained run IDs
-  hold active                                  # active run-id view/list
-  hold recent                                  # inactive/recent retained run-id view/list
-  hold show <view|object>                      # read-only alias/view command
-  hold logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]
+  hold logs <target> [--follow|-f] [--tail|-n N] [--filter TEXT] [--similar TEXT] [--plain|--interactive]
   hold inspect <target>                        # detailed JSON/object view, Docker-style
 
-Cleanup/removal:
+Lifecycle:
+  hold stop <target> [--all]
+  hold kill <target>
   hold prune                                   # bulk cleanup of inactive past runs
   hold rm <inactive-runid|profile>
   hold rm --force <active-runid>
+  hold attach <target>                         # attach to a compatible running instance, Docker-style
 
-Profiles:
-  hold profile                                 # enter/list profile namespace
-  hold profile <name>                          # show/select profile
-  hold profile save <runid> as <name>
-  hold import <file> as <profile>
-  hold export <profile> as <file>
-
-Operations:
+Hold-specific utility/config entry points:
+  hold                                         # enter Cisco IOS-style captive CLI when TTY
   hold shell                                   # explicit captive/operator shell
+  hold import <file> as <profile>              # import IOS-style transcript
+  hold export <profile> as <file>              # export IOS-style transcript
   hold doctor [target]
   hold help [topic]
 ```
 
 `ps` always lists run IDs. If a run ID came from a profile, show the profile name in a column; otherwise show `-`.
 
-`show` is allowed as a friendly read-only alias/view command. It should never be
-the only way to reach important data, and it should not blur the core nouns:
-`show runs` may route to `ps -a`, `show active` may route to `active`, `show
-profile web` may route to profile display, and `show tree` may render navigable
-views. Mutating operations should not hide under `show`.
+`show` belongs primarily to the Cisco IOS-style captive CLI. If exposed from the
+normal shell as a convenience, it must remain read-only and route to canonical
+Docker-shaped commands or IOS views; mutating operations must not hide under
+`show`.
 
 `logs` owns log text. Former dump-style log output belongs under `logs <target> --plain`.
 
@@ -255,7 +244,7 @@ hold inspect web
 
 - If the profile name does not exist, create a profile from the normalized launch recipe and label the first run with that profile.
 - If the profile name exists and the launch recipe matches, treat it as a profile launch.
-- If the profile name exists and the recipe differs, refuse and suggest `hold run <profile>`, `hold profile <profile> edit`, or an explicit replacement flow. Do not silently mutate a profile from a launch command.
+- If the profile name exists and the recipe differs, refuse and suggest `hold run <profile>`, Cisco IOS captive configuration (`hold`, `enable`, `configure terminal`, `profile <name>`), or an explicit replacement flow. Do not silently mutate a profile from a launch command.
 
 Log flags:
 
@@ -278,7 +267,6 @@ Interactive TTY rule:
 - If that profile already has exactly one active compatible interactive/TTY run, `hold run -i <profile>` or `hold run -it <profile>` reconnects to it instead of starting another copy.
 - If that profile has exactly one active run that is not compatible with the requested interactive mode, refuse and suggest `logs` or a new `run --force -i/-it` only if an additional instance is intended.
 - If that profile has multiple active runs, refuse and show candidate run IDs. Do not guess.
-- No separate primary `console` or `attach` command is needed in the 0.4 target grammar.
 
 Foreground/detach behavior:
 
@@ -288,7 +276,7 @@ Foreground/detach behavior:
 - `-t` allocates terminal behavior.
 - `-d` is the scriptable/background form and is the form that prints only the run ID to stdout.
 - `Ctrl-C` and other explicit terminal signals in foreground mode are forwarded to the child process group according to the selected terminal mode.
-- Closing the client terminal or losing the foreground client should be treated as a detach when Hold can do so safely; it should not be the normal lifecycle mechanism for stopping a run. Users stop runs with `stop`, `down`, `kill`, or `rm --force`.
+- Closing the client terminal or losing the foreground client should be treated as a detach when Hold can do so safely; it should not be the normal lifecycle mechanism for stopping a run. Users stop runs with `stop`, `kill`, or `rm --force`.
 - The detach key sequence leaves the run alive and returns the user to the shell/captive CLI.
 
 Detach key handling:
@@ -339,326 +327,255 @@ hold run web --multi 3        # start exactly 3 instances
 Profiles may contain instance-aware values. The friendly profile editing syntax may use compact forms such as:
 
 ```text
-env HTTP_PORT=8000++
-arg --port 8000++
+env HTTP_PORT 8000++
+argv --port 8000++
 ```
 
 Semantics: a profile-level allocator chooses deterministic per-instance values when `--force` or `--multi N` starts additional instances. The JSON model should store the allocator explicitly; the `++` form is human transcript sugar, not the only storage representation.
 
-## 4. Captive shell and navigation
+## 4. Captive CLI: Cisco IOS clone
 
-Bare `hold` on an interactive TTY should open a captive shell/dashboard. In non-TTY contexts, no-arg behavior should not unexpectedly enter an interactive UI.
+Bare `hold` on an interactive TTY should open a captive CLI. This surface is not a Docker clone. It is intentionally a Cisco IOS clone with Hold nouns.
 
-The shell supports the same command language as the one-shot CLI, plus navigation commands such as `cd`, `back`, `pwd`, `ls`, and `tree`.
+Design rule: if a network operator who knows Cisco IOS can guess the mode, prompt, help behavior, staging behavior, and commit flow, Hold is doing the right thing.
 
-### 4.1 Namespace principles
+### 4.1 IOS mode model
 
-The captive shell should feel like Cisco IOS, diskpart, and Docker had one small object shell:
+Hold captive CLI modes:
 
-1. **Bare namespace commands enter that namespace.** `profile` enters `hold(profile)>`; `runid` enters `hold(runid)>`.
-2. **Namespaces list and select.** Namespace prompts expose `ls`, `select`, `help`, and `back` before object-specific actions.
-3. **Objects expose actions.** A selected profile or run ID lets the user omit the target because the prompt already supplies context.
-4. **Top-level verbs still exist.** `run`, `stop`, `down`, `logs`, `inspect`, `prune`, and `rm` remain first-class top-level commands; navigation is for discoverability, not mandatory ceremony. `show` may remain as a read-only alias/view command.
-5. **`ps` always lists run IDs.** At root it lists active run IDs; `ps -a` includes inactive retained run IDs. Inside a profile, `ps` lists that profile's run IDs.
-6. **Profiles can have run IDs; run IDs do not need profiles.** Profile-originated run IDs appear under both the profile context and the run-id views. Ad-hoc run IDs show profile as `-`.
-7. **Top-level commands require explicit source/destination.** Context commands inherit context and can use shorter forms.
+| Mode | Prompt | Purpose |
+| --- | --- | --- |
+| User EXEC | `hold>` | Safe, limited operational commands. |
+| Privileged EXEC | `hold#` | Administrative operational commands plus entry to configuration. |
+| Global configuration | `hold(config)#` | Configure global dictionaries and enter profile configuration. |
+| Profile sub-configuration | `hold(config-profile:web)#` | Stage changes for one profile. |
 
-Prompt shape:
+Mode commands:
 
-```text
-hold>                         root
-hold(profile)>                profile namespace
-hold(profile:web)>            selected profile
-hold(profile:web:abcd1234)>   selected run ID reached through profile web
-hold(runid)>                  run-id namespace
-hold(runid:abcd1234)>         selected run ID
-```
+- `?` shows valid commands for the current mode.
+- `enable` enters Privileged EXEC, with authentication when configured.
+- `disable` returns from Privileged EXEC to User EXEC.
+- `configure terminal` enters global configuration mode.
+- `profile <name>` enters profile sub-configuration mode.
+- `exit` returns one mode outward or closes the session from EXEC mode.
+- `end` returns to Privileged EXEC from any configuration mode.
+- `write` persists the running configuration from Privileged EXEC.
+- `no <command>` negates/removes configuration.
+- `default <command>` resets configuration to the default.
+- `commit` validates and installs staged profile changes.
 
-Universal captive-shell commands:
+### 4.2 User EXEC mode
 
-```text
-ls                 list children or relevant rows in this context
-select <name|id>   enter a child object
-help               show valid commands for this context
-back               return to the previous context
-..                 alias for back
-/                  return to root
-exit               leave the captive shell
-```
-
-Command aliases in the captive shell:
-
-- `alias <name> "<command string>"` creates a command macro for the current context.
-- This is not the legacy profile/alias model; profiles remain launch definitions.
-- In a profile context, aliases are profile-local convenience commands unless explicitly marked global by a future design.
-- Export/import should preserve aliases in the CLI transcript form.
-- Aliases expand to the same command language the user could type manually, then run through the normal parser and safety checks.
-
-### 4.2 Root and namespace contexts
-
-Root prompt examples:
+You start in User EXEC mode with limited commands:
 
 ```text
-hold> ps                       # active run IDs
-hold> ps -a                    # active + inactive retained run IDs
-hold> profile                  # enter profile namespace
-hold> runid                    # enter run-id namespace
-hold> run web                  # start profile web
-hold> stop web                 # stop profile web only if singular active
-hold> down abcd1234            # stop concrete run ID
-hold> logs web                 # valid only if web resolves safely
-hold> inspect abcd1234         # detailed JSON/object view
-hold> prune                    # inactive history cleanup
-hold> rm abcd1234              # targeted inactive run deletion
-hold> rm --force abcd1234      # stop and delete active concrete run
-hold> import ./web.hold as web
-hold> export web as ./web.hold
+hold> ?
+Exec commands:
+  attach     Attach to a running instance
+  console    Attach with a PTY (interactive)
+  enable     Enter privileged mode
+  list       List running instances
+  ping       Check daemon-less liveness of a run
+  run        Start an instance from a profile or binary
+  show       Show running system information
+  exit       Close the session
 ```
 
-Profile namespace:
+`show ?` behaves like IOS contextual help:
 
 ```text
-hold> profile
-hold(profile)> ls
-hold(profile)> select web
-hold(profile:web)>
+hold> show ?
+  aliases    Show public alias table
+  runs       Show running instances (runid, alias, hash)
+  profiles   Show profile names and hashes (no details)
+  version    Show hold version
 ```
-
-Inside `hold(profile)>`:
-
-```text
-ls                         list profiles
-select <profile>           enter selected profile
-run <profile>              start selected profile by name
-rm <profile>               remove selected profile, subject to safety checks
-import <file> as <profile> import explicit profile name
-export <profile> as <file> export explicit profile name
-help
-back
-```
-
-Selected profile context:
-
-```text
-hold(profile:web)> ls                  # profile summary and available actions
-hold(profile:web)> ps                  # active run IDs for web
-hold(profile:web)> ps -a               # active + inactive retained run IDs for web
-hold(profile:web)> run                 # start web
-hold(profile:web)> run --force         # start one additional instance
-hold(profile:web)> run --multi 3       # start exactly 3 instances
-hold(profile:web)> stop                # stop only if singular active
-hold(profile:web)> stop --all
-hold(profile:web)> edit
-hold(profile:web)> set env.DATABASE_URL=postgres://...
-hold(profile:web)> set env.LOG_LEVEL=info
-hold(profile:web)> alias myapp "run myapp --with-flags"
-hold(profile:web)> interactive         # save long-form profile option
-hold(profile:web)> no interactive
-hold(profile:web)> tty
-hold(profile:web)> no tty
-hold(profile:web)> inspect             # detailed profile object
-hold(profile:web)> import ./web.hold   # context supplies profile name
-hold(profile:web)> export ./web.hold   # context supplies profile name
-hold(profile:web)> rm                  # remove profile, subject to safety checks
-hold(profile:web)> select abcd1234     # enter a run ID associated with this profile
-hold(profile:web:abcd1234)>
-```
-
-Run-id namespace:
-
-```text
-hold> runid
-hold(runid)> ls
-hold(runid)> ps
-hold(runid)> ps -a
-hold(runid)> select abcd1234
-hold(runid:abcd1234)>
-```
-
-Inside `hold(runid)>`, users browse execution records, not profiles. Commands are intentionally small: `ls`, `ps`, `ps -a`, `select <runid>`, `help`, and `back`.
-
-Selected run-id context:
-
-```text
-hold(runid:abcd1234)> ls
-hold(runid:abcd1234)> logs
-hold(runid:abcd1234)> down
-hold(runid:abcd1234)> kill
-hold(runid:abcd1234)> inspect           # full structured run record
-hold(runid:abcd1234)> save web          # create profile web from this run ID
-hold(runid:abcd1234)> rm                # remove if inactive
-hold(runid:abcd1234)> rm --force        # stop, verify, and remove if active
-hold(runid:abcd1234)> back
-```
-
-If a selected run ID was reached through a profile, keep that route in the prompt and back-stack:
-
-```text
-hold(profile:web)> select abcd1234
-hold(profile:web:abcd1234)> logs
-hold(profile:web:abcd1234)> back
-hold(profile:web)>
-```
-
-Top-level `as` rule:
-
-```text
-hold> profile save abcd1234 as web
-hold> import ./web.hold as web
-hold> export web as ./web.hold
-```
-
-Context rule:
-
-```text
-hold(runid:abcd1234)> save web          # run ID is selected, so no `as`
-hold(profile:web)> export ./web.hold    # profile is selected, so no `as`
-```
-
-### 4.2.1 Reversible redirects
-
-Views may connect backwards for discoverability, but `back` should follow the route the user took.
-
-Example: from profile to its active concrete run view:
-
-```text
-hold(profile:web)> ps
-RUNID     STATE    PROFILE  AGE  COMMAND
-abcd1234  active   web      2m   npm run dev
-
-hold(profile:web)> select abcd1234
-hold(profile:web:abcd1234)> back
-hold(profile:web)>
-```
-
-If a future shortcut redirects `hold(profile:web)> active` to an active-run view, the back-stack still returns to `hold(profile:web)>`, not to the canonical root active view.
-
-### 4.3 Universal completion namespaces
-
-Completion is a first-class feature of the CLI library, not a special case inside
-`hold shell`. Any namespace that can be listed by `ps`, `ls`, or namespace entry
-commands such as `profile`/`runid`, inspected by `inspect`, or described by `help`
-should also be available to tab completion through the same provider API. The
-command tree, help output, and completion candidates should share one source of
-truth wherever practical.
-
-Completion namespaces include at minimum:
-
-```text
-commands              help, profile, runid, run, stop, down, kill, ps, active, recent, show, logs, inspect, prune, rm, import, export, doctor, exit, back
-profiles              named reusable launch definitions
-runids                active and unpruned run IDs
-recent-runids         newest unpruned run IDs, including inactive retained executions
-recent-commands       past ad-hoc argv recipes that have not been saved as profiles
-views                 active, recent, profile, runid, time, uptime, failed, stale, grants
-profile-context       ls, ps, run, stop, edit, inspect, import, export, rm, select, help, back
-runid-context         ls, logs, down, kill, inspect, save, rm, help, back
-state-actions         logs, down, kill, inspect, prune/rm where valid for the selected object
-```
-
-The completion provider must be context-aware:
-
-```text
-hold> p<Tab>                 -> profile
-hold> profile w<Tab>         -> profile web
-hold> profile s<Tab>        -> profile save
-hold> profile save <Tab>    -> recent run IDs plus `last`
-hold> profile save 8f3a<Tab> as -> complete the run ID, then suggest `as`
-hold(profile:web)> r<Tab>    -> run/rm local to the selected profile context
-hold(runid:8f3a)> s<Tab>     -> save local to the selected run-id context
-hold> stop <Tab>             -> profile names with singular active runs, plus explicit candidates after ambiguity help
-hold> down <Tab>             -> active run IDs
-```
-
-For 0.4.0, the target is basic, reliable tab completion inside and outside the
-captive shell. OS shell integration should complete real text using the same
-namespace provider where possible. The captive shell should also use `Tab` to
-complete real text from the same provider. This is the release-relevant UX win.
-
-Tab completion should follow normal shell expectations:
-
-- if there is exactly one match, complete it and add a trailing space when the token is complete;
-- if multiple matches share a longer common prefix, extend only through the first non-unique character;
-- if matches remain ambiguous, show the candidate list with short descriptions where available;
-- pressing `Tab` again may reprint or page the candidate list rather than changing the input unexpectedly.
-
-This applies equally to prior command/argument strings. If recent commands share
-a prefix, completion extends only through the shared prefix; it does not guess
-which full argv recipe the user intended.
-
-Inside the captive shell, Up/Down may cycle candidate replacements for the
-current token or command line. The original text, including blank input, is part
-of the cycle so the user can always return to exactly where they started:
-
-```text
-hold> p<Tab>       # profile/ps/prune, completes only shared prefix if any
-hold> p<Down>      # profile
-hold> <Down>       # ps
-hold> <Down>       # prune
-hold> <Up>         # ps
-hold> <cycle...>   # eventually returns to the original `p` or blank input
-```
-
-No ghost text is part of the design. Completion either inserts real text, shows
-candidates, or cycles concrete candidate replacements in Hold-owned interactive
-contexts.
-
-The reusable CLI library should therefore expose for 0.4.0:
-
-- line editing and history for the captive shell;
-- a pluggable completion namespace/provider API;
-- longest-common-prefix completion for ambiguous matches;
-- candidate-list rendering with descriptions;
-- command/help metadata usable by both `help` and completion;
-- a plain shell-completion mode that emits candidates without terminal UI control;
-- captive-shell `Tab` completion and Up/Down candidate cycling using the same candidates.
-
-## 5. CLI transcript config
-
-CLI transcript config is a human import/export format. JSON remains canonical on disk. Profile submodes and transcript files should mimic Cisco IOS: direct commands configure common fields, `set <path>=<value>` edits structured key paths, and `no <command-or-path>` removes or disables values. Avoid making `set` the universal grammar; use it where a dotted object path is clearer than a bespoke command. Boolean run options use positive commands plus `no` negation, not short flags: `interactive`, `no interactive`, `tty`, `no tty`, `detach`, `no detach`.
-
-Config command rules:
-
-- Prefer direct IOS-style commands for common profile fields: `description`, `command`, `cwd`, `env`, `publish`, `volume`, `interactive`, `tty`, `detach`, `multi`, `readiness`, `cleanup`, `grant`.
-- Use `set <path>=<value>` for structured properties, maps, or uncommon nested fields.
-- `set env.DATABASE_URL=postgres://...` and `env DATABASE_URL=postgres://...` are equivalent for environment variables; export may choose one canonical form.
-- Use `no <command>` or `no <path>` to remove/disable values: `no tty`, `no interactive`, `no env.DEBUG`, `no alias myapp`.
-- `alias <name> "<command string>"` stores a command macro in the current transcript context, not a profile definition.
 
 Example:
 
 ```text
-profile web
-  description "local docs server"
-  command -- /usr/bin/python3 -m http.server 9000
-  cwd /srv/web
-  set env.DATABASE_URL=postgres://localhost/app
-  set env.LOG_LEVEL=info
-  no interactive
-  no tty
-  publish 9000:9000
-  alias myapp "run myapp --with-flags"
-  multi deny
-  readiness tcp 127.0.0.1 9000 timeout 10s
-  cleanup stop-timeout 5s
-exit
+hold> show runs
+RUNID     ALIAS      HASH        STATE
+a3f7b2c1  web        7f3e9c2a    running
+9d4e8f02  report     1c5d3b7f    running
+```
+
+In the captive CLI, `alias` means an operator-facing command/name alias table. It must not revive the old “alias as launch definition” model; profiles remain launch definitions.
+
+### 4.3 Privileged EXEC mode
+
+```text
+hold> enable
+Password:
+hold#
+```
+
+Privileged EXEC exposes administrative commands and configuration entry:
+
+```text
+hold# ?
+Exec commands:
+  attach      Attach to a running instance
+  configure   Enter configuration mode
+  console     Attach with a PTY (interactive)
+  grant       Grant a user capability for a profile
+  revoke      Revoke a user capability
+  list        List running instances
+  run         Start an instance
+  show        Show system information
+  write       Write running config to storage
+  disable     Return to user EXEC mode
+  exit        Close the session
+```
+
+Configuration entry mirrors IOS:
+
+```text
+hold# configure ?
+  terminal   Configure from the terminal
+
+hold# configure terminal
+Enter configuration commands, one per line. End with CNTL/Z.
+hold(config)#
+```
+
+### 4.4 Global configuration mode
+
+```text
+hold(config)# ?
+Configuration commands:
+  profile    Create or edit a profile
+  pattern    Manage the pattern dictionary
+  switch     Manage the switchionary
+  no         Negate a command
+  default    Reset a command to default
+  exit       Exit configuration mode
+  end        Return to privileged EXEC mode
+```
+
+Profile entry:
+
+```text
+hold(config)# profile ?
+  WORD       Name of the profile to create or edit
+
+hold(config)# profile web
+hold(config-profile:web)#
+```
+
+### 4.5 Profile sub-configuration mode
+
+Profile sub-configuration mode stages one profile's configuration. Changes are not installed until `commit` succeeds.
+
+```text
+hold(config-profile:web)# ?
+Profile configuration commands:
+  binary        Set the target executable (immutable base)
+  argv          Append a base argv token
+  env           Set an environment variable
+  alias         Define a profile-local alias
+  param         Expose a validated optional parameter
+  multi         Allow multiple concurrent instances
+  pty-shim      Start under the PTY shim
+  no            Negate a command
+  default       Reset a command to default
+  info          Show staged profile state
+  commit        Re-hash, regenerate sudoers, validate, install
+  exit          Return to global config mode
+```
+
+Help is contextual:
+
+```text
+hold(config-profile:web)# binary ?
+  WORD       Absolute path to the executable
+
+hold(config-profile:web)# param ?
+  WORD       Long flag to expose (e.g. --port)
+
+hold(config-profile:web)# param --port ?
+  WORD       Pattern name from the pattern dictionary
+```
+
+Example profile configuration:
+
+```text
+hold(config-profile:web)# binary /usr/local/bin/nginx
+hold(config-profile:web)# argv -c /etc/nginx.conf
+hold(config-profile:web)# env LOG_LEVEL info
+hold(config-profile:web)# param --port port
+hold(config-profile:web)# no env LOG_LEVEL
+hold(config-profile:web)# default multi
+```
+
+Review and commit:
+
+```text
+hold(config-profile:web)# info
+  base argv : /usr/local/bin/nginx -c /etc/nginx.conf
+  params    : [--port] -> port  (optional)
+  staged    : uncommitted changes present
+
+hold(config-profile:web)# commit
+  Re-hashing profile ............ 7f3e9c2a
+  Generating sudoers entry ...... ok
+  Validating with visudo -cf .... ok
+  Installing /etc/sudoers.d/hold-web ... done
+  Profile committed. Hash: 7f3e9c2a
+
+hold(config-profile:web)# end
+hold# write
+Building configuration...
+[OK]
+hold#
+```
+
+### 4.6 Relationship to Docker-shaped shell CLI
+
+Do not mix the mental models:
+
+- Normal shell commands mimic Docker: `hold run -d ...`, `hold ps`, `hold logs -f -n 100 ...`, `hold inspect ...`, `hold attach ...`.
+- Captive CLI mimics Cisco IOS: `enable`, `configure terminal`, mode prompts, contextual `?`, `show`, `write`, `no`, `default`, `commit`.
+- Profile configuration words are IOS-style (`binary`, `argv`, `env`, `param`, `multi`, `pty-shim`, `no`, `default`, `info`, `commit`), not Docker flags.
+- Docker flags may be saved into a profile, but their persisted configuration is expressed with IOS-style words in captive/config transcript mode.
+
+## 5. CLI transcript config
+
+CLI transcript config is a human import/export format. JSON remains canonical on disk. The transcript should look like the commands an operator would type in the Cisco IOS-style captive CLI, not like JSON and not like Docker flags.
+
+Export/import rules:
+
+- `export` decompiles canonical JSON profile storage into IOS-style CLI transcript commands.
+- `import` compiles IOS-style transcript commands back into canonical JSON profile storage.
+- `inspect` is the JSON/object view. Do not make JSON the default import/export UX.
+- Transcript files should use IOS mode and configuration words: `configure terminal`, `profile`, `binary`, `argv`, `env`, `alias`, `param`, `multi`, `pty-shim`, `no`, `default`, `info`, `commit`, `end`, `write`.
+- Docker shell flags may be saved into a profile, but transcript export should render their persistent meaning with IOS profile configuration words.
+
+Example transcript:
+
+```text
+configure terminal
+  profile web
+    binary /usr/local/bin/nginx
+    argv -c /etc/nginx.conf
+    env LOG_LEVEL info
+    param --port port
+    no env LOG_LEVEL
+    default multi
+    commit
+end
+write
 ```
 
 Commands:
 
 ```sh
-hold export web as web.hold            # write CLI transcript form
-hold export web                        # print CLI transcript to stdout
+hold export web as web.hold            # write IOS-style CLI transcript form
+hold export web                        # print IOS-style CLI transcript to stdout
 hold import web.hold as web --dry-run  # parse transcript and show changes
 hold import web.hold as web --yes      # compile transcript into canonical JSON profile storage
 hold inspect web                       # detailed JSON/object view
 ```
-
-Import/export are intentionally the human CLI transcript format. JSON remains the
-canonical on-disk profile storage, but `export` should decompile that JSON into
-the Cisco-style CLI form and `import` should compile the CLI form back into JSON.
-Use `inspect` for JSON/object inspection; do not make JSON the default
-import/export user experience.
 
 Import/apply should validate and show a change summary before overwriting unless `--yes` is supplied.
 
@@ -981,7 +898,7 @@ Resolved decisions for the current 0.4.0 direction:
 1. Use **On Hold** for the project and **`hold`** for the intended 0.4.0 operator command.
 2. Keep ad-hoc launch as bare `hold <cmd> [args...]`; use `--` only when a child executable conflicts with Hold syntax.
 3. Use `run` and `stop` as profile lifecycle verbs, not as a namespace for managing existing executions. `hold run web logs` remains invalid.
-4. Use concrete run IDs as the safest singular handles for `down`, `kill`, `logs`, `inspect`, and targeted `rm`. Profile-name selectors are allowed only when they resolve safely.
+4. Use concrete run IDs as the safest singular handles for `stop`, `kill`, `logs`, `inspect`, and targeted `rm`. Profile-name selectors are allowed only when they resolve safely.
 5. Keep `prune` for bulk inactive history cleanup and `rm` for targeted deletion; `rm --force` is the explicit stop-and-remove form for an active concrete run ID.
 6. Treat current Space-selected, local deterministic similarity as the minimum implemented v1 slice until the fuller `S/X/A/D/U` interaction model is implemented.
 
