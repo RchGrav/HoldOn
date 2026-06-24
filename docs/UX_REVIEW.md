@@ -9,7 +9,7 @@ Date: 2026-06-23
 The implementation-oriented version of these decisions now lives in [Hold 0.4 UX and CLI specification draft](HOLD_0_4_UX_SPEC.md), including the detailed pager/live-filter/similarity-filter requirements.
 
 
-On Hold already has a strong product core: `hold <cmd>` is simpler than `nohup`, safer than PID files, and far lighter than `systemd`. The current CLI is scriptable and technically coherent, but it exposes internal concepts too early: run IDs, profiles, public/root stores, target scopes, grants, TTY mode, pruning, and validation semantics all appear as separate pieces the user must assemble.
+On Hold already has a strong product core: `hold -d <cmd>` is simpler than `nohup`, safer than PID files, and far lighter than `systemd`, while foreground `hold <cmd>` can feel familiar to Docker users. The current CLI is scriptable and technically coherent, but it exposes internal concepts too early: run IDs, profiles, public/root stores, target scopes, grants, TTY mode, pruning, and validation semantics all appear as separate pieces the user must assemble.
 
 The highest-leverage UX move is to turn On Hold from a collection of legacy verbs into one guided command language for long-running jobs. For 0.4.0, the new `hold` UX is intended to replace the legacy primary surface, while preserving the good stdout/stderr, exit-code, and scriptability contracts for automation.
 
@@ -17,7 +17,7 @@ Recommended direction:
 
 1. Move to one unified stacked command grammar shared by normal CLI, captive shell, and Cisco-style config files.
 2. Make `profile`, `run`, `stop`, `down`, `kill`, `ps`, `show`, `logs`, `inspect`, `prune`, `rm`, `doctor`, `import`, and `export` the primary language everywhere.
-3. Let users stack captive-shell commands directly from the normal prompt, e.g. `hold profile web set env PORT=3000`, `hold show profile web`, `hold inspect web`, `hold logs web --follow`.
+3. Let users stack captive-shell commands directly from the normal prompt, e.g. `hold profile web env PORT=3000`, `hold show profile web`, `hold inspect web`, `hold logs web --follow`.
 4. Make this a deliberate breaking CLI redesign for 0.4.0: replace current legacy commands (`alias`, `aliases`, `list`, `tail`, action-first forms) with the unified grammar instead of carrying them as primary UX. Keep `prune` because it fits the final language, replace `console` with Docker-style `-i/-t/-it`, and replace `dump` with Docker-style `inspect`.
 5. Add a profile editor: `hold profile web edit` and an interactive `profile web` submode for advanced recipe, cwd, env, TTY/interactive flags, restart/readiness metadata, and access policy.
 6. Add profile config import/export so every captive-shell edit can be represented as a Cisco-style command transcript, while JSON remains canonical on disk.
@@ -25,8 +25,8 @@ Recommended direction:
 
 ## Current UX strengths
 
-- **Best possible first command**: `hold <command> [args...]` starts a background process without requiring config.
-- **Scriptability is protected**: successful starts print only the run ID to stdout; banners go to stderr.
+- **Best possible first command**: `hold <command> [args...]` can run in Docker-like foreground mode, while `hold -d <command> [args...]` starts a background process without requiring config.
+- **Scriptability is protected**: detached starts print only the run ID to stdout; banners go to stderr.
 - **Safety story is excellent**: On Hold validates process identity before signaling, and refuses unsafe actions.
 - **Short run IDs are approachable**: 8 hex chars are easier than full UUIDs.
 - **Docs are unusually complete**: README, quickstart, technical loop, CLI contract, profiles, security, and TTY docs exist.
@@ -124,8 +124,10 @@ Profile-name targeting is a convenience resolver, not a different kind of proces
 Preferred wording:
 
 ```text
-hold npm run dev              # launch an ad-hoc command, producing a run ID
-hold run web                  # launch the web definition, producing a run ID
+hold npm run dev              # foreground ad-hoc command, streaming stdout/stderr
+hold -d npm run dev           # detached ad-hoc command, printing a run ID
+hold run web                  # foreground profile run, streaming stdout/stderr
+hold run -d web               # detached profile run, printing a run ID
 hold run web --force          # launch one more web instance
 hold run web --multi 3        # launch exactly 3 web instances
 hold stop web                 # stop web only if exactly one web run is running
@@ -178,10 +180,10 @@ hold inspect web
 
 Target flag meanings:
 
-- `-d` / `--detach`: explicit background mode and run-id printout.
+- `-d` / `--detach`: explicit background mode and run-id printout; without it, run in Docker-like foreground mode.
 - `-i` / `--interactive`: keep stdin open without requiring a PTY; e.g. `hold run -i pythonshell`.
 - `-t` / `--tty`: allocate a pseudo-TTY for terminal behavior.
-- `-it`: stdin-open plus TTY; the normal shell/full-terminal experience. Detach keys leave it running under Hold.
+- `-it`: stdin-open plus TTY; the normal shell/full-terminal experience. `Ctrl+P Ctrl+Q` within 500ms detaches and leaves it running under Hold.
 - `--detach-keys`: configure the detach sequence, Docker-style.
 - `--name <profile>`: create/label a profile from the normalized launch recipe.
 - `-e` / `--env`, `--env-file`: launch/profile environment.
@@ -309,7 +311,7 @@ Example tree view:
 hold> tree running
 /running
   web
-    04a7dda8  12s  tty off  python -m http.server 9000
+    04a7dda8  12s  no tty  python -m http.server 9000
   api
     fe21dfb8  2m   tty on   node server.js
 ```
@@ -419,10 +421,11 @@ hold>
 ```text
 hold> profile web
 hold(profile:web)> show
-hold(profile:web)> set cwd /srv/web
-hold(profile:web)> set env NODE_ENV=development
-hold(profile:web)> set tty on
-hold(profile:web)> set readiness tcp localhost:3000 timeout 10s
+hold(profile:web)> cwd /srv/web
+hold(profile:web)> env NODE_ENV=development
+hold(profile:web)> interactive
+hold(profile:web)> tty
+hold(profile:web)> readiness tcp localhost:3000 timeout 10s
 hold(profile:web)> save
 hold(profile:web)> run
 hold(profile:web)> exit
@@ -459,7 +462,7 @@ Suggested conceptual shape:
   "command": ["/usr/bin/python3", "-m", "http.server", "9000"],
   "cwd": "/srv/web",
   "env": {"PYTHONUNBUFFERED": "1"},
-  "mode": {"tty": false, "interactive": false, "show_logs_on_run": false, "allow_multi": false},
+  "mode": {"tty": false, "interactive": false, "detach": false, "show_logs_on_run": false, "allow_multi": false},
   "readiness": {"type": "tcp", "host": "127.0.0.1", "port": 9000, "timeout_s": 10},
   "cleanup": {"stop_timeout_s": 5, "prune_on_success": false},
   "description": "local docs server",
@@ -483,9 +486,9 @@ Suggested conceptual shape:
    - validates before save
    - shows diff from previous profile
 3. **Command submode** for incremental changes:
-   - `set command -- node server.js`
-   - `set env PORT=3000`
-   - `unset env DEBUG`
+   - `command -- node server.js`
+   - `env PORT=3000`
+   - `no env DEBUG`
    - `grant alice run,stop,logs`
 
 Keep JSON as the canonical on-disk storage because On Hold already has JSON infrastructure, but make the human import/export format the Cisco-style CLI transcript.
@@ -539,7 +542,8 @@ profile web
   command /usr/bin/python3 -m http.server 9000
   cwd /srv/web
   env PYTHONUNBUFFERED=1
-  tty off
+  no interactive
+  no tty
   multi deny
   readiness tcp 127.0.0.1 9000 timeout 10s
   cleanup stop-timeout 5s
@@ -726,6 +730,7 @@ hold logs web --similar 'missing config'
 
 Protect the automation contract:
 
+- Detached `-d` starts print only the run ID to stdout; foreground starts stream child stdout/stderr.
 - Stdout/stderr separation, exit codes, `--quiet`, and `--json` should remain stable for scripts even while 0.4.0 replaces legacy primary verbs.
 - Add `--json` for machine-readable rich output rather than changing default parseable assumptions.
 - Interactive mode should only activate on TTY with no args or explicit `shell/menu`.
@@ -767,8 +772,8 @@ Protect the automation contract:
 
 The best drastic change for 0.4.0 is not to preserve old commands and add a menu beside them. It is to replace the legacy surface with a **one-language, three-surface product**:
 
-- **One-shot CLI**: `hold run web`, `hold logs web --follow`, `hold stop web`.
-- **Captive shell**: `profile web`, then `run`, `logs`, `stop`, `set env ...`.
+- **One-shot CLI**: `hold run -d web`, `hold run -it web`, `hold logs web --follow`, `hold stop web`.
+- **Captive shell**: `profile web`, then `run`, `logs`, `stop`, `env ...`, `no env ...`.
 - **Config transcript**: the same captive-shell commands saved in a file and imported/applied.
 
 This gives beginners an embarrassingly easy path while giving power users a composable, scriptable grammar. JSON remains the canonical on-disk store; the command language becomes the human UX contract.

@@ -41,7 +41,8 @@ Profiles may contain:
 Profile verbs should feel like service/template operations:
 
 ```sh
-hold run web                  # start profile web
+hold run web                  # start profile web in foreground, streaming stdout/stderr
+hold run -d web               # start profile web detached and print the run ID
 hold run web --force          # start one additional instance even if already active
 hold run web --multi 3        # start exactly 3 instances; N is required
 hold stop web                 # stop web only when exactly one active web run exists
@@ -98,8 +99,8 @@ If a profile selector has zero matching runs, say so and suggest `hold run <prof
 The easiest path remains a bare command:
 
 ```sh
-hold npm run dev
-hold python server.py
+hold npm run dev              # foreground: stream stdout/stderr, no stdin unless -i
+hold -d python server.py      # detached: print run ID
 hold -it bash                 # allocate an interactive TTY; detach leaves it running
 hold --name web npm run dev   # create/label profile web from the launch recipe
 ```
@@ -221,7 +222,7 @@ Launch flags:
 
 | Short | Long | Target meaning in Hold |
 | --- | --- | --- |
-| `-d` | `--detach` | Run in the background and print the run ID. This is Hold's normal service posture; the explicit flag is still accepted for Docker familiarity and for disambiguating `-it` flows. |
+| `-d` | `--detach` | Run in the background and print the run ID. Without `-d`, Hold stays attached to the child output like `docker run` foreground mode. |
 | `-i` | `--interactive` | Keep stdin open for the child process without requiring a PTY. This supports raw interactive stdin flows, just like Docker `-i`. |
 | `-t` | `--tty` | Allocate a pseudo-TTY for terminal behavior such as prompts, line editing, colors, and full-screen programs. |
 | `-it` | `--interactive --tty` | Combine stdin-open plus PTY: the normal terminal/shell experience. For profiles, `hold run -it <profile>` starts the profile attached when inactive, or reconnects to the singular active interactive/TTY run for that profile. The detach key sequence leaves the run alive under Hold. |
@@ -279,6 +280,25 @@ Interactive TTY rule:
 - If that profile has multiple active runs, refuse and show candidate run IDs. Do not guess.
 - No separate primary `console` or `attach` command is needed in the 0.4 target grammar.
 
+Foreground/detach behavior:
+
+- Without `-d`, `hold <cmd>` and `hold run <profile>` stay in the foreground. Child stdout and stderr stream to the invoking terminal.
+- Without `-i`, child stdin is not connected for input; the user may simply see output or a quiet/blinking cursor while the process runs.
+- `-i` connects stdin without adding terminal behavior.
+- `-t` allocates terminal behavior.
+- `-d` is the scriptable/background form and is the form that prints only the run ID to stdout.
+- `Ctrl-C` and other explicit terminal signals in foreground mode are forwarded to the child process group according to the selected terminal mode.
+- Closing the client terminal or losing the foreground client should be treated as a detach when Hold can do so safely; it should not be the normal lifecycle mechanism for stopping a run. Users stop runs with `stop`, `down`, `kill`, or `rm --force`.
+- The detach key sequence leaves the run alive and returns the user to the shell/captive CLI.
+
+Detach key handling:
+
+- Default detach sequence: `Ctrl+P` then `Ctrl+Q`, matching Docker muscle memory.
+- If `Ctrl+Q` arrives within 500ms after `Ctrl+P`, Hold consumes both keys and detaches; neither byte is forwarded to the child.
+- If `Ctrl+Q` does not arrive within 500ms, Hold forwards the pending `Ctrl+P` to the child and continues normally.
+- If a different byte arrives before the timeout, Hold forwards the pending `Ctrl+P` and then handles/forwards the new byte normally.
+- `--detach-keys SEQ` changes this sequence for the current run/profile.
+
 ### 3.2 `prune` vs `rm`
 
 `prune` is bulk housekeeping:
@@ -319,8 +339,8 @@ hold run web --multi 3        # start exactly 3 instances
 Profiles may contain instance-aware values. The friendly profile editing syntax may use compact forms such as:
 
 ```text
-set env HTTP_PORT=8000++
-set arg --port 8000++
+env HTTP_PORT=8000++
+arg --port 8000++
 ```
 
 Semantics: a profile-level allocator chooses deterministic per-instance values when `--force` or `--multi N` starts additional instances. The JSON model should store the allocator explicitly; the `++` form is human transcript sugar, not the only storage representation.
@@ -421,6 +441,10 @@ hold(profile:web)> run --multi 3       # start exactly 3 instances
 hold(profile:web)> stop                # stop only if singular active
 hold(profile:web)> stop --all
 hold(profile:web)> edit
+hold(profile:web)> interactive         # save long-form profile option
+hold(profile:web)> no interactive
+hold(profile:web)> tty
+hold(profile:web)> no tty
 hold(profile:web)> inspect             # detailed profile object
 hold(profile:web)> import ./web.hold   # context supplies profile name
 hold(profile:web)> export ./web.hold   # context supplies profile name
@@ -580,22 +604,22 @@ The reusable CLI library should therefore expose for 0.4.0:
 
 ## 5. CLI transcript config
 
-CLI transcript config is a human import/export format. JSON remains canonical on disk.
+CLI transcript config is a human import/export format. JSON remains canonical on disk. Profile submodes and transcript files should mimic Cisco IOS: direct commands configure fields, and `no <command>` removes or disables them. Avoid making `set` the primary grammar. Boolean run options use positive commands plus `no` negation, not short flags: `interactive`, `no interactive`, `tty`, `no tty`, `detach`, `no detach`.
 
 Example:
 
 ```text
 profile web
-  set description "local docs server"
-  set command -- /usr/bin/python3 -m http.server 9000
-  set cwd /srv/web
-  set env PYTHONUNBUFFERED=1
-  set interactive off
-  set tty off
-  set publish 9000:9000
-  set multi deny
-  set readiness tcp 127.0.0.1 9000 timeout 10s
-  set cleanup stop-timeout 5s
+  description "local docs server"
+  command -- /usr/bin/python3 -m http.server 9000
+  cwd /srv/web
+  env PYTHONUNBUFFERED=1
+  no interactive
+  no tty
+  publish 9000:9000
+  multi deny
+  readiness tcp 127.0.0.1 9000 timeout 10s
+  cleanup stop-timeout 5s
 exit
 ```
 
@@ -922,10 +946,10 @@ The new grammar should preserve On Hold’s good scripting discipline:
 Example:
 
 ```sh
-id="$(hold sleep 30)"
+id="$(hold -d sleep 30)"
 ```
 
-The command should print only the run ID to stdout on success.
+`-d`/`--detach` starts should print only the run ID to stdout on success. Foreground starts without `-d` stream child stdout/stderr instead of reserving stdout for the run ID.
 
 ## 10. Alignment status and decisions
 
