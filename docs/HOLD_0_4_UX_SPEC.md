@@ -37,6 +37,14 @@ Profiles may contain:
 - grants/access policy;
 - description/tags.
 
+Concrete naming and size rules:
+
+- Profile names are human handles for launching tools. Maximum length is **64** characters/bytes in the 0.4 target unless a later audited protocol budget proves this must shrink further.
+- Profile names may be used as safe selectors only when the operation can resolve them unambiguously.
+- Profile hashes are full SHA-256 hex strings: **64 lowercase hex characters**.
+- Existing/current run IDs are 8 lowercase hex characters with reserved sentinels inherited from the 0.3.x model. The 0.4 target may extend displayed/generated run IDs to **12 lowercase hex characters** for Docker familiarity, but that is a deliberate storage/protocol migration decision, not an accidental rename.
+- If sentinel selectors remain in the privileged protocol, `00000000` means “start/no concrete run yet” and all-`f` means an explicitly approved all-runs selector. The all-`f` sentinel length must match the active run-selector length.
+
 Profile verbs should feel like service/template operations:
 
 ```sh
@@ -149,6 +157,111 @@ Normalization rules:
 
 Profile conversion uses normalized launch facts, while profile editing can show observed facts as explanatory context.
 
+### 2.5 Public/private global profile model
+
+Global/root-managed profiles are ordinary reusable profiles first. They are **not**
+grants. Grants and sudoers entries are an optional access-control layer over
+root-managed profiles.
+
+The root-managed profile model has two mandatory halves:
+
+1. **Private root profile material**: canonical launch/rule data used to start
+   the command and validate privileged requests.
+2. **Public redacted discovery material**: safe metadata that lets normal users
+   discover root-managed profiles/runs and trigger the expected sudo/elevation
+   flow.
+
+The public side is not optional. A root-managed profile or run that cannot be
+discovered through redacted public state breaks the product model: users cannot
+select it, understand why sudo is being requested, or recover the normal
+profile/run relationship.
+
+Public redacted state must not expose private launch secrets or sensitive root
+paths. As a rule, do not publish raw argv, environment, log paths, console
+socket paths, private store paths, process identity internals, or grant rule
+payloads unless a later security review explicitly blesses a field as safe.
+
+The current branch still uses aggregate JSON files inherited from the 0.3.x
+model (`profiles.json` plus a public profile-name map under `public/`). That is
+acceptable as current storage reality. Moving to one-file-per-profile is a
+separate storage migration decision and must not be implied by the 0.4 UX
+rename alone.
+
+### 2.6 Profile hash authority and grant invalidation
+
+The profile hash is a derived capability digest. It is not user-editable profile
+state and must not become authoritative merely because a JSON object contains a
+hash field.
+
+Hash authority rule:
+
+1. Load the private canonical profile/rule material.
+2. Canonicalize the fields that define the privileged launch/request contract.
+3. Compute the profile hash from that canonical material.
+4. Compare the computed hash with the hash carried by a capability or sudoers
+   entry.
+5. Refuse the request if they differ.
+
+For the inherited 0.3.x/current model, the hash input is the resolved absolute
+binary path plus argc/argv framing. For the expanded 0.4 profile model, the
+canonical hash input must be specified before implementation and should cover
+the immutable launch/rule material that a grant relies on, while keeping purely
+descriptive metadata out of the capability digest.
+
+If profile material changes in a way that affects privileged launch semantics,
+the hash changes. Any dependent sudoers/grant entries must then be regenerated,
+invalidated, or intentionally retained against the old immutable material. A
+profile edit must never silently leave a sudoers entry pointing at a stale rule
+set while appearing to grant the newly edited profile.
+
+### 2.7 Proposed 0.4 sudoers/capability protocol
+
+The proposed 0.4 privileged protocol should make the sudoers-visible command
+readable while keeping semantic validation inside Hold.
+
+Target sudoers command shape:
+
+```text
+<subject> ALL=(root) NOPASSWD: /usr/bin/hold ^run <profile-name> --cap <profile-hash> <encoded-request>$
+```
+
+Concrete example:
+
+```text
+alice ALL=(root) NOPASSWD: /usr/bin/hold ^run web-server --cap af4764571f217a9bd2c50d8e97c54239bcacb15c835100e59fda84cb33603d14 [A-Za-z0-9_-]{1,768}$
+```
+
+Protocol specifics:
+
+- The sudoers-visible command includes the human profile handle:
+  `run web-server`.
+- `--cap <profile-hash>` carries the full 64-hex SHA-256 capability digest for
+  the private profile/rule material.
+- `<encoded-request>` is one bounded token containing the variable request:
+  supplied parameters, selector/allocation choices, and other user-controlled
+  options that the private profile rules allow.
+- The encoded request should use a shell/sudoers-friendly alphabet such as
+  unpadded base64url (`[A-Za-z0-9_-]`) so the privileged boundary does not rely
+  on spaces or shell quoting inside the variable payload.
+- The example `{1,768}` request budget is intentional protocol pressure:
+  sudoers and interactive terminal line-length limits must be budgeted before
+  adding fixed fields.
+- Sudoers should gate only a tight Hold-owned invocation shape. It should not
+  try to validate every profile parameter semantically.
+- Root-side Hold must load the private profile/rule material, recompute and
+  verify the profile hash, decode the request token, validate decoded values
+  against the private profile rules, and only then start/operate.
+- Private grant/rule records should be subject-scoped: each entry begins with or
+  includes the subject/user name and stores the immutable command/rule material
+  needed to validate that subject's encoded requests.
+
+Open portability constraint: the exact sudoers matcher syntax is not settled by
+this example. Some sudo versions treat command arguments as glob-style patterns
+rather than PCRE regular expressions. The 0.4 implementation must either emit a
+portable sudoers-safe equivalent or explicitly gate regex syntax on sudo version
+support. The protocol shape above is the product/security requirement; the
+matcher syntax is an implementation detail to verify.
+
 ## 3. Proposed command grammar and namespace rules
 
 The 0.4.0 normal shell CLI should be Docker-shaped. Command names and switches should match Docker where Hold has an equivalent concept; deviations must be intentional and documented. The most important ease-of-use deviation is optional `run` for ad-hoc launches.
@@ -175,7 +288,6 @@ Lifecycle:
   hold prune                                   # bulk cleanup of inactive past runs
   hold rm <inactive-runid|profile>
   hold rm --force <active-runid>
-  hold attach <target>                         # attach to a compatible running instance, Docker-style
 
 Hold-specific utility/config entry points:
   hold                                         # enter Cisco IOS-style captive CLI when TTY
@@ -371,7 +483,7 @@ You start in User EXEC mode with limited commands:
 ```text
 hold> ?
 Exec commands:
-  attach     Attach to a running instance
+  attach     Attach to a compatible running instance when supported
   console    Attach with a PTY (interactive)
   enable     Enter privileged mode
   list       List running instances
@@ -415,7 +527,7 @@ Privileged EXEC exposes administrative commands and configuration entry:
 ```text
 hold# ?
 Exec commands:
-  attach      Attach to a running instance
+  attach      Attach to a compatible running instance when supported
   configure   Enter configuration mode
   console     Attach with a PTY (interactive)
   grant       Grant a user capability for a profile
@@ -534,7 +646,7 @@ hold#
 
 Do not mix the mental models:
 
-- Normal shell commands mimic Docker: `hold run -d ...`, `hold ps`, `hold logs -f -n 100 ...`, `hold inspect ...`, `hold attach ...`.
+- Normal shell commands mimic Docker: `hold run -d ...`, `hold run -it ...`, `hold ps`, `hold logs -f -n 100 ...`, and `hold inspect ...`.
 - Captive CLI mimics Cisco IOS: `enable`, `configure terminal`, mode prompts, contextual `?`, `show`, `write`, `no`, `default`, `commit`.
 - Profile configuration words are IOS-style (`binary`, `argv`, `env`, `param`, `multi`, `pty-shim`, `no`, `default`, `info`, `commit`), not Docker flags.
 - Docker flags may be saved into a profile, but their persisted configuration is expressed with IOS-style words in captive/config transcript mode.
