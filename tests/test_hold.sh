@@ -2408,8 +2408,9 @@ test_hold_unified_cli_surface() {
   "$HOLD_BIN" prune "$id" >/dev/null || return 1
   "$HOLD_BIN" profiles >"$TEST_ROOT/hold-profiles.out" || return 1
   grep -q 'hold-web' "$TEST_ROOT/hold-profiles.out" || return 1
-  "$HOLD_BIN" profile list >"$TEST_ROOT/hold-profile-list.out" || return 1
-  grep -q 'hold-web' "$TEST_ROOT/hold-profile-list.out" || return 1
+  set +e; "$HOLD_BIN" profile list >"$TEST_ROOT/hold-profile-list.out" 2>"$TEST_ROOT/hold-profile-list.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold profile list: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'hold profiles' "$TEST_ROOT/hold-profile-list.err" || { cat "$TEST_ROOT/hold-profile-list.err" >&2; return 1; }
   "$HOLD_BIN" show profiles >"$TEST_ROOT/hold-show-profiles.out" || return 1
   grep -q 'hold-web' "$TEST_ROOT/hold-show-profiles.out" || return 1
   out=$("$HOLD_BIN" profile run hold-web 2>&1) || return 1
@@ -2904,7 +2905,14 @@ test_misc_action_guards() {
 
 test_public_cli_contract_guards() {
   local rc out id
+  "$HOLD_BIN" --help >"$TEST_ROOT/help-dash.out" || return 1
+  grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
+  grep -q 'hold profiles' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
+  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
+
   "$HOLD_BIN" help >"$TEST_ROOT/help.out" || return 1
+  grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
+  grep -q 'hold profiles' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
   grep -q 'hold profile export <name>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
   ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
 
@@ -2917,6 +2925,24 @@ test_public_cli_contract_guards() {
   grep -q 'hold profile <name> <show|start|run|create|set|export|rename|delete>' "$TEST_ROOT/help-profile.out" || {
     cat "$TEST_ROOT/help-profile.out" >&2; return 1;
   }
+  grep -q 'hold profile save <runid> as web' "$TEST_ROOT/help-profile.out" || { cat "$TEST_ROOT/help-profile.out" >&2; return 1; }
+  grep -q 'hold profiles' "$TEST_ROOT/help-profile.out" || { cat "$TEST_ROOT/help-profile.out" >&2; return 1; }
+  ! grep -q 'hold profile <list|' "$TEST_ROOT/help-profile.out" || { cat "$TEST_ROOT/help-profile.out" >&2; return 1; }
+  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help-profile.out" || { cat "$TEST_ROOT/help-profile.out" >&2; return 1; }
+
+  "$HOLD_BIN" profile -h >"$TEST_ROOT/profile-dash-help.out" || return 1
+  grep -q 'hold profile save <runid> as web' "$TEST_ROOT/profile-dash-help.out" || { cat "$TEST_ROOT/profile-dash-help.out" >&2; return 1; }
+  grep -q 'hold profiles' "$TEST_ROOT/profile-dash-help.out" || { cat "$TEST_ROOT/profile-dash-help.out" >&2; return 1; }
+  ! grep -q 'hold profile <list|' "$TEST_ROOT/profile-dash-help.out" || { cat "$TEST_ROOT/profile-dash-help.out" >&2; return 1; }
+  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/profile-dash-help.out" || { cat "$TEST_ROOT/profile-dash-help.out" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" profile list >/dev/null 2>"$TEST_ROOT/profile-list-removed.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold profile list: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'hold profiles' "$TEST_ROOT/profile-list-removed.err" || { cat "$TEST_ROOT/profile-list-removed.err" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" profile ls -v >/dev/null 2>"$TEST_ROOT/profile-ls-removed.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold profile ls -v: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'hold profiles -v' "$TEST_ROOT/profile-ls-removed.err" || { cat "$TEST_ROOT/profile-ls-removed.err" >&2; return 1; }
 
   set +e; "$HOLD_BIN" profile web >/dev/null 2>"$TEST_ROOT/profile-name-usage.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "hold profile web: rc=$rc (want 5)" >&2; return 1; }

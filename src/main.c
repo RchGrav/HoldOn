@@ -770,14 +770,10 @@ int main(int argc, char **argv) {
         const char *sub = cmd_argv[0];
         if (!strcmp(sub, "list") || !strcmp(sub, "ls")) {
             bool verbose = cmd_argc == 2 && (!strcmp(cmd_argv[1], "-v") || !strcmp(cmd_argv[1], "--verbose"));
-            if (cmd_argc > 2 || (cmd_argc == 2 && !verbose)) {
-                fprintf(stderr, "usage: hold profile list [-v]\n");
-                free(cmd_argv);
-                return 5;
-            }
-            int rc = hold_cmd_aliases_action(&inv, &user_store, &system_store, verbose);
+            fprintf(stderr, "hold: error: profile %s command was removed; use `hold profiles%s`\n",
+                    sub, verbose ? " -v" : "");
             free(cmd_argv);
-            return rc;
+            return 5;
         }
 
         if (!strcmp(sub, "save")) {
