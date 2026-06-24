@@ -21,9 +21,9 @@ The hardening backlog in section 11 is part of the same 0.4.0 release plan. The 
 
 ## 2. Core model
 
-### 2.1 Profile
+### 2.1 Profiles are definitions
 
-A profile is a reusable launch definition for a tool. It is not itself a running process.
+A profile is a reusable launch definition for a tool. It is not itself a running process. Profiles may have zero, one, or many concrete executions associated with them over time.
 
 Profiles may contain:
 
@@ -31,28 +31,34 @@ Profiles may contain:
 - working directory;
 - environment variables;
 - console preference;
-- multi-run policy;
+- multi-run and instance allocation policy;
 - readiness/health metadata;
 - cleanup settings;
 - grants/access policy;
 - description/tags.
 
-Profile operations are definition-oriented:
+Profile verbs should feel like service/template operations:
 
 ```sh
-hold profile web show
-hold profile web set command -- /usr/bin/python3 -m http.server 9000
-hold profile web set cwd /srv/web
-hold profile web set env PYTHONUNBUFFERED=1
-hold profile web start
-hold profile web export --format cli
+hold run web                  # start profile web
+hold run web --force          # start one additional instance even if already active
+hold run web --multi 3        # start exactly 3 instances; N is required
+hold stop web                 # stop web only when exactly one active web run exists
+hold stop web --all           # explicitly stop every active web run
 ```
 
-### 2.2 Run
+`run` is a profile verb in the 0.4 target grammar. It should not become a namespace for managing existing executions. Avoid forms such as:
 
-A run is one concrete execution. The run ID is the stable singular control handle.
+```sh
+hold run web logs             # do not use
+hold run web stop             # do not use
+```
 
-Runs have:
+### 2.2 Run IDs are concrete executions
+
+A run ID is one concrete execution and is the stable singular control handle. A run ID may have been created from a profile, or it may be an ad-hoc command with no profile.
+
+Run records have:
 
 - run ID;
 - process identity;
@@ -62,91 +68,181 @@ Runs have:
 - optional profile label;
 - scope;
 - timestamps;
-- console availability.
+- console availability;
+- observed launch/adoption facts;
+- normalized launch/security facts.
 
-Execution-control actions target runs. A profile name may be accepted as a convenience selector only when it resolves safely.
-
-```sh
-hold stop 04a7dda8       # exact run
-hold stop web            # valid only if web has exactly one running run
-hold stop web --all      # explicitly affect all running web runs
-hold logs web --follow   # valid only if web resolves to one relevant run
-```
-
-If profile `web` has zero matching runs, report that nothing matches and suggest a profile action such as `hold profile web start`. If it has multiple matching runs, refuse and show candidate run IDs unless `--all` or another explicit selector is supplied.
-
-### 2.3 Ad hoc run command
-
-`run` is a launch command, not a namespace for managing existing executions.
+Run-ID lifecycle verbs should act on concrete executions:
 
 ```sh
-hold run -- npm run dev
+hold down 04a7dda8            # graceful stop for one concrete execution
+hold kill 04a7dda8            # force stop for one concrete execution
+hold logs 04a7dda8            # log viewer for one concrete execution
+hold console 04a7dda8         # attach to its PTY console, when present
+hold dump 04a7dda8            # structured run-record dump, not log text
+hold rm 04a7dda8              # remove only if inactive
+hold rm --force 04a7dda8      # stop, verify, then remove an active run ID
 ```
 
-Avoid awkward command forms such as:
+Profile names may be accepted by run-oriented commands only as safe selectors:
 
 ```sh
-hold run web stop       # do not use
+hold logs web                 # valid only if web resolves to one relevant run
+hold down web                 # valid only if web resolves to one active run
 ```
 
-Use natural execution verbs instead:
+If a profile selector has zero matching runs, say so and suggest `hold run <profile>`. If it has multiple matching runs, refuse and show candidate run IDs unless the command has an explicit `--all` policy.
+
+### 2.3 Ad-hoc launches stay magic and direct
+
+The easiest path remains a bare command:
 
 ```sh
-hold stop web
-hold logs web
-hold open web
-hold status web
-hold prune web
+hold npm run dev
+hold python server.py
+hold --console bash
 ```
 
-## 3. Proposed command grammar
+Use `--` only when the executable name would otherwise be parsed as a Hold option or reserved command:
 
-The 0.4.0 CLI surface is the command set below. Implementation may stage internal refactors behind this surface, but the release should not defer major user-facing pieces of the grammar to a later minor release.
+```sh
+hold -- logs                  # launch an executable named "logs"
+hold --console -- logs        # launch executable "logs" with an attachable console
+```
+
+Do not document strange flag-name executables as the primary mental model. The practical rule is: `--` ends Hold parsing when a child command conflicts with the Hold command language.
+
+### 2.4 Observed vs normalized launch facts
+
+The moment an execution becomes a run ID, Hold must solve enough path and identity information to make storage, profile conversion, public visibility, and privilege decisions deterministic.
+
+Store both truths:
+
+```json
+{
+  "observed": {
+    "exe": "/usr/bin/python3",
+    "argv": ["python3", "./server.py", "--config", "configs/dev.yml"],
+    "cwd": "/home/rich/project"
+  },
+  "normalized": {
+    "argv": [
+      "/usr/bin/python3",
+      "/home/rich/project/server.py",
+      "--config",
+      "/home/rich/project/configs/dev.yml"
+    ]
+  }
+}
+```
+
+Observed facts are for audit and UI explanation. Normalized facts are authoritative for replay, profile creation, trust boundaries, and public/system eligibility.
+
+Normalization rules:
+
+1. Resolve the executable image path.
+2. Capture the working directory.
+3. For each relative argv token that is path-like (`./x`, `../x`, or contains `/`), resolve it against captured cwd when it exists.
+4. For known interpreter shapes such as `python ./app.py`, `node ./server.js`, `ruby ./tool.rb`, `bash ./script.sh`, and `perl ./thing.pl`, treat the script argument as code payload and apply the same public/system trust rule used for executable targets.
+5. If normalized executable or interpreted payload is inside the invoking user's home or otherwise not an allowed system target, it must not become a public/system run ID or protected public profile merely because it was launched through an elevated interpreter.
+
+Profile conversion uses normalized launch facts, while profile editing can show observed facts as explanatory context.
+
+## 3. Proposed command grammar and namespace rules
+
+The 0.4.0 CLI surface should be a small set of top-level verbs plus navigable object namespaces. Top-level commands are fast paths; captive-shell contexts let users omit the target already selected.
+
+### 3.1 Top-level command set
 
 ```text
-hold run -- <cmd> [args...]
+Ad-hoc launch:
+  hold <cmd> [args...]
+  hold [hold-options] -- <cmd> [args...]        # only when cmd conflicts with Hold syntax
 
-hold profile <name> show
-hold profile <name> create -- <cmd> [args...]
-hold profile <name> create-from-run <id> [--adopt]
-hold profile <name> edit [--format cli|json]
-hold profile <name> delete
-hold profile <name> rename <new-name>
-hold profile <name> start
-hold profile <name> restart
-hold profile <name> set command -- <cmd> [args...]
-hold profile <name> set cwd <path>
-hold profile <name> set env KEY=VALUE
-hold profile <name> unset env KEY
-hold profile <name> set console on|off
-hold profile <name> set multi allow|deny
-hold profile <name> export [--format cli|json]
-hold profile <name> grant <principal> [actions]
-hold profile <name> revoke <principal> [actions]
+Profile lifecycle:
+  hold run <profile> [--force|--multi N]        # N is required for --multi
+  hold stop <profile> [--all]
 
-Current branch profile v1 evidence: `hold profile <name> create -- <cmd> [args...]`, `set command -- <cmd> [args...]`, `rename <new-name>`, and `delete` manage a user-local profile command recipe and round-trip through profile transcript/JSON export. `hold shell` also supports a first profile submode: `profile <name>` enters context, local `show/create/set/start/rename/delete` commands are rewritten through the same name-first grammar, and `back` returns to the top prompt. The remaining field editors (`cwd`, `env`, `console`, `multi`, readiness, cleanup, grants) are still release-gated follow-up work.
+Concrete execution lifecycle:
+  hold down <target>
+  hold kill <target>
 
-hold show runs
-hold show profiles
-hold show profile <name>
-hold show grants [profile]
-hold show tree <view>
+Viewing and inspection:
+  hold ps                                      # active run IDs
+  hold ps -a                                   # active + inactive retained run IDs
+  hold active                                  # active run-id view/list
+  hold recent                                  # inactive/recent retained run-id view/list
+  hold logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]
+  hold console <target>
+  hold dump <target>                           # structured object dump, not log text
 
-hold status <target>
-hold inspect <target>
-hold logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]
-hold view <target> [--follow|-f] [--filter TEXT] [--plain|--interactive]
-hold open <target>
-hold stop <target> [--all]
-hold kill <target> [--all]
-hold prune <target> [--all]
-hold adopt <run-id> <profile>
+Cleanup/removal:
+  hold prune                                   # bulk cleanup of inactive past runs
+  hold rm <inactive-runid|profile>
+  hold rm --force <active-runid>
 
-hold clean exited|stale|failed|all [--dry-run|--yes]
-hold doctor [target]
-hold import <file> [--dry-run|--yes]
-hold export profile <name> [--format cli|json]
+Profiles:
+  hold profile                                 # enter/list profile namespace
+  hold profile <name>                          # show/select profile
+  hold profile save <runid> as <name>
+  hold import <file> as <profile>
+  hold export <profile> as <file>
+
+Operations:
+  hold shell                                   # explicit captive/operator shell
+  hold doctor [target]
+  hold help [topic]
 ```
+
+`ps` always lists run IDs. If a run ID came from a profile, show the profile name in a column; otherwise show `-`.
+
+`logs` owns log text. Former dump-style log output belongs under `logs <target> --plain`. `dump` is reserved for structured/raw object data such as full run records, profile JSON/config, public index entries, and diagnostic store objects.
+
+### 3.2 `prune` vs `rm`
+
+`prune` is bulk housekeeping:
+
+```sh
+hold prune
+```
+
+It removes inactive past runs that are no longer active. It must not stop active processes and must not remove profiles.
+
+`rm` is targeted deletion:
+
+```sh
+hold rm 04a7dda8              # remove inactive run record/artifacts
+hold rm web                   # remove profile web, subject to safety checks
+hold rm --force 04a7dda8      # stop and remove one active run ID
+```
+
+`rm --force` should be concrete-run focused. If given a profile name that resolves to multiple active run IDs, refuse and show candidates unless a future explicit all-instances policy is designed.
+
+### 3.3 Profile multiplicity and instance allocation
+
+Default profile start is singular-safe:
+
+```sh
+hold run web
+```
+
+If profile `web` already has an active run, refuse and suggest:
+
+```sh
+hold run web --force          # start one more instance
+hold run web --multi 3        # start exactly 3 instances
+```
+
+`--multi` requires a positive number. Boolean `--multi` is not a valid 0.4 target UX.
+
+Profiles may contain instance-aware values. The friendly profile editing syntax may use compact forms such as:
+
+```text
+set env HTTP_PORT=8000++
+set arg --port 8000++
+```
+
+Semantics: a profile-level allocator chooses deterministic per-instance values when `--force` or `--multi N` starts additional instances. The JSON model should store the allocator explicitly; the `++` form is human transcript sugar, not the only storage representation.
 
 ## 4. Captive shell and navigation
 
@@ -154,71 +250,196 @@ Bare `hold` on an interactive TTY should open a captive shell/dashboard. In non-
 
 The shell supports the same command language as the one-shot CLI, plus navigation commands such as `cd`, `back`, `pwd`, `ls`, and `tree`.
 
-### 4.1 View namespaces
+### 4.1 Namespace principles
 
-The shell should expose navigable indexed views over the same underlying profile/run objects:
+The captive shell should feel like Cisco IOS, diskpart, and Docker had one small object shell:
 
-```text
-/runs                 concrete executions
-/profiles             launch definitions
-/running              running executions grouped by profile
-/dormant              profiles with no running execution
-/stopped              cleanly stopped/exited runs
-/failed               failed runs grouped by profile
-/stale                records that cannot be safely validated
-/system               system-scoped visible objects
-/user                 user-scoped objects
-/grants               delegation/access view
-/logs                 recent log-centric view
-/time                 runs grouped by start time/calendar bucket
-/uptime               running runs grouped/sorted by uptime
-/recent               newest runs/events first
-/oldest               oldest running runs first
-```
+1. **Bare namespace commands enter that namespace.** `profile` enters `hold(profile)>`; `runid` enters `hold(runid)>`.
+2. **Namespaces list and select.** Namespace prompts expose `ls`, `select`, `help`, and `back` before object-specific actions.
+3. **Objects expose actions.** A selected profile or run ID lets the user omit the target because the prompt already supplies context.
+4. **Top-level verbs still exist.** `run`, `stop`, `down`, `logs`, `console`, `dump`, `prune`, and `rm` remain first-class top-level commands; navigation is for discoverability, not mandatory ceremony.
+5. **`ps` always lists run IDs.** At root it lists active run IDs; `ps -a` includes inactive retained run IDs. Inside a profile, `ps` lists that profile's run IDs.
+6. **Profiles can have run IDs; run IDs do not need profiles.** Profile-originated run IDs appear under both the profile context and the run-id views. Ad-hoc run IDs show profile as `-`.
+7. **Top-level commands require explicit source/destination.** Context commands inherit context and can use shorter forms.
 
-The tree is an indexed navigation system, not a single hierarchy. The same run can appear under profile, state, scope, time, uptime, failure, and log views while resolving to the same underlying run record.
-
-### 4.2 Reversible redirects
-
-Some paths are convenience paths that canonicalize to another view. Navigation should preserve the route the user took so `back` feels natural.
-
-Example:
+Prompt shape:
 
 ```text
-hold> cd profiles/web
-hold(/profiles/web)> cd running
-redirect: /profiles/web/running -> /running/web
-hold(/running/web)> back
-hold(/profiles/web)>
+hold>                         root
+hold(profile)>                profile namespace
+hold(profile:web)>            selected profile
+hold(profile:web:abcd1234)>   selected run ID reached through profile web
+hold(runid)>                  run-id namespace
+hold(runid:abcd1234)>         selected run ID
 ```
 
-Direct navigation backs up canonically:
+Universal captive-shell commands:
 
 ```text
-hold> cd running/web
-hold(/running/web)> back
-hold(/running)>
+ls                 list children or relevant rows in this context
+select <name|id>   enter a child object
+help               show valid commands for this context
+back               return to the previous context
+..                 alias for back
+/                  return to root
+exit               leave the captive shell
 ```
+
+### 4.2 Root and namespace contexts
+
+Root prompt examples:
+
+```text
+hold> ps                       # active run IDs
+hold> ps -a                    # active + inactive retained run IDs
+hold> profile                  # enter profile namespace
+hold> runid                    # enter run-id namespace
+hold> run web                  # start profile web
+hold> stop web                 # stop profile web only if singular active
+hold> down abcd1234            # stop concrete run ID
+hold> logs web                 # valid only if web resolves safely
+hold> console abcd1234
+hold> dump abcd1234            # structured object dump
+hold> prune                    # inactive history cleanup
+hold> rm abcd1234              # targeted inactive run deletion
+hold> rm --force abcd1234      # stop and delete active concrete run
+hold> import ./web.hold as web
+hold> export web as ./web.hold
+```
+
+Profile namespace:
+
+```text
+hold> profile
+hold(profile)> ls
+hold(profile)> select web
+hold(profile:web)>
+```
+
+Inside `hold(profile)>`:
+
+```text
+ls                         list profiles
+select <profile>           enter selected profile
+run <profile>              start selected profile by name
+rm <profile>               remove selected profile, subject to safety checks
+import <file> as <profile> import explicit profile name
+export <profile> as <file> export explicit profile name
+help
+back
+```
+
+Selected profile context:
+
+```text
+hold(profile:web)> ls                  # profile summary and available actions
+hold(profile:web)> ps                  # active run IDs for web
+hold(profile:web)> ps -a               # active + inactive retained run IDs for web
+hold(profile:web)> run                 # start web
+hold(profile:web)> run --force         # start one additional instance
+hold(profile:web)> run --multi 3       # start exactly 3 instances
+hold(profile:web)> stop                # stop only if singular active
+hold(profile:web)> stop --all
+hold(profile:web)> edit
+hold(profile:web)> dump                # structured profile dump
+hold(profile:web)> import ./web.hold   # context supplies profile name
+hold(profile:web)> export ./web.hold   # context supplies profile name
+hold(profile:web)> rm                  # remove profile, subject to safety checks
+hold(profile:web)> select abcd1234     # enter a run ID associated with this profile
+hold(profile:web:abcd1234)>
+```
+
+Run-id namespace:
+
+```text
+hold> runid
+hold(runid)> ls
+hold(runid)> ps
+hold(runid)> ps -a
+hold(runid)> select abcd1234
+hold(runid:abcd1234)>
+```
+
+Inside `hold(runid)>`, users browse execution records, not profiles. Commands are intentionally small: `ls`, `ps`, `ps -a`, `select <runid>`, `help`, and `back`.
+
+Selected run-id context:
+
+```text
+hold(runid:abcd1234)> ls
+hold(runid:abcd1234)> logs
+hold(runid:abcd1234)> console
+hold(runid:abcd1234)> down
+hold(runid:abcd1234)> kill
+hold(runid:abcd1234)> dump              # full structured run record
+hold(runid:abcd1234)> save web          # create profile web from this run ID
+hold(runid:abcd1234)> rm                # remove if inactive
+hold(runid:abcd1234)> rm --force        # stop, verify, and remove if active
+hold(runid:abcd1234)> back
+```
+
+If a selected run ID was reached through a profile, keep that route in the prompt and back-stack:
+
+```text
+hold(profile:web)> select abcd1234
+hold(profile:web:abcd1234)> logs
+hold(profile:web:abcd1234)> back
+hold(profile:web)>
+```
+
+Top-level `as` rule:
+
+```text
+hold> profile save abcd1234 as web
+hold> import ./web.hold as web
+hold> export web as ./web.hold
+```
+
+Context rule:
+
+```text
+hold(runid:abcd1234)> save web          # run ID is selected, so no `as`
+hold(profile:web)> export ./web.hold    # profile is selected, so no `as`
+```
+
+### 4.2.1 Reversible redirects
+
+Views may connect backwards for discoverability, but `back` should follow the route the user took.
+
+Example: from profile to its active concrete run view:
+
+```text
+hold(profile:web)> ps
+RUNID     STATE    PROFILE  AGE  COMMAND
+abcd1234  active   web      2m   npm run dev
+
+hold(profile:web)> select abcd1234
+hold(profile:web:abcd1234)> back
+hold(profile:web)>
+```
+
+If a future shortcut redirects `hold(profile:web)> active` to an active-run view, the back-stack still returns to `hold(profile:web)>`, not to the canonical root active view.
 
 ### 4.3 Universal completion namespaces
 
 Completion is a first-class feature of the CLI library, not a special case inside
-`hold shell`. Any namespace that can be listed by `list`, viewed by `show`, or
-described by `help` should also be available to tab completion through the same
-provider API. The command tree, help output, and completion candidates should
-share one source of truth wherever practical.
+`hold shell`. Any namespace that can be listed by `ps`, `ls`, or namespace entry
+commands such as `profile`/`runid`, dumped by `dump`, or described by `help`
+should also be available to tab completion through the same provider API. The
+command tree, help output, and completion candidates should share one source of
+truth wherever practical.
 
 Completion namespaces include at minimum:
 
 ```text
-commands              help, profile, save, recent, start, stop, status, show, logs, view, doctor, exit, back
-profiles              named reusable command recipes
-runs                  active and unpruned run IDs
-recent-runs           newest unpruned run IDs, including stopped runs with reusable argv recipes
-recent-commands       past CLI command strings / captured argv recipes that have not been saved as profiles
-views                 /runs, /profiles, /running, /dormant, /failed, /stale, /recent, /time, /uptime
-profile-subcommands   show, create, set, start, rename, delete, export, grant, revoke
-state-actions         stop, logs, view, inspect, clean/prune where valid for the selected object
+commands              help, profile, runid, run, stop, down, kill, ps, active, recent, logs, console, dump, prune, rm, import, export, doctor, exit, back
+profiles              named reusable launch definitions
+runids                active and unpruned run IDs
+recent-runids         newest unpruned run IDs, including inactive retained executions
+recent-commands       past ad-hoc argv recipes that have not been saved as profiles
+views                 active, recent, profile, runid, time, uptime, failed, stale, grants
+profile-context       ls, ps, run, stop, edit, dump, import, export, rm, select, help, back
+runid-context         ls, logs, console, down, kill, dump, save, rm, help, back
+state-actions         logs, console, down, kill, dump, prune/rm where valid for the selected object
 ```
 
 The completion provider must be context-aware:
@@ -226,11 +447,13 @@ The completion provider must be context-aware:
 ```text
 hold> p<Tab>                 -> profile
 hold> profile w<Tab>         -> profile web
-hold> save <Tab>             -> recent run IDs plus `last`
-hold> save 8f3a<Tab> as      -> complete the run ID, then suggest `as`
-hold> save last as <Tab>     -> suggest profile names only for explicit overwrite flows; otherwise suggest no existing name
-hold(profile:web)> s<Tab>    -> show/start/set/... local to the profile context
-hold> stop <Tab>             -> active run IDs plus profile names only when they resolve to one active run
+hold> profile s<Tab>        -> profile save
+hold> profile save <Tab>    -> recent run IDs plus `last`
+hold> profile save 8f3a<Tab> as -> complete the run ID, then suggest `as`
+hold(profile:web)> r<Tab>    -> run/rm local to the selected profile context
+hold(runid:8f3a)> s<Tab>     -> save local to the selected run-id context
+hold> stop <Tab>             -> profile names with singular active runs, plus explicit candidates after ambiguity help
+hold> down <Tab>             -> active run IDs
 ```
 
 For 0.4.0, the target is basic, reliable tab completion inside and outside the
@@ -254,12 +477,12 @@ current token or command line. The original text, including blank input, is part
 of the cycle so the user can always return to exactly where they started:
 
 ```text
-hold> s<Tab>       # ambiguous: save/show/start/status/stop, completes only shared prefix if any
-hold> s<Down>      # save
-hold> <Down>       # show
-hold> <Down>       # start
-hold> <Up>         # show
-hold> <cycle...>   # eventually returns to the original `s` or blank input
+hold> p<Tab>       # profile/ps/prune, completes only shared prefix if any
+hold> p<Down>      # profile
+hold> <Down>       # ps
+hold> <Down>       # prune
+hold> <Up>         # ps
+hold> <cycle...>   # eventually returns to the original `p` or blank input
 ```
 
 No ghost text is part of the design. Completion either inserts real text, shows
@@ -298,10 +521,10 @@ exit
 Commands:
 
 ```sh
-hold export profile web --format cli > web.hold
-hold export profile web --format json > web.json
-hold import web.hold --dry-run
-hold import web.hold --yes
+hold export web as web.hold
+hold export web as web.json --format json
+hold import web.hold as web --dry-run
+hold import web.hold as web --yes
 ```
 
 Import/apply should validate and show a change summary before overwriting unless `--yes` is supplied.
@@ -611,7 +834,7 @@ The new grammar should preserve On Hold’s good scripting discipline:
 Example:
 
 ```sh
-id="$(hold run -- sleep 30)"
+id="$(hold sleep 30)"
 ```
 
 The command should print only the run ID to stdout on success.
@@ -623,15 +846,18 @@ Current branch status is tracked in [0.4.0 branch alignment and follow-up matrix
 Resolved decisions for the current 0.4.0 direction:
 
 1. Use **On Hold** for the project and **`hold`** for the intended 0.4.0 operator command.
-2. Keep `run` launch-only. Do not make `hold run <target> stop/logs/open` a management namespace.
-3. Omit `profile <name> stop` as a primary command so the definition/run distinction stays clear; use `hold stop <target>` with singular profile resolution rules.
-4. Treat current Space-selected, local deterministic similarity as the minimum implemented v1 slice until the fuller `S/X/A/D/U` interaction model is implemented.
+2. Keep ad-hoc launch as bare `hold <cmd> [args...]`; use `--` only when a child executable conflicts with Hold syntax.
+3. Use `run` and `stop` as profile lifecycle verbs, not as a namespace for managing existing executions. `hold run web logs` remains invalid.
+4. Use concrete run IDs as the safest singular handles for `down`, `kill`, `logs`, `console`, `dump`, and targeted `rm`. Profile-name selectors are allowed only when they resolve safely.
+5. Keep `prune` for bulk inactive history cleanup and `rm` for targeted deletion; `rm --force` is the explicit stop-and-remove form for an active concrete run ID.
+6. Treat current Space-selected, local deterministic similarity as the minimum implemented v1 slice until the fuller `S/X/A/D/U` interaction model is implemented.
 
 Still-open release decisions:
 
-1. Whether `hold profile <name> restart` is safe sugar or must require explicit policy such as singular-only vs `--all`.
-2. Whether `/active` and `/history` are primary shell namespaces or aliases over `/running` and state-specific history views.
-3. Whether full before/visible/after deques, raw tail ring, sparse indexes, and richer similarity controls are required before the 0.4.0 release or can remain post-0.4 follow-up with the current dynamic filter as the core feature.
+1. Whether restart exists in 0.4.0 at all, and if so whether it is profile-only, singular-run-only, or requires an explicit all-instances policy.
+2. Whether the run-id namespace should be spelled `runid`, `id`, or both, while avoiding public `run` as an execution-record noun.
+3. How much of the instance allocator syntax (`8000++`) must ship with `--multi N`, versus documenting the JSON model first and adding transcript sugar later.
+4. Whether full before/visible/after deques, raw tail ring, sparse indexes, and richer similarity controls are required before the 0.4.0 release or can remain post-0.4 follow-up with the current dynamic filter as the core feature.
 
 ## 11. 0.4.0 engineering hardening backlog
 
