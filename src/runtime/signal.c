@@ -42,11 +42,8 @@ static int validate_signal_target(const char *id,
     }
 
     char boot[128] = {0};
-    if (!r->has_boot || !hold_current_boot_id(boot, sizeof(boot))) {
-        fprintf(stderr, "hold: error: run %s could not be validated for signaling (missing boot_id)\n", id);
-        return 2;
-    }
-    if (strcmp(r->boot_id, boot) != 0) {
+    bool have_boot = hold_current_boot_id(boot, sizeof(boot));
+    if (r->has_boot && have_boot && strcmp(r->boot_id, boot) != 0) {
         fprintf(stderr, "hold: error: run %s is stale and cannot be signaled\n", id);
         return 2;
     }
@@ -55,17 +52,29 @@ static int validate_signal_target(const char *id,
     uint64_t leader_starttime = 0;
     bool have_leader_stat = hold_read_proc_stat_tokens(r->pid, &leader_state, &leader_starttime) == 0;
     if (have_leader_stat && leader_state != 'Z') {
-        if (r->proc_starttime_ticks == 0 || leader_starttime != r->proc_starttime_ticks) {
+        if (r->proc_starttime_ticks != 0 && leader_starttime != r->proc_starttime_ticks) {
             fprintf(stderr, "hold: error: run %s process identity differs from the record and cannot be signaled\n", id);
             return 2;
         }
+        if (r->proc_starttime_ticks == 0 && r->exe_dev != 0 && r->exe_ino != 0) {
+            uint64_t exe_dev = 0;
+            uint64_t exe_ino = 0;
+            if (hold_read_proc_exe(r->pid, &exe_dev, &exe_ino) == 0 &&
+                (exe_dev != r->exe_dev || exe_ino != r->exe_ino)) {
+                fprintf(stderr, "hold: error: run %s process identity differs from the record and cannot be signaled\n", id);
+                return 2;
+            }
+        }
         pid_t current_pgid = getpgid(r->pid);
         pid_t current_sid = getsid(r->pid);
-        if (current_pgid != r->pgid || current_sid != r->sid) {
+        if ((current_pgid >= 0 && current_pgid != r->pgid) ||
+            (current_sid >= 0 && current_sid != r->sid)) {
             fprintf(stderr, "hold: error: run %s process group/session differs from the record and cannot be signaled\n", id);
             return 2;
         }
-        return 0;
+        if (current_pgid >= 0 && current_sid >= 0) {
+            return 0;
+        }
     }
     if (have_leader_stat && r->proc_starttime_ticks != 0 && leader_starttime != r->proc_starttime_ticks) {
         fprintf(stderr, "hold: error: run %s process identity differs from the record and cannot be signaled\n", id);
