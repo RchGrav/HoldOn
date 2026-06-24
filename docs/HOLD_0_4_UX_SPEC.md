@@ -251,16 +251,36 @@ Protocol specifics:
 - Root-side Hold must load the private profile/rule material, recompute and
   verify the profile hash, decode the request token, validate decoded values
   against the private profile rules, and only then start/operate.
-- Private grant/rule records should be subject-scoped: each entry begins with or
-  includes the subject/user name and stores the immutable command/rule material
-  needed to validate that subject's encoded requests.
+- Grant records are subject-scoped for authorization, not for redefining the
+  profile. A grant may bind a subject to allowed verbs for a profile and may
+  optionally narrow allowed parameters, but the profile hash remains the
+  validation authority for launch and request rules. Grant files must not store a
+  second free-floating copy of immutable command/rule material that can drift
+  from the hash-pinned profile. If per-subject constraints become more than a
+  simple narrowing policy, they need their own immutable binding/digest instead
+  of silently living outside the profile hash.
 
-Open portability constraint: the exact sudoers matcher syntax is not settled by
-this example. Some sudo versions treat command arguments as glob-style patterns
-rather than PCRE regular expressions. The 0.4 implementation must either emit a
-portable sudoers-safe equivalent or explicitly gate regex syntax on sudo version
-support. The protocol shape above is the product/security requirement; the
-matcher syntax is an implementation detail to verify.
+Sudoers matcher constraint:
+
+- sudo does **not** provide PCRE matching for command arguments. Do not design or
+  document a PCRE/glob toggle.
+- sudo 1.9.10 and newer can use POSIX ERE, egrep-style argument matching when
+  the command argument pattern is anchored with `^...$`.
+- Older sudo uses fnmatch/glob-style matching. That is not a syntax-equivalent
+  fallback for this capability shape.
+- fnmatch has no bounded repetition, so it cannot preserve an ERE budget such as
+  `[A-Za-z0-9_-]{1,768}`. The closest alphabet-only glob is length-unbounded and
+  moves the length cap entirely into root-side request decoding.
+- The matching model may also differ: old sudo/fnmatch must not be assumed to
+  match the same joined command-argument string as the ERE form. Verify exact
+  sudo behavior before allowing any degraded old-sudo grant path.
+
+Implementation consequence: parameterized encoded-request grants should either
+require sudo with POSIX ERE support and refuse installation on older sudo, or
+explicitly install a degraded old-sudo form whose weakened structural gate is
+called out and whose alphabet/length/semantic checks are enforced root-side as
+mandatory defense-in-depth. Do not claim a portable glob form preserves the ERE
+structure; it does not.
 
 ## 3. Proposed command grammar and namespace rules
 
