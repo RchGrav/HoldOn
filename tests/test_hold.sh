@@ -1808,7 +1808,7 @@ test_grant_revoke_writes_hash_scoped_sudoers() {
   rc=$?
   set -e
   [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/grant-hash.out" "$TEST_ROOT/grant-hash.err" >&2; return 1; }
-  grep -q 'existing system alias' "$TEST_ROOT/grant-hash.err" || { cat "$TEST_ROOT/grant-hash.err" >&2; return 1; }
+  grep -q 'existing system profile' "$TEST_ROOT/grant-hash.err" || { cat "$TEST_ROOT/grant-hash.err" >&2; return 1; }
   as_root "$safe" grant web-sys "$TEST_USER" start,stop >"$TEST_ROOT/grant.out" 2>"$TEST_ROOT/grant.err" || { cat "$TEST_ROOT/grant.out" "$TEST_ROOT/grant.err" >&2; return 1; }
   sudoers_file="$sudoers_dir/hold_web-sys_$TEST_USER"
   root_file_exists "$sudoers_file" || { echo "missing $sudoers_file" >&2; cat "$TEST_ROOT/grant.err" >&2; return 1; }
@@ -2746,9 +2746,14 @@ SH
   PATH="$TEST_ROOT/literal-help-bin:$PATH" "$HOLD_BIN" dump "$id" >"$TEST_ROOT/literal-h-command.out" || return 1
   grep -q 'literal-h-command' "$TEST_ROOT/literal-h-command.out" || { cat "$TEST_ROOT/literal-h-command.out" >&2; return 1; }
 
-  if grep -RInE '(^|[^[:alnum:]_])(sigmund|mund)([^[:alnum:]_]|$)|(^|[^[:alnum:]_])hold[[:space:]]+aliases?([^[:alnum:]_]|$)|["'\'']?[$]HOLD_BIN["'\'']?[[:space:]]+aliases?([^[:alnum:]_]|$)|alias aliases|hold[[:space:]]+(start|grant|revoke)[[:space:]]+<alias>|start[[:space:]]+<alias>|known alias|alias selection|alias-labeled|alias exists' \
+  if grep -RInEi '(^|[^[:alnum:]_])(sigmund|mund)([^[:alnum:]_]|$)|(^|[^[:alnum:]_])hold[[:space:]]+aliases?([^[:alnum:]_]|$)|["'\'']?[$]HOLD_BIN["'\'']?[[:space:]]+aliases?([^[:alnum:]_]|$)|alias aliases|hold[[:space:]]+(start|grant|revoke)[[:space:]]+<alias>|start[[:space:]]+<alias>|known alias|alias selection|alias-labeled|alias exists|create an alias|aliases turn|local alias|system alias|alias starts|alias ambiguity|alias filtering|alias creation|run id or alias|command as an alias' \
       README.md docs examples install.sh scripts Makefile >"$TEST_ROOT/forbidden-public-names.out" 2>/dev/null; then
     cat "$TEST_ROOT/forbidden-public-names.out" >&2
+    return 1
+  fi
+  if grep -RInE "grant target must be an existing system alias|alias '%s|--multi applies only to alias|recorded under alias|failed to read .* aliases|usage: hold %s <alias>" \
+      src >"$TEST_ROOT/forbidden-public-runtime-strings.out" 2>/dev/null; then
+    cat "$TEST_ROOT/forbidden-public-runtime-strings.out" >&2
     return 1
   fi
   if awk '

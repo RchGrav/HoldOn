@@ -181,7 +181,7 @@ static int print_aliases_for_store(const char *scope, const struct hold_store *s
     struct hold_alias *entries = NULL;
     size_t count = 0;
     if (hold_load_aliases(store, &entries, &count) != 0) {
-        fprintf(stderr, "hold: warning: failed to read %s aliases\n", scope);
+        fprintf(stderr, "hold: warning: failed to read %s profiles\n", scope);
         return 5;
     }
     for (size_t i = 0; i < count; i++) {
@@ -798,7 +798,7 @@ int hold_cmd_elevated_capability_action(const struct hold_invocation *inv,
     }
 
     if (hold_ensure_run_recorded_under_alias(system_store, runid_sel, alias) != 0) {
-        fprintf(stderr, "hold: error: run %s is not recorded under alias '%s'\n", runid_sel, alias);
+        fprintf(stderr, "hold: error: run %s is not recorded under profile '%s'\n", runid_sel, alias);
         return 3;
     }
 

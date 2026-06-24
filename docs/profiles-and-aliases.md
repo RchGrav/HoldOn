@@ -1,9 +1,9 @@
-# Profiles and aliases
+# Profiles and storage aliases
 
 > Status: This page documents the current alias-to-profile transition behavior. The 0.4.0 profile editor/transcript target and the gaps from the current branch are tracked in [Hold 0.4 UX and CLI specification](HOLD_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
 [Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Target resolution](target-resolution.md) | [Next: Security](security.md) | Related: [Store](store.md), [Launcher](launcher.md)
 
-Outer loop bridge: deep dive for quickstart Step 5, Create an Alias.
+Outer loop bridge: deep dive for quickstart Step 5, Create a Profile.
 
 Profiles are the renamed and extended form of the original alias idea: a recorded command becomes a reusable launch target. Users get a friendly name such as `web`, while On Hold keeps the core command recipe — resolved binary plus argv — needed to start that same command again later.
 

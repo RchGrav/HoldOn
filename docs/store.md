@@ -1,10 +1,10 @@
 # Store
 
-[Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Launcher](launcher.md) | [Next: Identity](identity.md) | Related: [Profiles and aliases](profiles-and-aliases.md), [Security](security.md)
+[Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Launcher](launcher.md) | [Next: Identity](identity.md) | Related: [Profiles and storage aliases](profiles-and-aliases.md), [Security](security.md)
 
 Outer loop bridge: deep dive for quickstart Step 1, Start One Thing.
 
-The store is where On Hold puts the facts users rely on later: run IDs, logs, aliases, root-public discovery hints, and optional console sockets. If `hold tail <id>` or `hold stop <id>` works after the original shell is gone, it is because this state survived on disk.
+The store is where On Hold puts the facts users rely on later: run IDs, logs, profiles, root-public discovery hints, and optional console sockets. If `hold tail <id>` or `hold stop <id>` works after the original shell is gone, it is because this state survived on disk.
 
 On Hold has two stores: a user-local store for normal starts and a system-managed store for root, sudo, and `--system` starts.
 
@@ -40,7 +40,7 @@ In test builds, `HOLD_TEST_SYSTEM_STATE_DIR` can override that path. The product
     aliases.json
 ```
 
-The system base and public directory are `0755`; private root records, logs, console sockets, and profiles are under `0700` directories or `0600` files. Public index files and public aliases are `0644` discovery metadata.
+The system base and public directory are `0755`; private root records, logs, console sockets, and profiles are under `0700` directories or `0600` files. Public index files and public profile maps are `0644` discovery metadata.
 
 ## Persisted records
 
@@ -54,7 +54,7 @@ flowchart LR
 
     Run --> Provenance
     Run -->|"redacted discovery"| Public
-    Alias -->|"system alias"| Profile
+    ProfileMap -->|"system profile map"| Profile
     Alias -->|"user alias"| Run
 
     classDef authority fill:#fef3c7,stroke:#b45309,color:#78350f
@@ -67,7 +67,7 @@ flowchart LR
     class Alias user
 ```
 
-`write_record_atomic` writes one private JSON record per run. Required identity fields include `id`, `run_id`, `pid`, `pgid`, `sid`, `start_unix_ns`, `argv`, `uid`, `gid`, `proc_starttime_ticks`, `exe_dev`, and `exe_ino`. The recorded `argv[0]` is the resolved executable path, even when the user launched a relative path such as `../bin/daemon`; aliases later reuse that absolute recipe. Optional fields are written only when the corresponding `has_*` flag is set, including `alias`, `console_sock`, `started_at`, `ended_at`, `state`, `exit_code`, `term_signal`, `launch_error`, `log_path`, `boot_id`, and root invocation provenance.
+`write_record_atomic` writes one private JSON record per run. Required identity fields include `id`, `run_id`, `pid`, `pgid`, `sid`, `start_unix_ns`, `argv`, `uid`, `gid`, `proc_starttime_ticks`, `exe_dev`, and `exe_ino`. The recorded `argv[0]` is the resolved executable path, even when the user launched a relative path such as `../bin/daemon`; profiles later reuse that absolute recipe. Optional fields are written only when the corresponding `has_*` flag is set, including `alias`, `console_sock`, `started_at`, `ended_at`, `state`, `exit_code`, `term_signal`, `launch_error`, `log_path`, `boot_id`, and root invocation provenance.
 
 `write_public_index_atomic` writes only a redacted system discovery record: `id`, `root_managed`, `requires_elevation`, optional `alias`, `state_hint`, and `started_at`. It does not write argv, command display, log paths, console socket paths, PID/PGID/SID, boot ID, executable identity, sudo provenance, environment, or profile hashes.
 
@@ -119,4 +119,4 @@ For maintainers, the primary functions and structs are `struct store_paths`, `st
 
 ## Continue
 
-[Resume quickstart after Step 1: Step 2](quickstart.md#step-2-manage-it-later) | [Back to docs index](index.md) | [Top](#store) | [Next: Identity](identity.md) | Branch to: [Profiles and aliases](profiles-and-aliases.md), [Security](security.md)
+[Resume quickstart after Step 1: Step 2](quickstart.md#step-2-manage-it-later) | [Back to docs index](index.md) | [Top](#store) | [Next: Identity](identity.md) | Branch to: [Profiles and storage aliases](profiles-and-aliases.md), [Security](security.md)

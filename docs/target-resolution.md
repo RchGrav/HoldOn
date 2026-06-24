@@ -1,12 +1,12 @@
 # Target resolution
 
-[Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Identity](identity.md) | [Next: Profiles and aliases](profiles-and-aliases.md) | Related: [Security](security.md), [CLI contract](cli-contract.md)
+[Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Identity](identity.md) | [Next: Profiles and storage aliases](profiles-and-aliases.md) | Related: [Security](security.md), [CLI contract](cli-contract.md)
 
 Outer loop bridge: deep dive for quickstart Step 4, Make Targeting Deterministic.
 
 Target resolution answers one user-facing question: when you type `hold stop web`, `hold tail 7f3`, or `hold dump system:api`, which concrete run did you mean? It does not decide whether the process is safe to signal; that is the identity validator's job.
 
-The resolver is split because On Hold has several addressing forms and two authority contexts. `resolve_target` is used for alias creation, while `resolve_action_token` is used for action commands that may expand one alias into multiple concrete targets.
+The resolver is split because On Hold has several addressing forms and two authority contexts. `resolve_target` is used for profile creation, while `resolve_action_token` is used for action commands that may expand one profile into multiple concrete targets.
 
 ## Accepted target forms
 
@@ -14,11 +14,11 @@ Targets for actions may be:
 
 - A full 8-character run ID.
 - A leading run ID prefix.
-- An profile name.
+- A profile name.
 - `user:<target>` to force user-local lookup.
 - `system:<target>` to force system-managed lookup.
 
-`valid_id`, `valid_id_prefix`, and `valid_alias` enforce the lexical rules. Aliases are 1 to 64 characters, use alphanumeric characters plus `_` and `-`, and cannot be full profile hashes.
+`valid_id`, `valid_id_prefix`, and `valid_alias` enforce the lexical rules. Profile names are 1 to 64 characters, use alphanumeric characters plus `_` and `-`, and cannot be full profile hashes. `valid_alias` remains the internal validator name.
 
 ## Non-root plain resolution
 
@@ -26,12 +26,12 @@ Targets for actions may be:
 flowchart TD
     Token["Plain target"] --> UserId["User-local ID or prefix?"]
     UserId -->|yes| UserTarget["Use user-local run"]
-    UserId -->|no| UserAlias["User-local alias match?"]
+    UserId -->|no| UserAlias["User-local profile match?"]
     UserAlias -->|yes| UserAliasTarget["Use matching user run or runs"]
     UserAlias -->|no| PublicId["Root public ID or prefix?"]
     PublicId -->|yes| ElevateId["Use system run via sudo"]
     PublicId -->|no| PublicAlias["Root public profile match?"]
-    PublicAlias -->|yes| ElevateAlias["Use alias capability via sudo"]
+    PublicAlias -->|yes| ElevateAlias["Use profile capability via sudo"]
     PublicAlias -->|no| NotFound["Not found"]
 
     classDef user fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
@@ -99,7 +99,7 @@ Root On Hold later verifies that the profile still maps to the supplied hash and
 
 The resolver is conservative about authority. It avoids surprising privilege escalation, returns concrete store/run pairs before acting, and lets root re-validate capability data after crossing sudo. That supports the validate-before-signal model because signal code receives a resolved private record path, not an ambiguous user token.
 
-The daemonless constraint also shapes ambiguity behavior. Without a daemon to arbitrate a "current" alias run, On Hold must either identify one candidate, apply an explicit `--all`, or refuse with candidates.
+The daemonless constraint also shapes ambiguity behavior. Without a daemon to arbitrate a "current" profile run, On Hold must either identify one candidate, apply an explicit `--all`, or refuse with candidates.
 
 ## Implementation map
 
@@ -107,4 +107,4 @@ For maintainers, the primary functions and structs are `parse_id_token`, `valid_
 
 ## Continue
 
-[Resume quickstart after Step 4: Step 5](quickstart.md#step-5-create-an-alias) | [Back to docs index](index.md) | [Top](#target-resolution) | [Next: Profiles and aliases](profiles-and-aliases.md) | Branch to: [Security](security.md), [CLI contract](cli-contract.md)
+[Resume quickstart after Step 4: Step 5](quickstart.md#step-5-create-a-profile) | [Back to docs index](index.md) | [Top](#target-resolution) | [Next: Profiles and storage aliases](profiles-and-aliases.md) | Branch to: [Security](security.md), [CLI contract](cli-contract.md)

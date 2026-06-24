@@ -322,7 +322,7 @@ static bool public_alias_visible(const struct hold_store *store, const char *ali
 
 static void report_alias_ambiguity(const char *command, const char *alias, const struct alias_match_list *list) {
     fprintf(stderr,
-            "hold: error: alias '%s' matches more than one %s candidate\n",
+            "hold: error: profile '%s' matches more than one %s candidate\n",
             alias,
             command ? command : "target");
     fprintf(stderr, "hold: candidates:\n");

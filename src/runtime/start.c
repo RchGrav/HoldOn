@@ -780,7 +780,7 @@ int hold_cmd_start_action(const struct hold_invocation *inv,
                     }
                     if (running > 0) {
                         fprintf(stderr,
-                                "hold: error: alias '%s' already has a running process; use --multi to start another\n",
+                                "hold: error: profile '%s' already has a running process; use --multi to start another\n",
                                 target.alias);
                         free_start_profile_target(&target);
                         return 6;
@@ -816,7 +816,7 @@ int hold_cmd_start_action(const struct hold_invocation *inv,
         free_start_profile_target(&target);
     }
     if (multi) {
-        fprintf(stderr, "hold: error: --multi applies only to alias starts\n");
+        fprintf(stderr, "hold: error: --multi applies only to profile starts\n");
         return 5;
     }
     return perform_explicit_start(inv, fallback_store, tail, console_mode, argc, argv);

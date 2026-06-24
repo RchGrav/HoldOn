@@ -1,6 +1,6 @@
 # Security and privilege boundaries
 
-[Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Profiles and aliases](profiles-and-aliases.md) | [Next: Console](console.md) | Related: [Target resolution](target-resolution.md), [Store](store.md)
+[Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: Profiles and storage aliases](profiles-and-aliases.md) | [Next: Console](console.md) | Related: [Target resolution](target-resolution.md), [Store](store.md)
 
 Outer loop bridge: deep dive for quickstart Step 3, Understand Automatic Choices, and Step 6, Delegate One Root-Managed Tool.
 
@@ -58,7 +58,7 @@ flowchart TD
     Verify -->|alias still maps to hash| Selector["Check run selector"]
     Verify -->|mismatch| Deny["deny"]
     Selector -->|00000000 and start| Profile["Load profile and start"]
-    Selector -->|ffffffff and all action| Matches["Collect current alias matches"]
+    Selector -->|ffffffff and all action| Matches["Collect current profile matches"]
     Selector -->|run ID| Label["ensure_run_recorded_under_alias"]
     Label --> Action["Validate then act"]
     Matches --> Action
@@ -112,7 +112,7 @@ sequenceDiagram
 
 `grant` and `revoke` require root authority. `validate_hold_self_for_sudoers` refuses to manage grants unless the resolved On Hold executable is a regular root-owned file with group/world writes disabled and no whitespace in the path.
 
-Managed files are written under `/etc/sudoers.d` in production, or `HOLD_TEST_SUDOERS_DIR` in test builds. `write_sudoers_template_file` writes a temp candidate with mode `0440`, validates it with `visudo -cf`, and renames it into place. The sudoers command grants only canonical root On Hold invocations with `--system --elevated`, selected verbs, one alias, one profile hash, and one 8-hex run selector slot.
+Managed files are written under `/etc/sudoers.d` in production, or `HOLD_TEST_SUDOERS_DIR` in test builds. `write_sudoers_template_file` writes a temp candidate with mode `0440`, validates it with `visudo -cf`, and renames it into place. The sudoers command grants only canonical root On Hold invocations with `--system --elevated`, selected verbs, one profile, one profile hash, and one 8-hex run selector slot.
 
 ## Why this design works
 
@@ -126,4 +126,4 @@ For maintainers, the primary functions are `detect_invocation`, `resolve_self_ex
 
 ## Continue
 
-[Resume after Step 3: Step 4](quickstart.md#step-4-make-targeting-deterministic) | [Resume after Step 6: Step 7](quickstart.md#step-7-use-it-in-ci) | [Back to docs index](index.md) | [Top](#security-and-privilege-boundaries) | [Next: Console](console.md) | Branch to: [Target resolution](target-resolution.md), [Profiles and aliases](profiles-and-aliases.md), [Store](store.md)
+[Resume after Step 3: Step 4](quickstart.md#step-4-make-targeting-deterministic) | [Resume after Step 6: Step 7](quickstart.md#step-7-use-it-in-ci) | [Back to docs index](index.md) | [Top](#security-and-privilege-boundaries) | [Next: Console](console.md) | Branch to: [Target resolution](target-resolution.md), [Profiles and storage aliases](profiles-and-aliases.md), [Store](store.md)

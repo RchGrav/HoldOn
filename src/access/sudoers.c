@@ -430,7 +430,7 @@ int hold_cmd_grant_revoke_action(const struct hold_invocation *inv,
                                    int argc,
                                    char **argv) {
     if (argc < 2 || argc > 3) {
-        fprintf(stderr, "usage: hold %s <alias> <user> [start,stop,kill,tail,dump,prune,console]\n",
+        fprintf(stderr, "usage: hold %s <profile> <user> [start,stop,kill,tail,dump,prune,console]\n",
                 grant ? "grant" : "revoke");
         return 5;
     }
@@ -455,7 +455,7 @@ int hold_cmd_grant_revoke_action(const struct hold_invocation *inv,
     }
     char hash[PROFILE_HASH_STR_LEN];
     if (resolve_system_alias_hash_for_grant(system_store, argv[0], hash) != 0) {
-        fprintf(stderr, "hold: error: grant target must be an existing system alias\n");
+        fprintf(stderr, "hold: error: grant target must be an existing system profile\n");
         return 5;
     }
 

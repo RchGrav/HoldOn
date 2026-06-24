@@ -27,7 +27,7 @@ console:   0700 user:user console sockets, 0600 per socket
 aliases:   0600 user:user aliases.json
 ```
 
-User-local state is private to the user. User aliases store direct launch recipes in `aliases.json`; they do not create a user-global protected profile object. On Hold does not scan every user's home directory and does not require globally unique run IDs across users.
+User-local state is private to the user. User profiles store direct launch recipes in `aliases.json`; they do not create a user-global protected profile object. On Hold does not scan every user's home directory and does not require globally unique run IDs across users.
 
 ### 1.2 Root-managed state
 
@@ -237,7 +237,7 @@ hold start <profile> --console
 
 A console run records a private `console_sock` path and starts the command behind a per-run PTY broker. Output is tee'd to the normal log, so `tail` and `dump` keep their normal behavior. Console sockets are private state and must not be exposed through the public root index.
 
-## 5. Public root index and aliases
+## 5. Public root index and profile map
 
 The public root index contains only safe discovery and elevation metadata.
 
@@ -275,7 +275,7 @@ profile hashes
 
 Private root records are authoritative. Public records are derived discovery data.
 
-Private run records store the resolved executable path in `argv[0]`. If a command is launched through a relative path, that relative token is resolved before the record is written, so aliases created from the run inherit an absolute launch recipe instead of depending on the alias creator's current directory.
+Private run records store the resolved executable path in `argv[0]`. If a command is launched through a relative path, that relative token is resolved before the record is written, so profiles created from the run inherit an absolute launch recipe instead of depending on the alias creator's current directory.
 
 Because On Hold is daemonless and cannot continuously refresh root-public state after natural process exit, normal `hold list` displays public root rows as `unknown` rather than overselling stale `running` hints. Root/private list and root action commands evaluate authoritative state from private records.
 
@@ -287,7 +287,7 @@ Because On Hold is daemonless and cannot continuously refresh root-public state 
 }
 ```
 
-Public aliases must not include argv, binary paths, log paths, console socket paths, environment, process identity, or sudo provenance.
+Public profile-map entries must not include argv, binary paths, log paths, console socket paths, environment, process identity, or sudo provenance.
 
 ## 6. Run IDs and collision checks
 
@@ -465,10 +465,10 @@ On Hold does not scrub, allowlist, capture, or hash the launched command's envir
 When a normal user targets a root-managed profile, On Hold resolves the public profile name to the current protected hash before self-elevation and carries the internal capability argv shape over sudo:
 
 ```text
-<verb> <runid_sel> <alias> <hash>
+<verb> <runid_sel> <profile> <hash>
 ```
 
-`runid_sel` is always present. It is a concrete 8-hex run ID, `00000000` for `start`, or `ffffffff` for an approved `--all` action. Root On Hold must verify that the internal alias field still points at that hash and that selected concrete run records are recorded under that profile before acting.
+`runid_sel` is always present. It is a concrete 8-hex run ID, `00000000` for `start`, or `ffffffff` for an approved `--all` action. Root On Hold must verify that the internal alias field for that profile still points at the supplied hash and that selected concrete run records are recorded under that profile before acting.
 
 ## 8. Self-elevation boundary
 
@@ -484,7 +484,7 @@ the target requires elevation.
 `hold --system start <profile>` may also self-elevate. Before the sudo boundary, a root-managed profile must be resolved to the internal start capability shape:
 
 ```text
-start 00000000 <alias> <hash>
+start 00000000 <profile> <hash>
 ```
 
 The elevation boundary is argv-preserving `fork()` + `waitpid()`:
@@ -502,7 +502,7 @@ child:
     "/absolute/path/to/hold",
     "--system",
     "--elevated",
-    <canonical-command using system:<id> for ID targets or <runid_sel> <alias> <hash> for alias capabilities>,
+    <canonical-command using system:<id> for ID targets or <runid_sel> <profile> <hash> for profile capabilities>,
     NULL
   ])
 ```

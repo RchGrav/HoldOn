@@ -9,7 +9,7 @@ Date: 2026-06-23
 The implementation-oriented version of these decisions now lives in [Hold 0.4 UX and CLI specification draft](HOLD_0_4_UX_SPEC.md), including the detailed pager/live-filter/similarity-filter requirements.
 
 
-On Hold already has a strong product core: `hold <cmd>` is simpler than `nohup`, safer than PID files, and far lighter than `systemd`. The current CLI is scriptable and technically coherent, but it exposes internal concepts too early: run IDs, aliases, profiles, public/root stores, target scopes, grants, console mode, pruning, and validation semantics all appear as separate pieces the user must assemble.
+On Hold already has a strong product core: `hold <cmd>` is simpler than `nohup`, safer than PID files, and far lighter than `systemd`. The current CLI is scriptable and technically coherent, but it exposes internal concepts too early: run IDs, profiles, public/root stores, target scopes, grants, console mode, pruning, and validation semantics all appear as separate pieces the user must assemble.
 
 The highest-leverage UX move is to turn On Hold from a collection of legacy verbs into one guided command language for long-running jobs. For 0.4.0, the new `hold` UX is intended to replace the legacy primary surface, while preserving the good stdout/stderr, exit-code, and scriptability contracts for automation.
 
@@ -30,13 +30,13 @@ Recommended direction:
 - **Safety story is excellent**: On Hold validates process identity before signaling, and refuses unsafe actions.
 - **Short run IDs are approachable**: 8 hex chars are easier than full UUIDs.
 - **Docs are unusually complete**: README, quickstart, technical loop, CLI contract, profiles, security, and console docs exist.
-- **Root delegation is differentiated**: scoped sudoers-managed aliases are a powerful capability few small launchers offer.
+- **Root delegation is differentiated**: scoped sudoers-managed profiles are a powerful capability few small launchers offer.
 
 ## Current UX friction
 
 ### 1. The human workflow is still command-memory heavy
 
-The help text is concise, but users still need to remember which verb applies now: `list`, `tail`, `dump`, `console`, `stop`, `kill`, `prune`, `alias`, `aliases`, `grant`, `revoke`, `start`, plus target scoping. This is fine for scripts, but not “embarrassingly easy”.
+The help text is concise, but users still need to remember which verb applies now: `list`, `tail`, `dump`, `console`, `stop`, `kill`, `prune`, `profile`, `profiles`, `grant`, `revoke`, `start`, plus target scoping. This is fine for scripts, but not “embarrassingly easy”.
 
 Suggested fix: add an interactive dashboard / command mode where users can type `?`, select a run, and see valid actions.
 
@@ -46,7 +46,7 @@ The docs already discuss protected profiles, but the user-facing command is `ali
 
 Suggested fix: introduce `profile` as the primary noun and keep `alias` as a friendly backwards-compatible shortcut.
 
-### 3. Alias creation from a running command does not adopt that running command
+### 3. Profile creation from a running command does not adopt that running command
 
 Observed behavior:
 
@@ -56,7 +56,7 @@ hold profile save "$id" as web
 hold start web
 ```
 
-This starts a second `sleep 20` because the original run was not labeled `web`; future profile starts are labeled, but the source run is not. The docs say profiles allow later commands to use the name, and also say `start <profile>` refuses if that alias already has a running process. That is technically true only after a run was started through the profile, but it is surprising immediately after alias creation.
+This starts a second `sleep 20` because the original run was not labeled `web`; future profile starts are labeled, but the source run is not. The docs say profiles allow later commands to use the name, and also say `start <profile>` refuses if that profile already has a running process. That is technically true only after a run was started through the profile, but it is surprising immediately after profile creation.
 
 Suggested fix options:
 
@@ -815,7 +815,7 @@ Protect the automation contract:
 
 ### Phase 1: Clarify and make current UX friendlier
 
-- Add `profile` command aliases over existing alias/profile internals.
+- Add public `profile` commands over existing internal alias/profile storage.
 - Add alias/profile column to `list`.
 - Add `status` / `inspect` command.
 - Decide whether `alias <id> <name>` adopts the source run or warns clearly.

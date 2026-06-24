@@ -46,7 +46,7 @@ Dig deeper: [Launcher](launcher.md) explains how the child starts; [Store](store
 
 ## Step 2: Manage It Later
 
-Once you have a run ID or alias, On Hold can read logs, follow output, attach a console when available, stop the process group, or remove finished state.
+Once you have a run ID or profile, On Hold can read logs, follow output, attach a console when available, stop the process group, or remove finished state.
 
 Action:
 
@@ -68,7 +68,7 @@ Expect:
 
 ```mermaid
 flowchart LR
-    Target["run ID or alias"] --> Resolve["find record"]
+    Target["run ID or profile"] --> Resolve["find record"]
     Resolve --> LogAction["tail or dump log"]
     Resolve --> SignalAction["stop or kill group"]
     SignalAction --> Validate["validate first"]
@@ -138,7 +138,7 @@ Dig deeper: [CLI contract](cli-contract.md) explains parsing; [Security](securit
 
 ## Step 4: Make Targeting Deterministic
 
-In multiuser systems, names can overlap. Your local alias might be named the same as a system alias, or a local run ID prefix might overlap with a public system run ID. For normal users, plain targets try user-local state first, then system public state.
+In multiuser systems, names can overlap. Your local profile might be named the same as a system profile, or a local run ID prefix might overlap with a public system run ID. For normal users, plain targets try user-local state first, then system public state.
 
 Action:
 
@@ -180,11 +180,11 @@ Use `user:` and `system:` when you want the tool to do exactly what you said ins
 
 Next: Step 5 turns a recorded run into a reusable profile.
 
-Dig deeper: [Target resolution](target-resolution.md) explains IDs, prefixes, aliases, `user:`, `system:`, ambiguity, and `--all`.
+Dig deeper: [Target resolution](target-resolution.md) explains IDs, prefixes, profiles, `user:`, `system:`, ambiguity, and `--all`.
 
-## Step 5: Create an Alias
+## Step 5: Create a Profile
 
-Aliases turn a recorded command into a reusable name. Start the command once, alias the recorded run, then use the name for future starts and management.
+Profiles turn a recorded command into a reusable name. Start the command once, save the recorded run as a profile, then use the name for future starts and management.
 
 Action:
 
@@ -217,11 +217,11 @@ flowchart LR
     class Start,Manage action
 ```
 
-Aliases are how On Hold turns an ephemeral run into a repeatable workflow without becoming a full service manager.
+Profiles are how On Hold turns an ephemeral run into a repeatable workflow without becoming a full service manager.
 
 Next: Step 6 shows how root can delegate one registered tool without granting broad root access.
 
-Dig deeper: [Profiles and aliases](profiles-and-aliases.md) explains user recipes, system profile hashes, alias matching, `--multi`, and `--all`.
+Dig deeper: [Profiles and aliases](profiles-and-aliases.md) explains user recipes, system profile hashes, profile matching, `--multi`, and `--all`.
 
 ## Step 6: Delegate One Root-Managed Tool
 
@@ -235,7 +235,7 @@ sudo hold profile save <run-id> as cache
 sudo hold grant cache alice start,stop,tail,dump
 ```
 
-`grant` writes managed sudoers policy, so On Hold intentionally refuses unless it resolves itself to a secured installed executable: a regular root-owned file, not group/world writable, with no whitespace in its path. A source-tree or temporary demo binary can still show starts, aliases, stops, dumps, and pruning, but not sudoers entry creation.
+`grant` writes managed sudoers policy, so On Hold intentionally refuses unless it resolves itself to a secured installed executable: a regular root-owned file, not group/world writable, with no whitespace in its path. A source-tree or temporary demo binary can still show starts, profiles, stops, dumps, and pruning, but not sudoers entry creation.
 
 Then Alice can run:
 
@@ -246,7 +246,7 @@ hold dump system:cache
 
 Expect:
 
-- the grant is scoped to one alias and one protected profile hash.
+- the grant is scoped to one profile and one protected profile hash.
 - only selected actions are granted.
 - root On Hold rechecks private authority after sudo before acting.
 - Alice does not receive a general root shell.

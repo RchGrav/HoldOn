@@ -50,7 +50,7 @@ Phase 2 should anchor the docs to these source regions:
 - Target resolution and actions: `parse_id_token`, `resolve_target`, `resolve_action_token`, `append_private_alias_targets`, `append_public_alias_elevation_target`, `cmd_signal_action`, `cmd_tail_action`, `cmd_dump_action`, and `cmd_prune_action`.
 - Sudo crossing and capability checks: `resolve_self_executable_path`, `elevate_with_sudo_canonical`, `elevate_with_sudo_parsed`, `elevate_with_sudo_targets`, `elevate_start_token`, `verify_system_alias_cap`, `ensure_run_recorded_under_alias`, and `cmd_elevated_capability_action`.
 - Sudoers grant management: `cmd_grant_revoke_action`, `validate_hold_self_for_sudoers`, `build_sudoers_line`, `write_sudoers_template_file`, and `unlink_sudoers_template_file`.
-- CLI contract: `usage`, the `help_*` functions, `is_hold_owned_command`, `command_accepts_target_tokens`, and `main`.
+- CLI contract: `hold_usage`, the `help_*` functions, `hold_cli_command_is_parser_owned`, `hold_cli_command_is_public`, `hold_validate_owned_command_arity`, and `main`.
 
 ## Planned documentation pages
 
@@ -62,7 +62,7 @@ Planned diagrams: one top-level Mermaid flowchart using block-like subgraphs, no
 
 ### `docs/launcher.md`
 
-Explains raw starts, explicit `start`, alias starts, `--tail`/`-f`, `--console`, fork/setsid/exec behavior, log redirection, stdout/stderr conventions, record creation, public-index rollback, and the close-on-exec handshake that distinguishes successful `exec*` from immediate launch failure. The "why" should be tied to the daemonless / single-binary constraint and the need to create a process group that can later be validated before signaling.
+Explains raw starts, explicit `start`, profile starts, `--tail`/`-f`, `--console`, fork/setsid/exec behavior, log redirection, stdout/stderr conventions, record creation, public-index rollback, and the close-on-exec handshake that distinguishes successful `exec*` from immediate launch failure. The "why" should be tied to the daemonless / single-binary constraint and the need to create a process group that can later be validated before signaling.
 
 Planned diagrams: sequence diagram for `perform_start`; state diagram for start outcomes such as launched, recorded, followed, failed-before-record, and rolled back.
 
@@ -80,7 +80,7 @@ Planned diagrams: flowchart for `eval_state`; state diagram for `running`, `exit
 
 ### `docs/target-resolution.md`
 
-Explains how user input tokens become concrete targets for action commands. It should cover plain IDs and prefixes, aliases, `user:` and `system:` scopes, user-local precedence for normal users, root-private precedence under sudo, public root discovery, alias ambiguity, `--all`, verb-specific alias filtering, and the difference between `resolve_target` for alias creation and `resolve_action_token` for multi-target action execution.
+Explains how user input tokens become concrete targets for action commands. It should cover plain IDs and prefixes, profiles, `user:` and `system:` scopes, user-local precedence for normal users, root-private precedence under sudo, public root discovery, profile ambiguity, `--all`, verb-specific profile filtering, and the difference between `resolve_target` for profile creation and `resolve_action_token` for multi-target action execution.
 
 Planned diagrams: flowchart for normal non-root resolution; flowchart for root/sudo resolution; compact decision table for verb-specific alias intent.
 

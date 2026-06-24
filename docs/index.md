@@ -2,7 +2,7 @@
 
 [Repository README](../README.md) | [Outer onboarding loop](quickstart.md) | [Technical reference loop](#technical-reference-loop) | [Current spec](SPEC.md) | [0.4.0 UX spec](HOLD_0_4_UX_SPEC.md) | [0.4.0 alignment](0.4.0-alignment.md)
 
-This is the top-level guide to how On Hold works. Start with the [quickstart](quickstart.md): it walks from the first command to deterministic targeting, aliases, and scoped root delegation with simple diagrams, and links into the deeper subsystem pages as each concept appears.
+This is the top-level guide to how On Hold works. Start with the [quickstart](quickstart.md): it walks from the first command to deterministic targeting, profiles, and scoped root delegation with simple diagrams, and links into the deeper subsystem pages as each concept appears.
 
 On Hold is a daemonless process launcher and recorder. It starts a command in a new session, writes a durable run record and log path, and later uses that record to inspect, tail, stop, kill, attach, or prune the tracked process group.
 
@@ -12,7 +12,7 @@ The philosophy is simple:
 
 - Make the easy path easy: `hold <cmd...>` gives users a run ID, log, and safe cleanup path.
 - Make automatic choices predictable: invocation shape decides user-local versus system-managed behavior.
-- Make precision available: `user:<target>`, `system:<target>`, aliases, and grants let users say exactly what they mean.
+- Make precision available: `user:<target>`, `system:<target>`, profiles, and grants let users say exactly what they mean.
 - Validate before signal: if On Hold cannot prove a recorded process group is still the intended run, it refuses instead of guessing.
 
 ## Navigation Model
@@ -31,7 +31,7 @@ The documentation has two layers:
 | Learn the normal workflow | [Quickstart](quickstart.md) | [Launcher](launcher.md), [Store](store.md) |
 | Use On Hold in CI | [Using On Hold in CI](ci.md) | [CLI contract](cli-contract.md), [Identity](identity.md) |
 | Understand target choices and collisions | [Quickstart targeting](quickstart.md#step-4-make-targeting-deterministic) | [Target resolution](target-resolution.md) |
-| Create reusable names | [Quickstart aliases](quickstart.md#step-5-create-an-alias) | [Profiles and aliases](profiles-and-aliases.md) |
+| Create reusable names | [Quickstart profiles](quickstart.md#step-5-create-a-profile) | [Profiles and storage aliases](profiles-and-aliases.md) |
 | Delegate one root-managed tool safely | [Quickstart delegation](quickstart.md#step-6-delegate-one-root-managed-tool) | [Security](security.md) |
 
 ## Core Flow
@@ -111,7 +111,7 @@ flowchart TD
     Launcher --> Store["Store"]
     Store --> Identity["Identity"]
     Identity --> Target["Target resolution"]
-    Target --> Profiles["Profiles and aliases"]
+    Target --> Profiles["Profiles and storage aliases"]
     Profiles --> Security["Security"]
     Security --> Console["Console"]
     Console --> CLI["CLI contract"]
@@ -137,13 +137,13 @@ Every subsystem page links back here, names the quickstart step it explains, res
 
 ## Inner Layer Pages
 
-1. [Quickstart](quickstart.md): user workflow, automatic choices, deterministic targeting, aliases, and scoped root delegation.
+1. [Quickstart](quickstart.md): user workflow, automatic choices, deterministic targeting, profiles, and scoped root delegation.
 2. [Installing On Hold](install.md): one-line install, root/user install mode, platform detection, checksums, and script handoff.
 3. [Launcher](launcher.md): starts, fork/setsid/exec, logs, records, and launch rollback.
 4. [Store](store.md): user-local and system-managed state, public redaction, atomic writes, and pruning.
 5. [Identity and validation](identity.md): boot ID, starttime, executable identity, session membership, run states, and signal refusal.
-6. [Target resolution](target-resolution.md): ID, prefix, alias, `user:`, `system:`, ambiguity, and action target expansion.
-7. [Profiles and aliases](profiles-and-aliases.md): reusable launch recipes, SHA-256 fingerprints, alias starts, and `--multi`.
+6. [Target resolution](target-resolution.md): ID, prefix, profile, `user:`, `system:`, ambiguity, and action target expansion.
+7. [Profiles and storage aliases](profiles-and-aliases.md): reusable launch recipes, SHA-256 fingerprints, profile starts, and `--multi`.
 8. [Security and privilege boundaries](security.md): `--system`, sudo self-elevation, capability argv, and managed sudoers.
 9. [Console](console.md): PTY console starts, private sockets, native attach, terminal sizing, and log teeing.
 10. [CLI contract](cli-contract.md): parser behavior, stdout/stderr, flags, no-op behavior, and exit codes.
@@ -155,10 +155,10 @@ Every subsystem page links back here, names the quickstart step it explains, res
 | --- | --- |
 | How to install On Hold and hand its path to scripts | [Installing On Hold](install.md) |
 | How a command keeps running after the CI step or shell exits | [Quickstart](quickstart.md), then [Launcher](launcher.md) |
-| Where run IDs, logs, aliases, and public root hints live | [Store](store.md) |
+| Where run IDs, logs, profiles, and public root hints live | [Store](store.md) |
 | Why `stop` is safer than `kill $PID` | [Identity and validation](identity.md) |
-| How IDs, aliases, `user:`, and `system:` choose a target | [Target resolution](target-resolution.md) |
-| How to reuse a recorded command as an alias | [Profiles and aliases](profiles-and-aliases.md) |
+| How IDs, profiles, `user:`, and `system:` choose a target | [Target resolution](target-resolution.md) |
+| How to reuse a recorded command as a profile | [Profiles and storage aliases](profiles-and-aliases.md) |
 | How to let another user manage one root-run tool | [Quickstart](quickstart.md#step-6-delegate-one-root-managed-tool), then [Security](security.md) |
 | How to script On Hold in CI | [Using On Hold in CI](ci.md), then [CLI contract](cli-contract.md) |
 

@@ -140,7 +140,7 @@ Press `Ctrl-]` to detach from a console without stopping the run.
 
 The README is only the front door. The deeper material lives under [docs](docs/index.md):
 
-- [Quickstart](docs/quickstart.md): a guided walkthrough from first run to aliases and root-scoped delegation.
+- [Quickstart](docs/quickstart.md): a guided walkthrough from first run to profiles and root-scoped delegation.
 - [Using On Hold in CI](docs/ci.md): copyable workflow patterns.
 - [Installing On Hold](docs/install.md): installer modes, checksums, and CI handoff.
 - [Documentation index](docs/index.md): the full map for command behavior, internals, security boundaries, console mode, and the implementation spec.
