@@ -588,6 +588,9 @@ Profile configuration commands:
   alias         Define a profile-local alias
   param         Expose a validated optional parameter
   multi         Allow multiple concurrent instances
+  interactive   Keep stdin open for profile runs
+  tty           Allocate a pseudo-TTY for profile runs
+  detach        Default profile runs to detached mode
   pty-shim      Start under the PTY shim
   no            Negate a command
   default       Reset a command to default
@@ -616,9 +619,28 @@ hold(config-profile:web)# binary /usr/local/bin/nginx
 hold(config-profile:web)# argv -c /etc/nginx.conf
 hold(config-profile:web)# env LOG_LEVEL info
 hold(config-profile:web)# param --port port
+hold(config-profile:web)# interactive
+hold(config-profile:web)# tty
 hold(config-profile:web)# no env LOG_LEVEL
+hold(config-profile:web)# no interactive
+hold(config-profile:web)# no tty
 hold(config-profile:web)# default multi
 ```
+
+Docker-shaped shell flags may be persisted in profile configuration, but the
+captive/config transcript spelling uses full IOS-style words:
+
+```text
+hold(config-profile:web)# interactive
+hold(config-profile:web)# tty
+hold(config-profile:web)# detach
+hold(config-profile:web)# no interactive
+hold(config-profile:web)# no tty
+hold(config-profile:web)# no detach
+```
+
+That maps to the shell concepts `--interactive`, `--tty`, and `--detach`
+without importing Docker flag syntax into profile configuration mode.
 
 Review and commit:
 
@@ -651,6 +673,91 @@ Do not mix the mental models:
 - Profile configuration words are IOS-style (`binary`, `argv`, `env`, `param`, `multi`, `pty-shim`, `no`, `default`, `info`, `commit`), not Docker flags.
 - Docker flags may be saved into a profile, but their persisted configuration is expressed with IOS-style words in captive/config transcript mode.
 
+### 4.7 Captive namespace and context navigation
+
+The captive CLI should be mode-based like IOS, but object contexts still need a
+small, predictable navigation vocabulary so users can drill into profiles and
+run IDs without memorizing every fully qualified command.
+
+General context rules:
+
+- `?` / `help` shows valid commands for the current mode/context.
+- `exit` leaves the current mode/context.
+- `back` may be accepted as friendly sugar for leaving an object context, but
+  IOS `exit` remains canonical.
+- `ls` lists objects in the current context.
+- `select <name-or-id>` enters the selected child context when the current view
+  is a list of profiles or run IDs.
+- `profile` by itself must not be a no-op. It should list/enter the profile
+  namespace or show contextual profile commands.
+
+Top-level profile namespace example:
+
+```text
+hold# profile
+hold(profile)# ?
+Profile namespace commands:
+  ls        List profiles
+  run       Start a profile
+  rm        Remove a profile
+  select    Enter a profile context
+  import    Import profile transcript
+  export    Export profile transcript
+  help      Show context help
+  exit      Return to privileged EXEC
+
+hold(profile)# ls
+NAME      HASH         ACTIVE  COMMAND
+web       7f3e9c2a     1       /usr/local/bin/nginx -c /etc/nginx.conf
+report    1c5d3b7f     0       /opt/report/run
+
+hold(profile)# select web
+hold(profile:web)#
+```
+
+Profile object context example:
+
+```text
+hold(profile:web)# ?
+Profile commands:
+  ps        List run IDs for this profile
+  run       Start this profile
+  stop      Stop this profile only when singular or explicit
+  logs      Open logs for a singular selected run
+  inspect   Show profile details
+  select    Enter a run ID context
+  export    Export this profile transcript
+  rm        Remove this profile when safe
+  exit      Return to profile namespace
+
+hold(profile:web)# ps
+RUNID         STATE     UPTIME  PROFILE
+04a7dda8      running   12m     web
+
+hold(profile:web)# select 04a7dda8
+hold(profile:web:04a7dda8)#
+```
+
+Run ID context example:
+
+```text
+hold(runid:04a7dda8)# ?
+Run commands:
+  logs      Open log viewer
+  inspect   Show detailed JSON/object view
+  stop      Gracefully stop this concrete run
+  kill      Force stop this concrete run
+  save      Save normalized launch facts as a profile
+  rm        Remove when inactive
+  exit      Return to previous context
+
+hold(runid:04a7dda8)# save web-copy
+```
+
+`save <profile-name>` in a run ID context creates a profile from that run's
+normalized launch facts. This is the context-local form of the shell-level
+profile-from-run operation.
+
 ## 5. CLI transcript config
 
 CLI transcript config is a human import/export format. JSON remains canonical on disk. The transcript should look like the commands an operator would type in the Cisco IOS-style captive CLI, not like JSON and not like Docker flags.
@@ -671,6 +778,8 @@ configure terminal
     binary /usr/local/bin/nginx
     argv -c /etc/nginx.conf
     env LOG_LEVEL info
+    interactive
+    tty
     param --port port
     no env LOG_LEVEL
     default multi
@@ -690,6 +799,36 @@ hold inspect web                       # detailed JSON/object view
 ```
 
 Import/apply should validate and show a change summary before overwriting unless `--yes` is supplied.
+
+## 5.1 Completion and command history
+
+Tab completion is a first-class 0.4 CLI library feature, not one-off shell glue.
+Anything visible in the current namespace through `help`, `?`, `ls`, `show`, or
+`ps` should be available to completion providers.
+
+Completion domains:
+
+- commands valid in the current shell/captive mode;
+- profile names;
+- run IDs and unique run-ID prefixes;
+- view names such as `runs`, `profiles`, `version`, and future tree/list views;
+- context-local actions such as `save`, `select`, `back`/`exit`, `logs`, and
+  `inspect`;
+- recent command strings when completing at the start of an empty or compatible
+  input line.
+
+Behavior:
+
+- If there is one match, Tab completes it.
+- If there are multiple matches, Tab expands through the first non-unique
+  character.
+- Repeated Tab lists candidates or cycles according to the active line editor.
+- Arrow Up/Down navigates history/candidates.
+- The original blank/current input is part of the navigation cycle, so a user
+  can return to a plain cursor after browsing completions/history.
+- Ghost text/typeahead is explicitly out of scope for 0.4. Standard completion
+  inside the captive CLI and installable external shell completion are the
+  target.
 
 ## 6. Pager-style live filter viewer
 
