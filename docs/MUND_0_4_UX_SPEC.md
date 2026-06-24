@@ -200,6 +200,62 @@ mund(/running/web)> back
 mund(/running)>
 ```
 
+### 4.3 Universal completion namespaces
+
+Completion is a first-class feature of the CLI library, not a special case inside
+`mund shell`. Any namespace that can be listed by `list`, viewed by `show`, or
+described by `help` should also be available to tab completion through the same
+provider API. The command tree, help output, and completion candidates should
+share one source of truth wherever practical.
+
+Completion namespaces include at minimum:
+
+```text
+commands              help, profile, save, recent, start, stop, status, show, logs, view, doctor, exit, back
+profiles              named reusable command recipes
+runs                  active and unpruned run IDs
+recent-runs           newest unpruned run IDs, including stopped runs with reusable argv recipes
+recent-commands       past CLI command strings / captured argv recipes that have not been saved as profiles
+views                 /runs, /profiles, /running, /dormant, /failed, /stale, /recent, /time, /uptime
+profile-subcommands   show, create, set, start, rename, delete, export, grant, revoke
+state-actions         stop, logs, view, inspect, clean/prune where valid for the selected object
+```
+
+The completion provider must be context-aware:
+
+```text
+mund> p<Tab>                 -> profile
+mund> profile w<Tab>         -> profile web
+mund> save <Tab>             -> recent run IDs plus `last`
+mund> save 8f3a<Tab> as      -> complete the run ID, then suggest `as`
+mund> save last as <Tab>     -> suggest profile names only for explicit overwrite flows; otherwise suggest no existing name
+mund(profile:web)> s<Tab>    -> show/start/set/... local to the profile context
+mund> stop <Tab>             -> active run IDs plus profile names only when they resolve to one active run
+```
+
+For OS shell integration, `Tab` should complete real text using the same
+namespace provider where possible. Ghost text is not required and generally
+should not be assumed in normal shell completion.
+
+For the captive TTY shell, the same provider may additionally render typeahead
+ghost text and cycle sibling suggestions with arrow keys:
+
+```text
+mund> h▌elp                  # ghost suffix shown by the captive shell
+Tab                           # accepts `help `
+mund> s▌ave                  # first suggestion
+Down                          # cycles to status/stop/show/start as siblings
+Enter                         # accepts/runs the selected command, depending on cursor state
+```
+
+The reusable CLI library should therefore expose:
+
+- line editing and history;
+- a pluggable completion namespace/provider API;
+- command/help metadata usable by both `help` and completion;
+- optional captive-TTY affordances: ghost suffix rendering and up/down suggestion cycling;
+- a plain shell-completion mode that emits candidates without terminal UI control.
+
 ## 5. CLI transcript config
 
 CLI transcript config is a human import/export format. JSON remains canonical on disk.
