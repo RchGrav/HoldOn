@@ -172,6 +172,7 @@ Viewing and inspection:
   hold ps -a                                   # active + inactive retained run IDs
   hold active                                  # active run-id view/list
   hold recent                                  # inactive/recent retained run-id view/list
+  hold show <view|object>                      # read-only alias/view command
   hold logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]
   hold console <target>
   hold dump <target>                           # structured object dump, not log text
@@ -195,6 +196,12 @@ Operations:
 ```
 
 `ps` always lists run IDs. If a run ID came from a profile, show the profile name in a column; otherwise show `-`.
+
+`show` is allowed as a friendly read-only alias/view command. It should never be
+the only way to reach important data, and it should not blur the core nouns:
+`show runs` may route to `ps -a`, `show active` may route to `active`, `show
+profile web` may route to profile display, and `show tree` may render navigable
+views. Mutating operations should not hide under `show`.
 
 `logs` owns log text. Former dump-style log output belongs under `logs <target> --plain`. `dump` is reserved for structured/raw object data such as full run records, profile JSON/config, public index entries, and diagnostic store objects.
 
@@ -257,7 +264,7 @@ The captive shell should feel like Cisco IOS, diskpart, and Docker had one small
 1. **Bare namespace commands enter that namespace.** `profile` enters `hold(profile)>`; `runid` enters `hold(runid)>`.
 2. **Namespaces list and select.** Namespace prompts expose `ls`, `select`, `help`, and `back` before object-specific actions.
 3. **Objects expose actions.** A selected profile or run ID lets the user omit the target because the prompt already supplies context.
-4. **Top-level verbs still exist.** `run`, `stop`, `down`, `logs`, `console`, `dump`, `prune`, and `rm` remain first-class top-level commands; navigation is for discoverability, not mandatory ceremony.
+4. **Top-level verbs still exist.** `run`, `stop`, `down`, `logs`, `console`, `dump`, `prune`, and `rm` remain first-class top-level commands; navigation is for discoverability, not mandatory ceremony. `show` may remain as a read-only alias/view command.
 5. **`ps` always lists run IDs.** At root it lists active run IDs; `ps -a` includes inactive retained run IDs. Inside a profile, `ps` lists that profile's run IDs.
 6. **Profiles can have run IDs; run IDs do not need profiles.** Profile-originated run IDs appear under both the profile context and the run-id views. Ad-hoc run IDs show profile as `-`.
 7. **Top-level commands require explicit source/destination.** Context commands inherit context and can use shorter forms.
@@ -431,7 +438,7 @@ truth wherever practical.
 Completion namespaces include at minimum:
 
 ```text
-commands              help, profile, runid, run, stop, down, kill, ps, active, recent, logs, console, dump, prune, rm, import, export, doctor, exit, back
+commands              help, profile, runid, run, stop, down, kill, ps, active, recent, show, logs, console, dump, prune, rm, import, export, doctor, exit, back
 profiles              named reusable launch definitions
 runids                active and unpruned run IDs
 recent-runids         newest unpruned run IDs, including inactive retained executions

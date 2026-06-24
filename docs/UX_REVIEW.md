@@ -16,8 +16,8 @@ The highest-leverage UX move is to turn On Hold from a collection of legacy verb
 Recommended direction:
 
 1. Move to one unified stacked command grammar shared by normal CLI, captive shell, and Cisco-style config files.
-2. Make `profile`, `run`, `stop`, `down`, `kill`, `ps`, `logs`, `console`, `dump`, `prune`, `rm`, `doctor`, `import`, and `export` the primary language everywhere.
-3. Let users stack captive-shell commands directly from the normal prompt, e.g. `hold profile web set env PORT=3000`, `hold dump web`, `hold logs web --follow`.
+2. Make `profile`, `run`, `stop`, `down`, `kill`, `ps`, `show`, `logs`, `console`, `dump`, `prune`, `rm`, `doctor`, `import`, and `export` the primary language everywhere.
+3. Let users stack captive-shell commands directly from the normal prompt, e.g. `hold profile web set env PORT=3000`, `hold show profile web`, `hold dump web`, `hold logs web --follow`.
 4. Make this a deliberate breaking CLI redesign for 0.4.0: replace current legacy commands (`alias`, `aliases`, `list`, `tail`, action-first forms) with the unified grammar instead of carrying them as primary UX. Keep `console` and `prune` because they fit the final language, and redefine `dump` as structured object output rather than log text.
 5. Add a profile editor: `hold profile web edit` and an interactive `profile web` submode for advanced recipe, cwd, env, console, restart/readiness metadata, and access policy.
 6. Add profile config import/export so every captive-shell edit can be represented as a Cisco-style command transcript, while JSON remains canonical on disk.
@@ -150,6 +150,7 @@ Replace legacy primary verbs with memorable `hold` equivalents:
 ```text
 hold ps                     -> list active run IDs
 hold ps -a                  -> list active + inactive retained run IDs
+hold show <view|object>     -> friendly read-only alias/view command
 hold logs <target>          -> follow/plain log viewer
 hold logs <target> --plain  -> plain dump-style output
 hold dump <target>          -> structured object output, not log text
@@ -186,6 +187,11 @@ hold run <profile>                -> launch reusable profile
 ### Friendly command aliases to evaluate after the core grammar lands
 
 The core 0.4 grammar should land first: bare ad-hoc launch, `run/stop` for profile lifecycle, and concrete run IDs for `down/kill/logs/console/dump/rm`.
+
+`show` can remain as a friendly alias because it is read-only and familiar. The
+guardrail is that it routes to canonical views/actions (`show runs` to `ps -a`,
+`show active` to `active`, `show profile web` to profile display, `show tree` to
+navigation output) rather than becoming a second mutating command grammar.
 
 After that is stable, optional shortcuts can be evaluated if they do not blur the profile/run-ID boundary:
 
@@ -712,7 +718,7 @@ Protect the automation contract:
 ### Phase 2: Hybrid interactive shell
 
 - Add `hold shell` line-oriented REPL.
-- Support `help`, `ls`, `select`, `logs`, `console`, `down`, `kill`, `dump`, `rm`, `prune`, `run`, `stop`, `ps`, `runid`, and `profile`.
+- Support `help`, `ls`, `select`, `show`, `logs`, `console`, `down`, `kill`, `dump`, `rm`, `prune`, `run`, `stop`, `ps`, `runid`, and `profile`.
 - Implement command completion/history if practical.
 - Add contextual help and suggested next actions.
 
@@ -742,4 +748,4 @@ This gives beginners an embarrassingly easy path while giving power users a comp
 
 ## Product decisions status
 
-The implementation-oriented decisions now live in [Hold 0.4 UX and CLI specification](HOLD_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md). Current direction: use `hold` for the operator command, make `profile` the primary noun, keep ad-hoc launch as bare `hold <cmd>`, use `run`/`stop` as profile lifecycle verbs, use concrete run IDs for `down`/`kill`/`logs`/`console`/`dump`/targeted `rm`, keep `prune` as bulk inactive-run cleanup, and build the line-oriented Cisco/Docker-style captive shell before a richer TUI. Remaining release decisions include restart policy, exact `runid` namespace spelling, instance allocator scope, and how much of the full similarity/deque architecture must ship before 0.4.0.
+The implementation-oriented decisions now live in [Hold 0.4 UX and CLI specification](HOLD_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md). Current direction: use `hold` for the operator command, make `profile` the primary noun, keep ad-hoc launch as bare `hold <cmd>`, use `run`/`stop` as profile lifecycle verbs, use concrete run IDs for `down`/`kill`/`logs`/`console`/`dump`/targeted `rm`, allow `show` as a friendly read-only alias/view command, keep `prune` as bulk inactive-run cleanup, and build the line-oriented Cisco/Docker-style captive shell before a richer TUI. Remaining release decisions include restart policy, exact `runid` namespace spelling, instance allocator scope, and how much of the full similarity/deque architecture must ship before 0.4.0.
