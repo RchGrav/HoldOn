@@ -1540,9 +1540,9 @@ test_alias_multi_gate_and_all_stop() {
   rc=$?
   set -e
   [ "$rc" -eq 6 ] || return 1
-  grep -q -- '--multi' "$TEST_ROOT/multi-refuse.err" || return 1
+  grep -q -- '--force' "$TEST_ROOT/multi-refuse.err" || return 1
 
-  out2=$("$HOLD_BIN" start web-multi --multi 2>&1) || return 1
+  out2=$("$HOLD_BIN" start web-multi --force 2>&1) || return 1
   id2=$(printf '%s\n' "$out2" | extract_id)
   pgid2=$(record_pgid "$id2")
   [ -n "$pgid2" ] || return 1
@@ -1780,7 +1780,7 @@ test_system_alias_start_self_elevates_alias() {
 
 test_grant_revoke_writes_hash_scoped_sudoers() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local safe safe_real out id hash sudoers_dir sudoers_file rc visudo_ok sh_bin
+  local safe safe_real out id hash grant_hash sudoers_dir sudoers_file grant_private grant_public rc visudo_ok sh_bin
   safe="$TEST_ROOT/hold-safe"
   sh_bin="$(resolve_path /bin/sh)" || return 1
   cp "$HOLD_REAL_BIN" "$safe" || return 1
@@ -1813,19 +1813,50 @@ test_grant_revoke_writes_hash_scoped_sudoers() {
   as_root "$safe" grant web-sys "$TEST_USER" start,stop >"$TEST_ROOT/grant.out" 2>"$TEST_ROOT/grant.err" || { cat "$TEST_ROOT/grant.out" "$TEST_ROOT/grant.err" >&2; return 1; }
   sudoers_file="$sudoers_dir/hold_web-sys_$TEST_USER"
   root_file_exists "$sudoers_file" || { echo "missing $sudoers_file" >&2; cat "$TEST_ROOT/grant.err" >&2; return 1; }
+  grant_private="$HOLD_TEST_SYSTEM_STATE_DIR/grants/users/$TEST_USER/web-sys.json"
+  grant_public="$HOLD_TEST_SYSTEM_STATE_DIR/public/grants/users/$TEST_USER/web-sys.json"
+  root_file_exists "$grant_private" || { echo "missing $grant_private" >&2; return 1; }
+  root_file_exists "$grant_public" || { echo "missing $grant_public" >&2; return 1; }
+  root_grep "\"source_hash\": \"$hash\"" "$grant_private" || { as_root cat "$grant_private" >&2; return 1; }
+  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
+  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
   root_grep '# actions-list: start,stop' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real ^--system --elevated (start|stop) [0-9a-f]{8} web-sys $hash$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real ^run web-sys --cap $grant_hash [A-Za-z0-9_-]{1,768}$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+
+  make_fake_sudo || return 1
+  set +e
+  as_user "$safe" --system start web-sys >"$TEST_ROOT/granted-start.out" 2>"$TEST_ROOT/granted-start.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 77 ] || { cat "$TEST_ROOT/granted-start.out" "$TEST_ROOT/granted-start.err" >&2; return 1; }
+  args=()
+  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
+  [ "${args[0]}" = "--" ] || return 1
+  [ "${args[1]}" = "$safe_real" ] || return 1
+  [ "${args[2]}" = "run" ] || return 1
+  [ "${args[3]}" = "web-sys" ] || return 1
+  [ "${args[4]}" = "--cap" ] || return 1
+  [ "${args[5]}" = "$grant_hash" ] || return 1
+  printf '%s\n' "${args[6]}" | grep -Eq '^[A-Za-z0-9_-]+$' || return 1
+  ! grep -qx -- '--system' "$HOLD_FAKE_SUDO_ARGV" || return 1
+  ! grep -qx -- '--elevated' "$HOLD_FAKE_SUDO_ARGV" || return 1
 
   as_root "$safe" revoke web-sys "$TEST_USER" start >"$TEST_ROOT/revoke.out" 2>"$TEST_ROOT/revoke.err" || { cat "$TEST_ROOT/revoke.out" "$TEST_ROOT/revoke.err" >&2; return 1; }
+  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
+  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
   root_grep '# actions-list: stop' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real ^--system --elevated (stop) [0-9a-f]{8} web-sys $hash$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real ^run web-sys --cap $grant_hash [A-Za-z0-9_-]{1,768}$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
 
   as_root "$safe" grant web-sys "$TEST_USER" >"$TEST_ROOT/grant-all.out" 2>"$TEST_ROOT/grant-all.err" || { cat "$TEST_ROOT/grant-all.out" "$TEST_ROOT/grant-all.err" >&2; return 1; }
+  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
+  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
   root_grep '# actions: ALL' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
   root_grep '# actions-list: start,stop,kill,tail,dump,prune,console' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real ^--system --elevated (start|stop|kill|tail|dump|prune|console) [0-9a-f]{8} web-sys $hash$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
+  root_grep "$TEST_USER ALL=(root) NOPASSWD: $safe_real ^run web-sys --cap $grant_hash [A-Za-z0-9_-]{1,768}$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
   as_root "$safe" revoke web-sys "$TEST_USER" >"$TEST_ROOT/revoke-all.out" 2>"$TEST_ROOT/revoke-all.err" || { cat "$TEST_ROOT/revoke-all.out" "$TEST_ROOT/revoke-all.err" >&2; return 1; }
   root_path_absent "$sudoers_file"
+  root_path_absent "$grant_private"
+  root_path_absent "$grant_public"
 }
 
 test_elevated_capability_start_and_stop_validate_alias_hash() {
@@ -2942,7 +2973,7 @@ run_test "normal run does not self-elevate on local/root ID conflict" test_user_
 run_test "explicit user:<id> targets user-local run" test_explicit_user_target
 run_test "user alias stores a direct recipe and starts/stops by alias" test_alias_profile_map_start_and_stop
 run_test "alias from relative executable keeps absolute recorded argv0" test_alias_from_relative_executable_uses_recorded_absolute_argv0
-run_test "alias start requires --multi when already running and --all stops all" test_alias_multi_gate_and_all_stop
+run_test "profile start requires --force when already running and --all stops all" test_alias_multi_gate_and_all_stop
 run_test "profile start inherits current environment" test_profile_start_inherits_current_environment
 run_test "profile transcript import/export round-trips a user-local recipe" test_profile_transcript_import_export_roundtrip
 run_test "profile name-first set command edits a user-local recipe" test_profile_name_first_set_command

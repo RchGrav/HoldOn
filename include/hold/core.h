@@ -29,6 +29,7 @@ int hold_open_unique_temp(const char *dir, const char *prefix, mode_t mode, char
 int hold_read_file_trim(const char *path, char *buf, size_t n);
 bool hold_path_exists(const char *path);
 void hold_sha256_init(struct sha256_ctx *c);
+void hold_sha256_update(struct sha256_ctx *c, const void *data, size_t n);
 void hold_sha256_final(struct sha256_ctx *c, unsigned char out[32]);
 void hold_hex_encode(const unsigned char *bytes, size_t n, char *out, size_t out_n);
 int hold_rand_bytes(uint8_t *buf, size_t n);
@@ -58,6 +59,9 @@ int hold_fsync_dir_path(const char *dir);
 int hold_copy_argv(char ***out, int argc, char **argv);
 int hold_read_small_file(const char *path, char **out);
 int hold_read_exec_handshake(int fd, int *child_errno);
+int hold_base64url_encode(const unsigned char *in, size_t in_len, char *out, size_t out_n);
+int hold_base64url_decode(const char *in, unsigned char *out, size_t out_n, size_t *out_len);
+int hold_sha256_file_hex(const char *path, char out[PROFILE_HASH_STR_LEN]);
 void hold_format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n);
 void hold_format_relative_age(int64_t start_unix_ns, char *out, size_t n);
 bool hold_valid_runid_selector(const char *sel);

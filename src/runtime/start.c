@@ -780,7 +780,7 @@ int hold_cmd_start_action(const struct hold_invocation *inv,
                     }
                     if (running > 0) {
                         fprintf(stderr,
-                                "hold: error: profile '%s' already has a running process; use --multi to start another\n",
+                                "hold: error: profile '%s' already has a running process; use --force to start another\n",
                                 target.alias);
                         free_start_profile_target(&target);
                         return 6;

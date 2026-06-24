@@ -17,6 +17,7 @@ static int shell_map_slash_view(char **argv, int argc, char ***mapped_out, int *
 static int shell_map_profile_context(const char *name, char **argv, int argc, char ***mapped_out, int *mapped_argc_out);
 static int hold_run_captive_shell(const char *program);
 static void print_command_usage_stderr(const char *command);
+static int build_cap_request_token(const char *op, const char *profile, bool force, char *out, size_t n);
 
 static const char *program_basename(const char *path) {
     if (!path || !*path) {
@@ -29,6 +30,21 @@ static const char *program_basename(const char *path) {
 static bool invoked_as_hold(const char *path) {
     const char *base = program_basename(path);
     return !strcmp(base, "hold");
+}
+
+
+static int build_cap_request_token(const char *op, const char *profile, bool force, char *out, size_t n) {
+    if (!op || !profile || !hold_valid_alias(profile)) {
+        errno = EINVAL;
+        return -1;
+    }
+    char json[256];
+    if (hold_checked_snprintf(json, sizeof(json),
+                              "{\"v\":1,\"op\":\"%s\",\"profile\":\"%s\",\"force\":%s}",
+                              op, profile, force ? "true" : "false") != 0) {
+        return -1;
+    }
+    return hold_base64url_encode((const unsigned char *)json, strlen(json), out, n);
 }
 
 static void shell_free_argv(char **argv, int argc) {
@@ -472,6 +488,11 @@ int main(int argc, char **argv) {
                 list_iso = true;
                 continue;
             }
+            if (!literal_owned_arg && !strcmp(command, "start") && !strcmp(argv[i], "--force")) {
+                multi = true;
+                multi_count = 1;
+                continue;
+            }
             if (!literal_owned_arg && !strcmp(command, "start") && !strcmp(argv[i], "--multi")) {
                 multi = true;
                 multi_count = 1;
@@ -504,6 +525,9 @@ int main(int argc, char **argv) {
         cmd_argc = argc - argi;
         cmd_argv = argv + argi;
     }
+
+    bool cap_run_form = owned && !strcmp(command, "run") && !saw_owned_delimiter &&
+                        cmd_argc == 4 && !strcmp(cmd_argv[1], "--cap");
 
     if (!owned && !force_raw && !tail && !strcmp(argv[argi], "--version")) {
         puts(HOLD_VERSION);
@@ -540,7 +564,7 @@ int main(int argc, char **argv) {
         free(cmd_argv);
         return rc;
     }
-    if (owned && !strcmp(command, "run") && !saw_owned_delimiter) {
+    if (owned && !strcmp(command, "run") && !saw_owned_delimiter && !cap_run_form) {
         fprintf(stderr, "usage: hold run [--tail|-f] [--console] -- <cmd> [args...]\n");
         free(cmd_argv);
         return 5;
@@ -588,6 +612,25 @@ int main(int argc, char **argv) {
                 (hold_valid_profile_hash(atom) || hold_valid_alias(atom))) {
                 char hash[PROFILE_HASH_STR_LEN];
                 if (hold_resolve_public_profile_token(&pre_system_store, atom, hash) == 1) {
+                    if (hold_valid_alias(atom)) {
+                        struct passwd *pw = getpwuid(geteuid());
+                        char subject[128];
+                        if (pw && pw->pw_name && *pw->pw_name &&
+                            hold_checked_snprintf(subject, sizeof(subject), "%s", pw->pw_name) == 0) {
+                            char grant_hash[PROFILE_HASH_STR_LEN];
+                            if (hold_subject_grant_hash_for(&pre_system_store, subject, atom, grant_hash) == 0) {
+                                char token[1024];
+                                if (build_cap_request_token("start", atom, multi, token, sizeof(token)) != 0) {
+                                    free(cmd_argv);
+                                    return 3;
+                                }
+                                char *canon[5] = {"run", (char *)atom, "--cap", grant_hash, token};
+                                int rc = hold_elevate_with_sudo_direct(argv[0], 5, canon);
+                                free(cmd_argv);
+                                return rc;
+                            }
+                        }
+                    }
                     int rc = 0;
                     int starts = multi ? multi_count : 1;
                     for (int i = 0; i < starts; i++) {
@@ -638,6 +681,12 @@ int main(int argc, char **argv) {
                 hold_die_errno("hold: failed to init user storage");
             }
         }
+    }
+
+    if (cap_run_form && inv.euid_root) {
+        int rc = hold_cmd_cap_request_action(&inv, &system_store, tail, console_mode, cmd_argc, cmd_argv);
+        free(cmd_argv);
+        return rc >= 0 ? rc : 5;
     }
 
     if (inv.elevated && inv.euid_root && owned && cmd_argc == 3 &&

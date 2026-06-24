@@ -4,7 +4,6 @@
 
 static uint32_t rotr32(uint32_t x, unsigned n);
 static void sha256_block(struct sha256_ctx *c, const unsigned char *p);
-static void sha256_update(struct sha256_ctx *c, const void *data, size_t n);
 static void sha256_update_cstr(struct sha256_ctx *ctx, const char *s);
 
 static uint32_t rotr32(uint32_t x, unsigned n) {
@@ -53,7 +52,7 @@ void hold_sha256_init(struct sha256_ctx *c) {
     c->off = 0;
 }
 
-static void sha256_update(struct sha256_ctx *c, const void *data, size_t n) {
+void hold_sha256_update(struct sha256_ctx *c, const void *data, size_t n) {
     const unsigned char *p = data;
     c->len += (uint64_t)n * 8U;
     while (n > 0) {
@@ -146,11 +145,11 @@ int hold_rand_bytes(uint8_t *buf, size_t n) {
 }
 
 static void sha256_update_cstr(struct sha256_ctx *ctx, const char *s) {
-    sha256_update(ctx, s, strlen(s));
+    hold_sha256_update(ctx, s, strlen(s));
 }
 
 void hold_sha256_update_nul_field(struct sha256_ctx *ctx, const char *s) {
     static const unsigned char nul = 0;
     sha256_update_cstr(ctx, s ? s : "");
-    sha256_update(ctx, &nul, 1);
+    hold_sha256_update(ctx, &nul, 1);
 }

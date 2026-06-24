@@ -706,6 +706,69 @@ void hold_usage(void) {
            HOLD_VERSION);
 }
 
+static int json_request_get_op(const char *json, char *op, size_t op_n, char *profile, size_t profile_n, bool *force) {
+    int64_t v = 0;
+    if (hold_json_get_i64(json, "v", &v) != 0 || v != 1 ||
+        hold_json_get_str(json, "op", op, op_n) != 0 ||
+        hold_json_get_str(json, "profile", profile, profile_n) != 0) {
+        return -1;
+    }
+    bool parsed_force = false;
+    if (hold_json_get_bool(json, "force", &parsed_force) != 0) {
+        parsed_force = false;
+    }
+    *force = parsed_force;
+    return 0;
+}
+
+int hold_cmd_cap_request_action(const struct hold_invocation *inv,
+                                const struct hold_store *system_store,
+                                bool tail,
+                                bool console_mode,
+                                int argc,
+                                char **argv) {
+    if (!inv || !inv->euid_root || argc != 4) {
+        return -1;
+    }
+    const char *profile = argv[0];
+    const char *cap_flag = argv[1];
+    const char *hash = argv[2];
+    const char *encoded = argv[3];
+    if (!hold_valid_alias(profile) || strcmp(cap_flag, "--cap") != 0 || !hold_valid_profile_hash(hash) || strlen(encoded) > 768) {
+        return -1;
+    }
+    unsigned char decoded[2048];
+    size_t decoded_len = 0;
+    if (hold_base64url_decode(encoded, decoded, sizeof(decoded), &decoded_len) != 0) {
+        fprintf(stderr, "hold: error: malformed capability request\n");
+        return 5;
+    }
+    char op[32];
+    char json_profile[ALIAS_MAX_LEN + 1];
+    bool force = false;
+    if (json_request_get_op((const char *)decoded, op, sizeof(op), json_profile, sizeof(json_profile), &force) != 0 ||
+        strcmp(json_profile, profile) != 0) {
+        fprintf(stderr, "hold: error: invalid capability request\n");
+        return 5;
+    }
+    const char *subject = (inv->have_sudo_user && inv->invoking_user[0]) ? inv->invoking_user : "root";
+    struct hold_profile granted;
+    if (hold_load_subject_grant_profile(system_store, subject, profile, hash, &granted) != 0) {
+        fprintf(stderr, "hold: error: capability for '%s' is no longer valid\n", profile);
+        return 3;
+    }
+    int rc = 0;
+    if (!strcmp(op, "start")) {
+        (void)force;
+        rc = hold_perform_start(inv, system_store, tail, console_mode, granted.argc, granted.argv, granted.binary_path, profile);
+    } else {
+        fprintf(stderr, "hold: error: unsupported capability operation '%s'\n", op);
+        rc = 5;
+    }
+    hold_free_profile(&granted);
+    return rc;
+}
+
 int hold_cmd_elevated_capability_action(const struct hold_invocation *inv,
                                           const struct hold_store *system_store,
                                           const char *command,

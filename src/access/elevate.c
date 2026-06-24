@@ -17,14 +17,15 @@ static int child_status_to_exit_code(int status) {
     return 3;
 }
 
-int hold_elevate_with_sudo_canonical(const char *program, int canonical_argc, char **canonical_argv) {
+static int elevate_with_sudo_argv(const char *program, int canonical_argc, char **canonical_argv, bool internal_system_tags) {
     char abs_hold[HOLD_PATH_MAX];
     if (hold_resolve_self_executable_path(program, abs_hold, sizeof(abs_hold)) != 0) {
         fprintf(stderr, "hold: cannot determine executable path for sudo self-elevation\n");
         return 3;
     }
 
-    int argc = 5 + canonical_argc;
+    int prefix = internal_system_tags ? 5 : 3;
+    int argc = prefix + canonical_argc;
     char **sudo_argv = calloc((size_t)argc + 1, sizeof(char *));
     if (!sudo_argv) {
         return 3;
@@ -32,10 +33,13 @@ int hold_elevate_with_sudo_canonical(const char *program, int canonical_argc, ch
     sudo_argv[0] = "sudo";
     sudo_argv[1] = "--";
     sudo_argv[2] = abs_hold;
-    sudo_argv[3] = "--system";
-    sudo_argv[4] = "--elevated";
+    int off = 3;
+    if (internal_system_tags) {
+        sudo_argv[off++] = "--system";
+        sudo_argv[off++] = "--elevated";
+    }
     for (int i = 0; i < canonical_argc; i++) {
-        sudo_argv[5 + i] = canonical_argv[i];
+        sudo_argv[off + i] = canonical_argv[i];
     }
     sudo_argv[argc] = NULL;
 
@@ -78,29 +82,31 @@ int hold_elevate_with_sudo_canonical(const char *program, int canonical_argc, ch
         if (have_old_int) sigaction(SIGINT, &old_int, NULL);
         if (have_old_quit) sigaction(SIGQUIT, &old_quit, NULL);
         execvp(sudo_prog, sudo_argv);
-        int saved = errno;
-        fprintf(stderr, "hold: failed to exec sudo: %s\n", strerror(saved));
+        fprintf(stderr, "hold: failed to exec sudo: %s\n", strerror(errno));
         _exit(127);
     }
-
     free(sudo_argv);
-
     int status = 0;
     while (waitpid(pid, &status, 0) < 0) {
-        if (errno == EINTR) {
-            continue;
-        }
+        if (errno == EINTR) continue;
         int saved = errno;
         if (have_old_int) sigaction(SIGINT, &old_int, NULL);
         if (have_old_quit) sigaction(SIGQUIT, &old_quit, NULL);
         errno = saved;
-        fprintf(stderr, "hold: failed to wait for sudo: %s\n", strerror(errno));
+        fprintf(stderr, "hold: failed waiting for sudo: %s\n", strerror(errno));
         return 3;
     }
-
     if (have_old_int) sigaction(SIGINT, &old_int, NULL);
     if (have_old_quit) sigaction(SIGQUIT, &old_quit, NULL);
     return child_status_to_exit_code(status);
+}
+
+int hold_elevate_with_sudo_direct(const char *program, int canonical_argc, char **canonical_argv) {
+    return elevate_with_sudo_argv(program, canonical_argc, canonical_argv, false);
+}
+
+int hold_elevate_with_sudo_canonical(const char *program, int canonical_argc, char **canonical_argv) {
+    return elevate_with_sudo_argv(program, canonical_argc, canonical_argv, true);
 }
 
 int hold_elevate_with_sudo_parsed(const char *program,

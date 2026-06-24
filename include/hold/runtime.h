@@ -131,6 +131,12 @@ int hold_cmd_profile_rename(const struct hold_invocation *inv,
                                const char *old_name,
                                const char *new_name);
 void hold_usage(void);
+int hold_cmd_cap_request_action(const struct hold_invocation *inv,
+                                const struct hold_store *system_store,
+                                bool tail,
+                                bool console_mode,
+                                int argc,
+                                char **argv);
 int hold_cmd_elevated_capability_action(const struct hold_invocation *inv,
                                           const struct hold_store *system_store,
                                           const char *command,
