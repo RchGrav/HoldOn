@@ -1471,7 +1471,7 @@ test_alias_profile_map_start_and_stop() {
   out=$("$HOLD_BIN" /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  "$HOLD_BIN" alias "$id" web-test >"$TEST_ROOT/alias.out" 2>"$TEST_ROOT/alias.err" || return 1
+  "$HOLD_BIN" profile save "$id" as web-test >"$TEST_ROOT/alias.out" 2>"$TEST_ROOT/alias.err" || return 1
   [ ! -s "$TEST_ROOT/alias.out" ] || return 1
   grep -Fqx "hold: pinned 'web-test' -> $sh_bin -c 'while :; do sleep 1; done'" "$TEST_ROOT/alias.err" || return 1
   [ -f "$store/aliases.json" ] || return 1
@@ -1479,7 +1479,7 @@ test_alias_profile_map_start_and_stop() {
   [ ! -d "$store/profiles" ] || return 1
   grep -q '"web-test": {"bin": "' "$store/aliases.json" || return 1
   grep -Fq "\"args\": [\"$sh_bin\", \"-c\", \"while :; do sleep 1; done\"]" "$store/aliases.json" || return 1
-  "$HOLD_BIN" aliases >"$TEST_ROOT/aliases-list.out" || return 1
+  "$HOLD_BIN" profiles >"$TEST_ROOT/aliases-list.out" || return 1
   grep -Eq "^web-test[[:space:]]+user[[:space:]]+.*[[:space:]]+-$" "$TEST_ROOT/aliases-list.out" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list-after-alias.out" 2>"$TEST_ROOT/list-after-alias.err" || return 1
   ! grep -q 'aliases.json' "$TEST_ROOT/list-after-alias.err" || return 1
@@ -1516,7 +1516,7 @@ test_alias_from_relative_executable_uses_recorded_absolute_argv0() {
   [ -n "$id" ] || return 1
   grep -Fq "\"argv\": [\"$expected\"]" "$store/$id.json" || return 1
 
-  (cd "$other" && "$HOLD_BIN" alias "$id" rel-daemon >"$TEST_ROOT/alias-rel.out" 2>"$TEST_ROOT/alias-rel.err") || return 1
+  (cd "$other" && "$HOLD_BIN" profile save "$id" as rel-daemon >"$TEST_ROOT/alias-rel.out" 2>"$TEST_ROOT/alias-rel.err") || return 1
   grep -Fq "\"rel-daemon\": {\"bin\": \"$expected\", \"args\": [\"$expected\"]}" "$store/aliases.json" || return 1
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
@@ -1526,7 +1526,7 @@ test_alias_multi_gate_and_all_stop() {
   out=$("$HOLD_BIN" sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  "$HOLD_BIN" alias "$id" web-multi >/dev/null || return 1
+  "$HOLD_BIN" profile save "$id" as web-multi >/dev/null || return 1
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
   "$HOLD_BIN" prune "$id" >/dev/null || return 1
 
@@ -1561,7 +1561,7 @@ test_profile_start_inherits_current_environment() {
   out=$(as_user env HOLD_PROFILE_ENV=seed "$HOLD_REAL_BIN" /bin/sh -c 'printf "%s\n" "$HOLD_PROFILE_ENV"' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  as_user "$HOLD_REAL_BIN" alias "$id" env-test >"$TEST_ROOT/alias-env.out" 2>"$TEST_ROOT/alias-env.err" || return 1
+  as_user "$HOLD_REAL_BIN" profile save "$id" as env-test >"$TEST_ROOT/alias-env.out" 2>"$TEST_ROOT/alias-env.err" || return 1
 
   out2=$(as_user env HOLD_PROFILE_ENV=profile-value "$HOLD_REAL_BIN" start env-test 2>&1) || return 1
   id2=$(printf '%s\n' "$out2" | extract_id)
@@ -1719,11 +1719,11 @@ test_invalid_alias_names_rejected() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   set +e
-  "$HOLD_BIN" alias "$id" bad.name >"$TEST_ROOT/alias-bad.out" 2>"$TEST_ROOT/alias-bad.err"
+  "$HOLD_BIN" profile save "$id" as bad.name >"$TEST_ROOT/alias-bad.out" 2>"$TEST_ROOT/alias-bad.err"
   rc=$?
   set -e
   [ "$rc" -eq 5 ] || return 1
-  grep -q 'invalid alias' "$TEST_ROOT/alias-bad.err"
+  grep -q 'invalid profile' "$TEST_ROOT/alias-bad.err"
 }
 
 test_short_hex_alias_name_allowed() {
@@ -1732,10 +1732,10 @@ test_short_hex_alias_name_allowed() {
   out=$("$HOLD_BIN" /bin/sh -c ':' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  "$HOLD_BIN" alias "$id" db >"$TEST_ROOT/alias-db.out" 2>"$TEST_ROOT/alias-db.err" || return 1
+  "$HOLD_BIN" profile save "$id" as db >"$TEST_ROOT/alias-db.out" 2>"$TEST_ROOT/alias-db.err" || return 1
   [ ! -s "$TEST_ROOT/alias-db.out" ] || return 1
   grep -Fqx "hold: pinned 'db' -> $sh_bin -c :" "$TEST_ROOT/alias-db.err" || return 1
-  "$HOLD_BIN" aliases >"$TEST_ROOT/aliases-db.out" || return 1
+  "$HOLD_BIN" profiles >"$TEST_ROOT/aliases-db.out" || return 1
   grep -Eq "^db[[:space:]]+user[[:space:]]+" "$TEST_ROOT/aliases-db.out" || return 1
   grep -Fq "$sh_bin -c :" "$TEST_ROOT/aliases-db.out"
 }
@@ -1798,7 +1798,7 @@ test_grant_revoke_writes_hash_scoped_sudoers() {
   out=$(as_root "$safe" /bin/sh -c ':' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  as_root "$safe" alias "$id" web-sys >"$TEST_ROOT/root-alias.out" 2>"$TEST_ROOT/root-alias.err" || return 1
+  as_root "$safe" profile save "$id" as web-sys >"$TEST_ROOT/root-alias.out" 2>"$TEST_ROOT/root-alias.err" || return 1
   [ ! -s "$TEST_ROOT/root-alias.out" ] || return 1
   grep -Fqx "hold: pinned 'web-sys' -> $sh_bin -c :" "$TEST_ROOT/root-alias.err" || return 1
   hash=$(system_alias_hash web-sys)
@@ -1838,7 +1838,7 @@ test_elevated_capability_start_and_stop_validate_alias_hash() {
   out=$(as_root "$safe" /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  as_root "$safe" alias "$id" web-cap >"$TEST_ROOT/cap-alias.out" 2>"$TEST_ROOT/cap-alias.err" || return 1
+  as_root "$safe" profile save "$id" as web-cap >"$TEST_ROOT/cap-alias.out" 2>"$TEST_ROOT/cap-alias.err" || return 1
   [ ! -s "$TEST_ROOT/cap-alias.out" ] || return 1
   hash=$(system_alias_hash web-cap)
   [ -n "$hash" ] || return 1
@@ -2138,7 +2138,7 @@ test_home_elevated_run_alias_stays_user_local() {
   out=$(as_sudo_from_user "$HOLD_REAL_BIN" --system "$app" 2>&1) || return 1
   assert_home_system_start_is_user_local "$out" || return 1
   id=$(printf '%s\n' "$out" | extract_id)
-  as_user "$HOLD_REAL_BIN" alias "$id" home-elevated >/dev/null || return 1
+  as_user "$HOLD_REAL_BIN" profile save "$id" as home-elevated >/dev/null || return 1
   aliases="$ACTOR_HOME/.local/state/hold/aliases.json"
   root_file_exists "$aliases" || return 1
   root_grep '"home-elevated"' "$aliases" || return 1
@@ -2178,7 +2178,7 @@ test_hold_unified_cli_surface() {
   out=$("$HOLD_BIN" run -- /usr/bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  "$HOLD_BIN" alias "$id" hold-web >/dev/null || return 1
+  "$HOLD_BIN" profile save "$id" as hold-web >/dev/null || return 1
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
   "$HOLD_BIN" prune "$id" >/dev/null || return 1
   "$HOLD_BIN" profiles >"$TEST_ROOT/hold-profiles.out" || return 1
@@ -2305,7 +2305,7 @@ grant_fixture() {
   export HOLD_TEST_VISUDO_PROG="$GRANT_VISUDO_OK"
   id=$(as_root "$GRANT_SAFE" /bin/sh -c ':' 2>&1 | extract_id) || return 1
   [ -n "$id" ] || return 1
-  as_root "$GRANT_SAFE" alias "$id" web-sys >/dev/null 2>&1 || return 1
+  as_root "$GRANT_SAFE" profile save "$id" as web-sys >/dev/null 2>&1 || return 1
 }
 
 test_system_store_directory_modes() {
@@ -2400,19 +2400,19 @@ test_aliases_json_symlink_not_followed() {
   out=$("$HOLD_BIN" /bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  "$HOLD_BIN" alias "$id" myweb >/dev/null 2>&1 || return 1
+  "$HOLD_BIN" profile save "$id" as myweb >/dev/null 2>&1 || return 1
   "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
   aliases="$HOME/.local/state/hold/aliases.json"
   [ -f "$aliases" ] || return 1
   # sanity: the alias is visible when the file is a real regular file
-  "$HOLD_BIN" aliases 2>/dev/null | grep -q myweb || { echo "alias not visible before symlink (test setup)" >&2; return 1; }
+  "$HOLD_BIN" profiles 2>/dev/null | grep -q myweb || { echo "alias not visible before symlink (test setup)" >&2; return 1; }
   # replace it with a symlink to an identical attacker-controlled file
   attacker="$TEST_ROOT/attacker-aliases.json"
   cp "$aliases" "$attacker" || return 1
   rm -f "$aliases"
   ln -s "$attacker" "$aliases" || return 1
   # O_NOFOLLOW must reject the symlinked alias dictionary: myweb must not load
-  if "$HOLD_BIN" aliases 2>/dev/null | grep -q myweb; then
+  if "$HOLD_BIN" profiles 2>/dev/null | grep -q myweb; then
     echo "symlinked aliases.json was followed (myweb loaded through the symlink)" >&2
     return 1
   fi
@@ -2431,7 +2431,7 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
   out=$("$HOLD_BIN" /bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  "$HOLD_BIN" alias "$id" fixedlink >/dev/null 2>&1 || return 1
+  "$HOLD_BIN" profile save "$id" as fixedlink >/dev/null 2>&1 || return 1
   "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
   [ "$(cat "$attacker")" = "do-not-touch-alias-symlink" ] || { echo "alias writer followed fixed symlink temp" >&2; return 1; }
   [ -L "$fixed" ] || { echo "alias writer replaced fixed symlink temp" >&2; return 1; }
@@ -2440,7 +2440,7 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
   out=$("$HOLD_BIN" /bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  "$HOLD_BIN" alias "$id" fixedfile >/dev/null 2>&1 || return 1
+  "$HOLD_BIN" profile save "$id" as fixedfile >/dev/null 2>&1 || return 1
   "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
   [ "$(cat "$fixed")" = "do-not-touch-alias-file" ] || { echo "alias writer truncated fixed temp file" >&2; return 1; }
   leftovers=$(find "$store" -maxdepth 1 -name '.aliases.*.tmp' -print 2>/dev/null || true)
@@ -2455,7 +2455,7 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
   printf 'do-not-touch-public-alias-symlink\n' >"$TEST_ROOT/public-alias-attacker" || return 1
   as_root ln -s "$TEST_ROOT/profile-attacker" "$HOLD_TEST_SYSTEM_STATE_DIR/.profiles.tmp" || return 1
   as_root ln -s "$TEST_ROOT/public-alias-attacker" "$HOLD_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
-  as_root "$HOLD_REAL_BIN" alias "$id" syslink >/dev/null 2>&1 || return 1
+  as_root "$HOLD_REAL_BIN" profile save "$id" as syslink >/dev/null 2>&1 || return 1
   [ "$(cat "$TEST_ROOT/profile-attacker")" = "do-not-touch-profile-symlink" ] || { echo "profile writer followed fixed symlink temp" >&2; return 1; }
   [ "$(cat "$TEST_ROOT/public-alias-attacker")" = "do-not-touch-public-alias-symlink" ] || { echo "system alias writer followed fixed symlink temp" >&2; return 1; }
   root_file_exists "$HOLD_TEST_SYSTEM_STATE_DIR/profiles.json" || return 1
@@ -2467,7 +2467,7 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
   [ -n "$id" ] || return 1
   as_root sh -c 'printf "%s\n" "do-not-touch-profile-file" >"$1"; printf "%s\n" "do-not-touch-public-alias-file" >"$2"' sh \
     "$HOLD_TEST_SYSTEM_STATE_DIR/.profiles.tmp" "$HOLD_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
-  as_root "$HOLD_REAL_BIN" alias "$id" sysfile >/dev/null 2>&1 || return 1
+  as_root "$HOLD_REAL_BIN" profile save "$id" as sysfile >/dev/null 2>&1 || return 1
   before=$(as_root cat "$HOLD_TEST_SYSTEM_STATE_DIR/.profiles.tmp") || return 1
   [ "$before" = "do-not-touch-profile-file" ] || { echo "profile writer truncated fixed temp file" >&2; return 1; }
   before=$(as_root cat "$HOLD_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp") || return 1
@@ -2609,7 +2609,7 @@ test_ambiguous_tail_resolvable_by_run_id() {
   local id1 id2 rc tpid
   # An alias whose runs emit output, so tailing one by id has something to follow.
   id1=$("$HOLD_BIN" sh -c 'while :; do echo tick; sleep 0.2; done' 2>&1 | extract_id) || return 1
-  "$HOLD_BIN" alias "$id1" web-amb >/dev/null || return 1
+  "$HOLD_BIN" profile save "$id1" as web-amb >/dev/null || return 1
   "$HOLD_BIN" stop "$id1" >/dev/null; "$HOLD_BIN" prune "$id1" >/dev/null
   id1=$("$HOLD_BIN" start web-amb 2>&1 | extract_id); [ -n "$id1" ] || return 1
   id2=$("$HOLD_BIN" start web-amb --multi 2>&1 | extract_id); [ -n "$id2" ] || return 1
@@ -2685,7 +2685,7 @@ test_grant_revoke_argument_refusals() {
 test_multi_n_exact_count_and_invalid() {
   local id ids running rc
   id=$("$HOLD_BIN" sleep 60 2>&1 | extract_id) || return 1
-  "$HOLD_BIN" alias "$id" web-n >/dev/null || return 1
+  "$HOLD_BIN" profile save "$id" as web-n >/dev/null || return 1
   "$HOLD_BIN" stop "$id" >/dev/null; "$HOLD_BIN" prune "$id" >/dev/null
   ids=$("$HOLD_BIN" start web-n --multi 3 2>/dev/null | sed -n '/^[0-9a-f]\{8\}$/p')
   [ "$(printf '%s\n' "$ids" | grep -c .)" -eq 3 ] || { echo "--multi 3 did not print 3 ids" >&2; return 1; }
@@ -2706,7 +2706,7 @@ test_multi_n_exact_count_and_invalid() {
 test_tail_cannot_follow_multiple_starts() {
   local id rc running
   id=$("$HOLD_BIN" sleep 60 2>&1 | extract_id) || return 1
-  "$HOLD_BIN" alias "$id" web-t >/dev/null || return 1
+  "$HOLD_BIN" profile save "$id" as web-t >/dev/null || return 1
   "$HOLD_BIN" stop "$id" >/dev/null; "$HOLD_BIN" prune "$id" >/dev/null
   set +e; "$HOLD_BIN" start web-t --multi 2 --tail >/dev/null 2>"$TEST_ROOT/t.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "--multi 2 --tail: rc=$rc (want 5)" >&2; return 1; }
@@ -2718,7 +2718,7 @@ test_tail_cannot_follow_multiple_starts() {
 test_print_over_all_and_multiple() {
   local id1 id2 pgid1 pgid2 out
   id1=$("$HOLD_BIN" sleep 60 2>&1 | extract_id) || return 1
-  "$HOLD_BIN" alias "$id1" web-pr >/dev/null || return 1
+  "$HOLD_BIN" profile save "$id1" as web-pr >/dev/null || return 1
   "$HOLD_BIN" stop "$id1" >/dev/null; "$HOLD_BIN" prune "$id1" >/dev/null
   id1=$("$HOLD_BIN" start web-pr 2>&1 | extract_id); pgid1=$(record_pgid "$id1")
   id2=$("$HOLD_BIN" start web-pr --multi 2>&1 | extract_id); pgid2=$(record_pgid "$id2")

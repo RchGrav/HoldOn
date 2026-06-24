@@ -121,7 +121,7 @@ Turn a recorded command into a reusable name:
 
 ```bash
 id="$(hold ./your-server --port 9000)"
-hold alias "$id" web
+hold profile save "$id" as web
 
 hold start web
 hold stop web

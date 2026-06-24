@@ -109,7 +109,7 @@ changed after 0.3.5.
 - Added `demo.sh` as a self-contained release asset for trying On Hold in a
   temporary sandbox.
 - Added `examples/interactive-demo/` with the source version of the demo.
-- Added `make check` as an alias for `make test`.
+- Added `make check` as a profile for `make test`.
 
 ### Release notes
 
@@ -131,7 +131,7 @@ material, not normal action targets.
 
 ### Added
 
-- Added `hold alias <id> <name>` to create or update an alias from a
+- Added `hold profile save <id> as <name>` to create or update an alias from a
   recorded run. User-local aliases store a direct recipe in private
   `aliases.json`; root-managed aliases publish only `alias -> hash` while the
   protected recipe stays in root-private `profiles.json`.
@@ -142,7 +142,7 @@ material, not normal action targets.
 - Added alias-aware target resolution for `stop`, `kill`, `tail`, `dump`, and
   `prune`; ambiguous alias selections exit 6 and print the matching run IDs.
 - Added `--all` to resolve alias ambiguity for `stop`, `kill`, and `prune`.
-- Added `hold aliases` for visible alias lookup. User aliases show `-` in the
+- Added `hold profiles` for visible profile lookup. User profiles show `-` in the
   hash column; system aliases show `<root-managed>` with a truncated protected
   profile hash by default and the full hash with `-v`.
 - Added `stop --print` and `kill --print` as the dry-run replacement for the

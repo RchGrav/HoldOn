@@ -178,7 +178,7 @@ flowchart LR
 
 Use `user:` and `system:` when you want the tool to do exactly what you said instead of applying the normal local-first lookup rule.
 
-Next: Step 5 turns a recorded run into a reusable alias.
+Next: Step 5 turns a recorded run into a reusable profile.
 
 Dig deeper: [Target resolution](target-resolution.md) explains IDs, prefixes, aliases, `user:`, `system:`, ambiguity, and `--all`.
 
@@ -190,7 +190,7 @@ Action:
 
 ```bash
 id="$(hold ./your-server --port 9000)"
-hold alias "$id" web
+hold profile save "$id" as web
 hold start web
 hold stop web
 ```
@@ -204,7 +204,7 @@ Expect:
 
 ```mermaid
 flowchart LR
-    Run["recorded run"] --> Alias["alias name"]
+    Run["recorded run"] --> Alias["profile name"]
     Alias --> Start["start name"]
     Start --> Labeled["labeled run"]
     Labeled --> Manage["manage by name"]
@@ -231,7 +231,7 @@ Action:
 
 ```bash
 sudo hold --system /usr/bin/redis-server /etc/redis.conf
-sudo hold alias <run-id> cache
+sudo hold profile save <run-id> as cache
 sudo hold grant cache alice start,stop,tail,dump
 ```
 

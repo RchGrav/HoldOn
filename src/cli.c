@@ -39,10 +39,10 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"view", 1, -1, 0, "usage: hold view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive]", "view"},
     {"console", 1, 1, 0, "usage: hold console <target>", "console"},
     {"prune", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold prune [target|all] [--all]", "prune"},
-    {"alias", 2, 3, 0, "usage: hold alias <id> <name> [-v]", "alias"},
-    {"aliases", 0, 1, 0, "usage: hold aliases [-v]", "aliases"},
+    {"alias", 0, -1, 0, "usage: hold profile save <id> as <name> [-v]", "alias"},
+    {"aliases", 0, -1, 0, "usage: hold profiles [-v]", "aliases"},
     {"profiles", 0, 1, 0, "usage: hold profiles [-v]", "profiles"},
-    {"profile", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold profile <name> <show|start|create|set|export|rename|delete> [args...]\n       hold profile <list|run|start|show|export|import> [args...]", "profile"},
+    {"profile", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold profile <name> <show|start|create|set|export|rename|delete> [args...]\n       hold profile <list|run|start|save|show|export|import> [args...]", "profile"},
     {"show", 1, 2, 0, "usage: hold show <runs|profiles|running|dormant|failed|stale> [name]", "show"},
     {"clean", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold clean [target|all]", "clean"},
     {"doctor", 0, 0, 0, "usage: hold doctor", "doctor"},
@@ -69,13 +69,14 @@ static int help_profiles(void) {
            "Pin a run's exact command (resolved binary path + argv) under a reusable\n"
            "name.\n\n"
            "  hold profile <name> create -- <cmd>  create/update a saved command recipe\n"
+           "  hold profile save <id> as <name>   save a recent run as a profile\n"
            "  hold profiles [-v]           list visible profiles\n"
            "  hold profile export <name>   export a typed-shell transcript\n"
            "  hold profile import <file>   import/update a user-local profile\n"
            "  hold start <name>            start a fresh run under that name\n\n"
            "The name is also recorded on runs started as <name>, so later\n"
-           "list, tail, console, dump, stop, kill, and prune commands can use <name>. If the command behind\n"
-           "<name> is updated later, future starts use the updated command; prior runs\n"
+           "list, tail, console, dump, stop, kill, and prune commands can use <name>.\n"
+           "If the command behind <name> is updated later, future starts use the updated command; prior runs\n"
            "remain under the same recorded profile label.\n");
     return 0;
 }
@@ -185,11 +186,11 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "prune")) {
         printf("usage: hold prune [target|all] [--all]\n\nClear removable past run data. Running valid runs are never pruned.\n");
     } else if (!strcmp(action, "alias")) {
-        printf("usage: hold alias <id> <name> [-v]\n\nPin the command behind a run id as a reusable profile.\n");
+        printf("usage: hold profile save <id> as <name> [-v]\n\nSave the command behind a run id as a reusable profile.\n");
     } else if (!strcmp(action, "aliases") || !strcmp(action, "profiles")) {
-        printf("usage: %s [-v]\n\nList visible profiles. User profiles show commands; system commands are redacted.\n", !strcmp(action, "profiles") ? "hold profiles" : "hold aliases");
+        printf("usage: hold profiles [-v]\n\nList visible profiles. User profiles show commands; system commands are redacted.\n");
     } else if (!strcmp(action, "profile")) {
-        printf("usage: hold profile <name> <show|start|run|create|set|export|rename|delete> [args...]\n       hold profile <list|run|start|show|export|import> [args...]\n\nWork with profile definitions and profile-backed runs. The name-first editor supports:\n  hold profile web create -- /usr/bin/python3 -m http.server 9000\n  hold profile web set command -- /usr/bin/python3 -m http.server 9000\n  hold profile web export [--format cli|json]\n  hold profile web rename api\n  hold profile api delete\nImport/export supports typed-shell transcripts:\n  profile <name>\n  set command -- <argv...>\n  save\n");
+        printf("usage: hold profile <name> <show|start|run|create|set|export|rename|delete> [args...]\n       hold profile <list|run|start|save|show|export|import> [args...]\n\nWork with profile definitions and profile-backed runs. The name-first editor supports:\n  hold profile web create -- /usr/bin/python3 -m http.server 9000\n  hold profile web set command -- /usr/bin/python3 -m http.server 9000\n  hold profile web export [--format cli|json]\n  hold profile save <runid> as web [-v]\n  hold profile web rename api\n  hold profile api delete\nImport/export supports typed-shell transcripts:\n  profile <name>\n  set command -- <argv...>\n  save\n");
     } else if (!strcmp(action, "status")) {
         printf("usage: hold status [profile|target]\n\nShow runs, optionally narrowed by profile/target.\n");
     } else if (!strcmp(action, "inspect")) {

@@ -82,7 +82,7 @@ int hold_cmd_alias_action(const struct hold_invocation *inv,
                             int argc,
                             char **argv) {
     if (argc < 2 || argc > 3) {
-        fprintf(stderr, "usage: hold alias <id> <name> [-v]\n");
+        fprintf(stderr, "usage: hold profile save <id> as <name> [-v]\n");
         return 5;
     }
     const char *target_token = argv[0];
@@ -90,13 +90,13 @@ int hold_cmd_alias_action(const struct hold_invocation *inv,
     bool verbose = false;
     if (argc == 3) {
         if (strcmp(argv[2], "-v") != 0 && strcmp(argv[2], "--verbose") != 0) {
-            fprintf(stderr, "usage: hold alias <id> <name> [-v]\n");
+            fprintf(stderr, "usage: hold profile save <id> as <name> [-v]\n");
             return 5;
         }
         verbose = true;
     }
     if (!hold_valid_alias(name)) {
-        fprintf(stderr, "hold: error: invalid alias '%s'\n", name);
+        fprintf(stderr, "hold: error: invalid profile '%s'\n", name);
         return 5;
     }
 
@@ -112,11 +112,11 @@ int hold_cmd_alias_action(const struct hold_invocation *inv,
         if (hold_checked_snprintf(scoped, sizeof(scoped), "system:%s", target.id) != 0) {
             return 3;
         }
-        char *canon[3] = {"alias", scoped, (char *)name};
-        return hold_elevate_with_sudo_canonical(program, 3, canon);
+        char *canon[5] = {"profile", "save", scoped, "as", (char *)name};
+        return hold_elevate_with_sudo_canonical(program, 5, canon);
     }
     if (target.store.kind == STORE_USER_LOCAL && inv->euid_root) {
-        fprintf(stderr, "hold: error: create user-local aliases as that user\n");
+        fprintf(stderr, "hold: error: create user-local profiles as that user\n");
         return 5;
     }
     if (target.store.kind == STORE_SYSTEM_MANAGED) {
@@ -157,7 +157,7 @@ int hold_cmd_alias_action(const struct hold_invocation *inv,
             hold_die_errno("hold: failed to write profile");
         }
         if (hold_alias_upsert_hash(&target.store, name, hash) != 0) {
-            hold_die_errno("hold: failed to write alias");
+            hold_die_errno("hold: failed to write profile");
         }
         if (verbose) {
             hold_sig_note(inv, "hold: pinned '%s' -> %s (hash %s)\n", name, command, hash);
@@ -166,7 +166,7 @@ int hold_cmd_alias_action(const struct hold_invocation *inv,
         }
     } else {
         if (hold_alias_upsert_recipe(&target.store, name, binary_path, profile_argc, profile_argv) != 0) {
-            hold_die_errno("hold: failed to write alias");
+            hold_die_errno("hold: failed to write profile");
         }
         hold_sig_note(inv, "hold: pinned '%s' -> %s\n", name, command);
     }
@@ -680,7 +680,7 @@ void hold_usage(void) {
            "  hold <command>...                 start it; prints a short run id\n"
            "  hold -f <command>...              start it and stream output\n"
            "  hold --console <command>...       start it with an attachable console\n"
-           "  hold start <profile>          start a saved profile\n\n"
+           "  hold start <profile>             start a saved profile\n\n"
            "MANAGE\n"
            "  hold status [profile]             show tracked runs (optionally one profile)\n"
            "  hold logs   <target>              follow a run's live output\n"

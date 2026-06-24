@@ -37,7 +37,7 @@ flowchart TD
     class Future launch
 ```
 
-The legacy `hold alias <id> <name>` path, and the 0.4 profile replacement flow, first resolve `<id>` to a concrete run. It then reads the record, extracts `argv`, uses the recorded absolute `argv[0]`, and writes either a user profile recipe or a root profile plus public name mapping. If the target is a root-public run from a normal user, On Hold self-elevates before creating the system-managed profile.
+The `hold profile save <id> as <name>` flow first resolves `<id>` to a concrete run. It then reads the record, extracts `argv`, uses the recorded absolute `argv[0]`, and writes either a user profile recipe or a root profile plus public name mapping. If the target is a root-public run from a normal user, On Hold self-elevates before creating the system-managed profile.
 
 This is intentional: `perform_start` resolves the executable before writing the run record. A run started as `../bin/daemon` records the absolute executable path, so a profile created later from another directory does not reinterpret that relative path.
 

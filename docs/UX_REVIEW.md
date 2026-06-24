@@ -52,7 +52,7 @@ Observed behavior:
 
 ```sh
 id=$(hold sleep 20)
-hold alias "$id" web
+hold profile save "$id" as web
 hold start web
 ```
 
@@ -60,7 +60,7 @@ This starts a second `sleep 20` because the original run was not labeled `web`; 
 
 Suggested fix options:
 
-- Prefer: `hold alias <id> <name>` should label/adopt the source run as `<name>` by default.
+- Prefer: `hold profile save <id> as <name>` should label/adopt the source run as `<name>` by default.
 - Or: print a warning and next step: “Pinned recipe as web. The existing run is still 04a7dda8; use `hold adopt 04a7dda8 web` to manage it as web.”
 - Or: split verbs: `profile create-from-run <id> web` creates recipe only; `profile adopt <id> web` labels the current run.
 
@@ -204,8 +204,8 @@ Because there are no existing users to protect, 0.4.0 should cut over cleanly in
 Breaking 0.4.0 replacements:
 
 ```text
-hold alias <id> <name>       => hold adopt <run-id> <profile> / hold profile <name> create-from-run <id>
-hold aliases                 => hold show profiles
+hold profile save <id> as <name>       => hold adopt <run-id> <profile> / hold profile <name> create-from-run <id>
+hold profiles                 => hold show profiles
 hold list                    => hold show runs
 hold tail <target>           => hold logs <target> --follow
 hold dump <target>           => hold logs <target> --plain
@@ -294,8 +294,8 @@ hold profile <name> revoke <user> [actions]
 Compatibility:
 
 ```text
-hold alias <id> <name>      -> profile from-run <id> <name> --adopt? or legacy recipe-only mode
-hold aliases                -> profile list
+hold profile save <id> as <name>      -> profile from-run <id> <name> --adopt? or legacy recipe-only mode
+hold profiles                -> profile list
 hold profile <name> start   -> start reusable profile
 ```
 

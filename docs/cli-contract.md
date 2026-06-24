@@ -106,11 +106,11 @@ The help text defines this contract:
 
 Some lower-level failures exit through `die_errno`, which prints a diagnostic and exits with code 1. Sudo self-elevation returns the child/root On Hold exit status when sudo successfully starts it, or sudo's own failure status when sudo denies, cancels, or cannot authenticate.
 
-## Aliases and access commands
+## Profiles and access commands
 
-`hold alias <id> <name> [-v]` pins a recorded command as an alias. `hold aliases [-v]` lists visible aliases; user aliases show commands, while system aliases show `<root-managed>` and a profile hash display.
+`hold profile save <id> as <name> [-v]` pins a recorded command as a profile. `hold profiles [-v]` lists visible profiles; user profiles show commands, while system profiles show `<root-managed>` and a profile hash display.
 
-`hold grant <alias> <user> [actions]` and `hold revoke <alias> <user> [actions]` require root authority. Valid actions are `start`, `stop`, `kill`, `tail`, `dump`, `prune`, and `console`. If actions are omitted, all supported actions are selected.
+`hold grant <profile> <user> [actions]` and `hold revoke <profile> <user> [actions]` require root authority. Valid actions are `start`, `stop`, `kill`, `tail`, `dump`, `prune`, and `console`. If actions are omitted, all supported actions are selected.
 
 ## Why this design works
 

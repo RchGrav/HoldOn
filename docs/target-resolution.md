@@ -14,7 +14,7 @@ Targets for actions may be:
 
 - A full 8-character run ID.
 - A leading run ID prefix.
-- An alias name.
+- An profile name.
 - `user:<target>` to force user-local lookup.
 - `system:<target>` to force system-managed lookup.
 

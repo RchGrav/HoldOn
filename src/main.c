@@ -552,7 +552,6 @@ int main(int argc, char **argv) {
     }
     if (owned && !strcmp(command, "inspect")) command = "dump";
     if (owned && !strcmp(command, "status")) command = "list";
-    if (owned && !strcmp(command, "profiles")) command = "aliases";
     if (owned && !strcmp(command, "clean")) command = "prune";
 
     bool is_list = owned && !strcmp(command, "list");
@@ -707,9 +706,32 @@ int main(int argc, char **argv) {
             free(cmd_argv);
             return rc;
         }
+
+        if (!strcmp(sub, "save")) {
+            bool verbose = false;
+            if (cmd_argc == 5 && (!strcmp(cmd_argv[4], "-v") || !strcmp(cmd_argv[4], "--verbose"))) {
+                verbose = true;
+            } else if (cmd_argc != 4) {
+                fprintf(stderr, "usage: hold profile save <id> as <name> [-v]\n");
+                free(cmd_argv);
+                return 5;
+            }
+            if (strcmp(cmd_argv[2], "as")) {
+                fprintf(stderr, "usage: hold profile save <id> as <name> [-v]\n");
+                free(cmd_argv);
+                return 5;
+            }
+            char *save_argv[3];
+            save_argv[0] = cmd_argv[1];
+            save_argv[1] = cmd_argv[3];
+            save_argv[2] = verbose ? cmd_argv[4] : NULL;
+            int rc = hold_cmd_alias_action(&inv, &user_store, &system_store, argv[0], verbose ? 3 : 2, save_argv);
+            free(cmd_argv);
+            return rc;
+        }
         bool sub_is_profile_name = hold_valid_alias(sub) &&
             strcmp(sub, "list") && strcmp(sub, "ls") && strcmp(sub, "run") &&
-            strcmp(sub, "start") && strcmp(sub, "show") && strcmp(sub, "export") &&
+            strcmp(sub, "start") && strcmp(sub, "show") && strcmp(sub, "save") && strcmp(sub, "export") &&
             strcmp(sub, "import");
         if (sub_is_profile_name) {
             const char *name = sub;
@@ -877,7 +899,7 @@ int main(int argc, char **argv) {
             free(cmd_argv);
             return rc;
         }
-        fprintf(stderr, "usage: hold profile <list|run|start|show|export|import|<name> set> [args...]\n");
+        fprintf(stderr, "usage: hold profile <list|run|start|save|show|export|import|<name> set> [args...]\n");
         free(cmd_argv);
         return 5;
     }
@@ -899,13 +921,13 @@ int main(int argc, char **argv) {
     if (!strcmp(command, "list")) {
         int rc;
         if (cmd_argc > 1) {
-            fprintf(stderr, "usage: hold list [alias]\n");
+            fprintf(stderr, "usage: hold list [profile]\n");
             free(cmd_argv);
             return 5;
         }
         const char *alias_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
         if (alias_filter && !hold_valid_alias(alias_filter)) {
-            fprintf(stderr, "hold: error: invalid alias '%s'\n", alias_filter);
+            fprintf(stderr, "hold: error: invalid profile '%s'\n", alias_filter);
             free(cmd_argv);
             return 5;
         }
@@ -959,23 +981,28 @@ int main(int argc, char **argv) {
         free(cmd_argv);
         return rc;
     }
-    if (!strcmp(command, "alias")) {
-        int rc = hold_cmd_alias_action(&inv, &user_store, &system_store, argv[0], cmd_argc, cmd_argv);
-        free(cmd_argv);
-        return rc;
-    }
-    if (!strcmp(command, "aliases")) {
-        bool aliases_verbose = false;
+    if (!strcmp(command, "profiles")) {
+        bool profiles_verbose = false;
         if (cmd_argc == 1 && (!strcmp(cmd_argv[0], "-v") || !strcmp(cmd_argv[0], "--verbose"))) {
-            aliases_verbose = true;
+            profiles_verbose = true;
         } else if (cmd_argc != 0) {
-            fprintf(stderr, "usage: hold aliases [-v]\n");
+            fprintf(stderr, "usage: hold profiles [-v]\n");
             free(cmd_argv);
             return 5;
         }
-        int rc = hold_cmd_aliases_action(&inv, &user_store, &system_store, aliases_verbose);
+        int rc = hold_cmd_aliases_action(&inv, &user_store, &system_store, profiles_verbose);
         free(cmd_argv);
         return rc;
+    }
+    if (!strcmp(command, "alias")) {
+        fprintf(stderr, "hold: error: alias command was removed; use `hold profile save <id> as <name>`\n");
+        free(cmd_argv);
+        return 5;
+    }
+    if (!strcmp(command, "aliases")) {
+        fprintf(stderr, "hold: error: aliases command was removed; use `hold profiles`\n");
+        free(cmd_argv);
+        return 5;
     }
     if (!strcmp(command, "grant")) {
         if (hold_ensure_system_store(&system_store) != 0) {

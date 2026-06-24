@@ -270,7 +270,7 @@ Private run records store the resolved executable path in `argv[0]`. If a comman
 
 Because On Hold is daemonless and cannot continuously refresh root-public state after natural process exit, normal `hold list` displays public root rows as `unknown` rather than overselling stale `running` hints. Root/private list and root action commands evaluate authoritative state from private records.
 
-`public/aliases.json` is a flat JSON object mapping validated alias names to 64-character profile hashes:
+`public/aliases.json` is a flat JSON object mapping validated profile names to 64-character profile hashes:
 
 ```json
 {
