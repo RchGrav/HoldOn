@@ -314,9 +314,11 @@ temporarily, hide it from the main help and route users to `inspect`.
 
 ### 3.1.1 Docker-familiar launch and log flags
 
-Hold should borrow Docker's familiar flag shape where the concepts map cleanly.
-This makes the product easier to learn and easier to sell: users can transfer
-muscle memory from `docker run`, `docker ps`, `docker logs`, and `docker inspect`
+Hold should reshape existing/target Hold capabilities behind Docker-familiar
+flag names wherever Hold has the same operator capability. This is not a
+speculative container feature list: it is a CLI rename/remapping plan for
+capabilities Hold already has or is implementing, so users can transfer muscle
+memory from `docker run`, `docker ps`, `docker logs`, and `docker inspect`
 without learning a novelty grammar.
 
 Launch flags:
@@ -325,8 +327,8 @@ Launch flags:
 | --- | --- | --- |
 | `-d` | `--detach` | Run in the background and print the run ID. Without `-d`, Hold stays attached to the child output like `docker run` foreground mode. |
 | `-i` | `--interactive` | Keep stdin open for the child process without requiring a PTY. This supports raw interactive stdin flows, just like Docker `-i`. |
-| `-t` | `--tty` | Allocate a pseudo-TTY for terminal behavior such as prompts, line editing, colors, and full-screen programs. |
-| `-it` | `--interactive --tty` | Combine stdin-open plus PTY: the normal terminal/shell experience. For profiles, `hold run -it <profile>` starts the profile attached when inactive, or reconnects to the singular active interactive/TTY run for that profile. The detach key sequence leaves the run alive under Hold. |
+| `-t` | `--tty` | Allocate the existing Hold PTY/console capability using Docker-shaped spelling. Replaces shell-side `console` as the primary 0.4 UX. |
+| `-it` | `--interactive --tty` | Combine stdin-open plus Hold's PTY/console capability: the normal terminal/shell experience. For profiles, `hold run -it <profile>` starts the profile attached when inactive, or reconnects to the singular active interactive/TTY run for that profile. The detach key sequence leaves the run alive under Hold. |
 | `-e KEY=VALUE` | `--env KEY=VALUE` | Set environment variables for the launch/profile. |
 | — | `--env-file FILE` | Load environment variables from a file. |
 | `-p SPEC` | `--publish SPEC` | Record published-port metadata for display, readiness/open helpers, and profile config. Hold is not a container runtime, so this must not falsely claim network namespace port forwarding unless a future backend actually implements it. |
@@ -372,8 +374,9 @@ future explicit multi-log mode is designed.
 ### 3.1.2 Operator flag reference
 
 This is the user-facing quick reference for Docker-shaped flags. The wording is
-intentionally familiar to Docker users, but Hold runs host processes/profiles;
-`-p`, `-v`, and `--privileged` must not imply container isolation unless a later
+intentionally familiar to Docker users, but each flag must map to a real Hold
+capability or recorded Hold metadata. Hold runs host processes/profiles; `-p`,
+`-v`, and `--privileged` must not imply container isolation unless a later
 backend actually provides it.
 
 Quick lookup:
@@ -382,7 +385,7 @@ Quick lookup:
 | --- | --- | --- | --- |
 | `-d` | `--detach` | Run the process/profile in the background, leaving the terminal free. | Long-running services |
 | `-i` | `--interactive` | Keep stdin open for sending raw data/commands. | Interactive shells, debugging |
-| `-t` | `--tty` | Allocate a pseudo-TTY for visual terminal behavior. | Interactive terminal sessions |
+| `-t` | `--tty` | Allocate Hold's PTY/console path under Docker-shaped spelling. | Interactive terminal sessions |
 | `-e` | `--env` | Pass environment variables into the process/profile. | Configuration management |
 | `-n` | `--tail` | Limit log history output. | Log inspection with `hold logs` |
 | `-f` | `--follow` | Keep log streams open and watch live. | Real-time monitoring with `hold logs` |
@@ -801,6 +804,21 @@ Do not mix the mental models:
 - Captive CLI mimics Cisco IOS: `enable`, `configure terminal`, mode prompts, contextual `?`, `show`, `write`, `no`, `default`, `commit`.
 - Profile configuration words are IOS-style (`binary`, `argv`, `env`, `param`, `multi`, `pty-shim`, `no`, `default`, `info`, `commit`), not Docker flags.
 - Docker flags may be saved into a profile, but their persisted configuration is expressed with IOS-style words in captive/config transcript mode.
+
+Concrete mapping examples:
+
+| Shell CLI | Captive/config spelling | Hold capability |
+| --- | --- | --- |
+| `-i`, `--interactive` | `interactive` / `no interactive` | Keep stdin open. |
+| `-t`, `--tty` | `tty` / `no tty` | Existing PTY/console capability. |
+| `-it` | `interactive` + `tty` | Interactive PTY run. |
+| `-d`, `--detach` | `detach` / `no detach` | Detached/background run behavior. |
+| `--privileged` | privileged/elevated profile policy | Existing `--system` root-managed path. |
+
+The normal shell surface should not teach `console` as the primary command for
+interactive terminal runs. Use `hold run -it <profile>` / `hold -it <cmd>` in
+shell examples. The IOS-style captive CLI may still expose `console` as an EXEC
+operator command where that wording fits the mode.
 
 ### 4.7 Captive namespace and context navigation
 
