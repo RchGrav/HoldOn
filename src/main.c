@@ -1010,16 +1010,6 @@ int main(int argc, char **argv) {
         free(cmd_argv);
         return rc;
     }
-    if (!strcmp(command, "alias")) {
-        fprintf(stderr, "hold: error: alias command was removed; use `hold profile save <id> as <name>`\n");
-        free(cmd_argv);
-        return 5;
-    }
-    if (!strcmp(command, "aliases")) {
-        fprintf(stderr, "hold: error: aliases command was removed; use `hold profiles`\n");
-        free(cmd_argv);
-        return 5;
-    }
     if (!strcmp(command, "grant")) {
         if (hold_ensure_system_store(&system_store) != 0) {
             hold_die_errno("hold: failed to init system storage");

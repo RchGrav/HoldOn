@@ -7,6 +7,7 @@
 
 int hold_show_help(const char *topic);
 bool hold_is_hold_owned_command(const char *s);
+bool hold_cli_command_is_public(const char *s);
 bool hold_cli_command_allows_all(const char *s);
 bool hold_cli_command_is_retired(const char *s);
 const char *hold_cli_command_usage(const char *s);

@@ -13,8 +13,7 @@ static int help_action(const char *action);
 
 enum {
     HOLD_CLI_ALLOW_ALL = 1 << 0,
-    HOLD_CLI_ALLOW_DDASH = 1 << 1,
-    HOLD_CLI_RETIRED = 1 << 2
+    HOLD_CLI_ALLOW_DDASH = 1 << 1
 };
 
 struct hold_cli_command_spec {
@@ -40,8 +39,6 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"view", 1, -1, 0, "usage: hold view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive]", "view"},
     {"console", 1, 1, 0, "usage: hold console <target>", "console"},
     {"prune", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold prune [target|all] [--all]", "prune"},
-    {"alias", 0, -1, HOLD_CLI_RETIRED, "usage: hold profile save <id> as <name> [-v]", NULL},
-    {"aliases", 0, -1, HOLD_CLI_RETIRED, "usage: hold profiles [-v]", NULL},
     {"profiles", 0, 1, 0, "usage: hold profiles [-v]", "profiles"},
     {"profile", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold profile <name> <show|start|create|set|export|rename|delete> [args...]\n       hold profile <list|run|start|save|show|export|import> [args...]", "profile"},
     {"show", 1, 2, 0, "usage: hold show <runs|profiles|running|dormant|failed|stale> [name]", "show"},
@@ -53,7 +50,12 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"help", 0, 1, 0, "usage: hold help [topic]", "help"},
 };
 
-static const struct hold_cli_command_spec *find_command_spec(const char *s) {
+static const struct hold_cli_command_spec retired_command_specs[] = {
+    {"alias", 0, -1, 0, "usage: hold profile save <id> as <name> [-v]", NULL},
+    {"aliases", 0, -1, 0, "usage: hold profiles [-v]", NULL},
+};
+
+static const struct hold_cli_command_spec *find_public_command_spec(const char *s) {
     if (!s) {
         return NULL;
     }
@@ -63,6 +65,23 @@ static const struct hold_cli_command_spec *find_command_spec(const char *s) {
         }
     }
     return NULL;
+}
+
+static const struct hold_cli_command_spec *find_retired_command_spec(const char *s) {
+    if (!s) {
+        return NULL;
+    }
+    for (size_t i = 0; i < sizeof(retired_command_specs) / sizeof(retired_command_specs[0]); i++) {
+        if (!strcmp(retired_command_specs[i].name, s)) {
+            return &retired_command_specs[i];
+        }
+    }
+    return NULL;
+}
+
+static const struct hold_cli_command_spec *find_command_spec(const char *s) {
+    const struct hold_cli_command_spec *spec = find_public_command_spec(s);
+    return spec ? spec : find_retired_command_spec(s);
 }
 
 static int help_profiles(void) {
@@ -230,23 +249,26 @@ bool hold_is_hold_owned_command(const char *s) {
     return find_command_spec(s) != NULL;
 }
 
+bool hold_cli_command_is_public(const char *s) {
+    return find_public_command_spec(s) != NULL;
+}
+
 bool hold_cli_command_allows_all(const char *s) {
-    const struct hold_cli_command_spec *spec = find_command_spec(s);
+    const struct hold_cli_command_spec *spec = find_public_command_spec(s);
     return spec && (spec->flags & HOLD_CLI_ALLOW_ALL);
 }
 
 bool hold_cli_command_is_retired(const char *s) {
-    const struct hold_cli_command_spec *spec = find_command_spec(s);
-    return spec && (spec->flags & HOLD_CLI_RETIRED);
+    return find_retired_command_spec(s) != NULL;
 }
 
 const char *hold_cli_command_usage(const char *s) {
-    const struct hold_cli_command_spec *spec = find_command_spec(s);
+    const struct hold_cli_command_spec *spec = find_public_command_spec(s);
     return spec ? spec->usage : NULL;
 }
 
 int hold_validate_owned_command_arity(const char *command, int argc) {
-    const struct hold_cli_command_spec *spec = find_command_spec(command);
+    const struct hold_cli_command_spec *spec = find_public_command_spec(command);
     if (!spec) {
         return 0;
     }
