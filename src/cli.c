@@ -13,7 +13,8 @@ static int help_action(const char *action);
 
 enum {
     HOLD_CLI_ALLOW_ALL = 1 << 0,
-    HOLD_CLI_ALLOW_DDASH = 1 << 1
+    HOLD_CLI_ALLOW_DDASH = 1 << 1,
+    HOLD_CLI_RETIRED = 1 << 2
 };
 
 struct hold_cli_command_spec {
@@ -39,8 +40,8 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"view", 1, -1, 0, "usage: hold view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive]", "view"},
     {"console", 1, 1, 0, "usage: hold console <target>", "console"},
     {"prune", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold prune [target|all] [--all]", "prune"},
-    {"alias", 0, -1, 0, "usage: hold profile save <id> as <name> [-v]", "alias"},
-    {"aliases", 0, -1, 0, "usage: hold profiles [-v]", "aliases"},
+    {"alias", 0, -1, HOLD_CLI_RETIRED, "usage: hold profile save <id> as <name> [-v]", NULL},
+    {"aliases", 0, -1, HOLD_CLI_RETIRED, "usage: hold profiles [-v]", NULL},
     {"profiles", 0, 1, 0, "usage: hold profiles [-v]", "profiles"},
     {"profile", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold profile <name> <show|start|create|set|export|rename|delete> [args...]\n       hold profile <list|run|start|save|show|export|import> [args...]", "profile"},
     {"show", 1, 2, 0, "usage: hold show <runs|profiles|running|dormant|failed|stale> [name]", "show"},
@@ -185,9 +186,7 @@ static int help_action(const char *action) {
         printf("usage: hold view <target> [--filter TEXT] [--similar TEXT] [--limit N] [--follow|-f] [--plain|--interactive] [--debug-stats]\n\nOpen an interactive TTY log viewer, stream filtered live logs with --follow, or print the first lazily discovered matching lines when stdout/stdin are not TTYs. Type to filter, Backspace edits, and Space toggles the highlighted line as a similarity example.\n");
     } else if (!strcmp(action, "prune")) {
         printf("usage: hold prune [target|all] [--all]\n\nClear removable past run data. Running valid runs are never pruned.\n");
-    } else if (!strcmp(action, "alias")) {
-        printf("usage: hold profile save <id> as <name> [-v]\n\nSave the command behind a run id as a reusable profile.\n");
-    } else if (!strcmp(action, "aliases") || !strcmp(action, "profiles")) {
+    } else if (!strcmp(action, "profiles")) {
         printf("usage: hold profiles [-v]\n\nList visible profiles. User profiles show commands; system commands are redacted.\n");
     } else if (!strcmp(action, "profile")) {
         printf("usage: hold profile <name> <show|start|run|create|set|export|rename|delete> [args...]\n       hold profile <list|run|start|save|show|export|import> [args...]\n\nWork with profile definitions and profile-backed runs. The name-first editor supports:\n  hold profile web create -- /usr/bin/python3 -m http.server 9000\n  hold profile web set command -- /usr/bin/python3 -m http.server 9000\n  hold profile web export [--format cli|json]\n  hold profile save <runid> as web [-v]\n  hold profile web rename api\n  hold profile api delete\nImport/export supports typed-shell transcripts:\n  profile <name>\n  set command -- <argv...>\n  save\n");
@@ -234,6 +233,11 @@ bool hold_is_hold_owned_command(const char *s) {
 bool hold_cli_command_allows_all(const char *s) {
     const struct hold_cli_command_spec *spec = find_command_spec(s);
     return spec && (spec->flags & HOLD_CLI_ALLOW_ALL);
+}
+
+bool hold_cli_command_is_retired(const char *s) {
+    const struct hold_cli_command_spec *spec = find_command_spec(s);
+    return spec && (spec->flags & HOLD_CLI_RETIRED);
 }
 
 const char *hold_cli_command_usage(const char *s) {

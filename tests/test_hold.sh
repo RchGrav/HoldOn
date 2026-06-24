@@ -2643,6 +2643,50 @@ test_misc_action_guards() {
   grep -q 'STARTED_AT' "$TEST_ROOT/l.out" || { echo "list -l missing ISO header" >&2; return 1; }
 }
 
+test_public_cli_contract_guards() {
+  local rc
+  "$HOLD_BIN" help >"$TEST_ROOT/help.out" || return 1
+  grep -q 'hold profile export <name>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
+  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
+
+  "$HOLD_BIN" help profiles >"$TEST_ROOT/help-profiles.out" || return 1
+  grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/help-profiles.out" || { cat "$TEST_ROOT/help-profiles.out" >&2; return 1; }
+  grep -q 'hold profiles' "$TEST_ROOT/help-profiles.out" || { cat "$TEST_ROOT/help-profiles.out" >&2; return 1; }
+  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help-profiles.out" || { cat "$TEST_ROOT/help-profiles.out" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" alias deadbeef web >/dev/null 2>"$TEST_ROOT/alias-removed.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold alias: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'alias command was removed' "$TEST_ROOT/alias-removed.err" || { cat "$TEST_ROOT/alias-removed.err" >&2; return 1; }
+  grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/alias-removed.err" || { cat "$TEST_ROOT/alias-removed.err" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" alias -h >/dev/null 2>"$TEST_ROOT/alias-help-removed.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold alias -h: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'alias command was removed' "$TEST_ROOT/alias-help-removed.err" || { cat "$TEST_ROOT/alias-help-removed.err" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" aliases >/dev/null 2>"$TEST_ROOT/aliases-removed.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold aliases: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'aliases command was removed' "$TEST_ROOT/aliases-removed.err" || { cat "$TEST_ROOT/aliases-removed.err" >&2; return 1; }
+  grep -q 'hold profiles' "$TEST_ROOT/aliases-removed.err" || { cat "$TEST_ROOT/aliases-removed.err" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" aliases -h >/dev/null 2>"$TEST_ROOT/aliases-help-removed.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold aliases -h: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'aliases command was removed' "$TEST_ROOT/aliases-help-removed.err" || { cat "$TEST_ROOT/aliases-help-removed.err" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" help alias >/dev/null 2>"$TEST_ROOT/help-alias.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold help alias: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "unknown help topic 'alias'" "$TEST_ROOT/help-alias.err" || { cat "$TEST_ROOT/help-alias.err" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" run web stop >/dev/null 2>"$TEST_ROOT/run-namespace.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold run web stop: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: hold run .* -- <cmd>' "$TEST_ROOT/run-namespace.err" || { cat "$TEST_ROOT/run-namespace.err" >&2; return 1; }
+
+  if grep -RInE '(^|[^[:alnum:]_])(sigmund|mund)([^[:alnum:]_]|$)|hold[[:space:]]+aliases?([[:space:]]|$)' \
+      README.md docs examples install.sh scripts Makefile >"$TEST_ROOT/forbidden-public-names.out" 2>/dev/null; then
+    cat "$TEST_ROOT/forbidden-public-names.out" >&2
+    return 1
+  fi
+}
+
 test_owned_command_exact_arity() {
   local rc
   set +e; "$HOLD_BIN" tail deadbeef extra >/dev/null 2>"$TEST_ROOT/tail-extra.err"; rc=$?; set -e
@@ -2741,6 +2785,7 @@ run_test "--quiet prints bare id and silences stderr" test_quiet_suppresses_bann
 run_test "run id prefix resolves to the full run" test_run_id_prefix_resolution
 run_test "ambiguous alias tail lists ids; tail by run id still resolves" test_ambiguous_tail_resolvable_by_run_id
 run_test "action/help/list argument guards" test_misc_action_guards
+run_test "public CLI contract rejects legacy aliases and run namespaces" test_public_cli_contract_guards
 run_test "owned commands reject extra targets and unsupported --all" test_owned_command_exact_arity
 run_test "grant/revoke argument and privilege refusals" test_grant_revoke_argument_refusals
 run_test "system store directory modes are private (0700/0755)" test_system_store_directory_modes

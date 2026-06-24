@@ -414,6 +414,7 @@ int main(int argc, char **argv) {
     const char *command = owned ? argv[argi++] : NULL;
     int cmd_argc = 0;
     char **cmd_argv = NULL;
+    bool saw_owned_delimiter = false;
 
     if (owned) {
         cmd_argv = calloc((size_t)(argc - argi + 1), sizeof(char *));
@@ -424,6 +425,7 @@ int main(int argc, char **argv) {
         for (int i = argi; i < argc; i++) {
             if (!literal_owned_arg && !strcmp(argv[i], "--")) {
                 literal_owned_arg = true;
+                saw_owned_delimiter = true;
                 continue;
             }
             if (!literal_owned_arg && !strcmp(argv[i], "--system")) {
@@ -516,10 +518,24 @@ int main(int argc, char **argv) {
         free(cmd_argv);
         return rc;
     }
+    if (owned && hold_cli_command_is_retired(command)) {
+        if (!strcmp(command, "alias")) {
+            fprintf(stderr, "hold: error: alias command was removed; use `hold profile save <id> as <name>`\n");
+        } else {
+            fprintf(stderr, "hold: error: aliases command was removed; use `hold profiles`\n");
+        }
+        free(cmd_argv);
+        return 5;
+    }
     if (owned && cmd_argc == 1 && (!strcmp(cmd_argv[0], "--help") || !strcmp(cmd_argv[0], "-h"))) {
         int rc = hold_show_help(command);
         free(cmd_argv);
         return rc;
+    }
+    if (owned && !strcmp(command, "run") && !saw_owned_delimiter) {
+        fprintf(stderr, "usage: hold run [--tail|-f] [--console] -- <cmd> [args...]\n");
+        free(cmd_argv);
+        return 5;
     }
     if (console_mode && owned && strcmp(command, "start") != 0 && strcmp(command, "run") != 0 && strcmp(command, "profile") != 0) {
         fprintf(stderr, "hold: error: --console applies only to starts\n");
