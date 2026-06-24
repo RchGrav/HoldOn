@@ -1,9 +1,9 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/access.h"
-#include "sigmund/core.h"
-#include "sigmund/platform.h"
-#include "sigmund/store.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/access.h"
+#include "hold/core.h"
+#include "hold/platform.h"
+#include "hold/store.h"
 
 static int child_status_to_exit_code(int status);
 
@@ -17,10 +17,10 @@ static int child_status_to_exit_code(int status) {
     return 3;
 }
 
-int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc, char **canonical_argv) {
-    char abs_sigmund[SIGMUND_PATH_MAX];
-    if (sigmund_resolve_self_executable_path(program, abs_sigmund, sizeof(abs_sigmund)) != 0) {
-        fprintf(stderr, "sigmund: cannot determine executable path for sudo self-elevation\n");
+int hold_elevate_with_sudo_canonical(const char *program, int canonical_argc, char **canonical_argv) {
+    char abs_hold[HOLD_PATH_MAX];
+    if (hold_resolve_self_executable_path(program, abs_hold, sizeof(abs_hold)) != 0) {
+        fprintf(stderr, "hold: cannot determine executable path for sudo self-elevation\n");
         return 3;
     }
 
@@ -31,7 +31,7 @@ int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc,
     }
     sudo_argv[0] = "sudo";
     sudo_argv[1] = "--";
-    sudo_argv[2] = abs_sigmund;
+    sudo_argv[2] = abs_hold;
     sudo_argv[3] = "--system";
     sudo_argv[4] = "--elevated";
     for (int i = 0; i < canonical_argc; i++) {
@@ -40,8 +40,8 @@ int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc,
     sudo_argv[argc] = NULL;
 
     const char *sudo_prog = "sudo";
-#ifdef SIGMUND_TESTING
-    const char *test_sudo_prog = getenv("SIGMUND_TEST_SUDO_PROG");
+#ifdef HOLD_TESTING
+    const char *test_sudo_prog = getenv("HOLD_TEST_SUDO_PROG");
     if (test_sudo_prog && *test_sudo_prog) {
         sudo_prog = test_sudo_prog;
     }
@@ -71,7 +71,7 @@ int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc,
         if (have_old_quit) sigaction(SIGQUIT, &old_quit, NULL);
         free(sudo_argv);
         errno = saved;
-        fprintf(stderr, "sigmund: failed to fork sudo: %s\n", strerror(errno));
+        fprintf(stderr, "hold: failed to fork sudo: %s\n", strerror(errno));
         return 3;
     }
     if (pid == 0) {
@@ -79,7 +79,7 @@ int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc,
         if (have_old_quit) sigaction(SIGQUIT, &old_quit, NULL);
         execvp(sudo_prog, sudo_argv);
         int saved = errno;
-        fprintf(stderr, "sigmund: failed to exec sudo: %s\n", strerror(saved));
+        fprintf(stderr, "hold: failed to exec sudo: %s\n", strerror(saved));
         _exit(127);
     }
 
@@ -94,7 +94,7 @@ int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc,
         if (have_old_int) sigaction(SIGINT, &old_int, NULL);
         if (have_old_quit) sigaction(SIGQUIT, &old_quit, NULL);
         errno = saved;
-        fprintf(stderr, "sigmund: failed to wait for sudo: %s\n", strerror(errno));
+        fprintf(stderr, "hold: failed to wait for sudo: %s\n", strerror(errno));
         return 3;
     }
 
@@ -103,7 +103,7 @@ int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc,
     return child_status_to_exit_code(status);
 }
 
-int sigmund_elevate_with_sudo_parsed(const char *program,
+int hold_elevate_with_sudo_parsed(const char *program,
                                     bool owned,
                                     const char *command,
                                     bool tail,
@@ -186,7 +186,7 @@ int sigmund_elevate_with_sudo_parsed(const char *program,
     for (int i = 0; i < argc; i++) {
         canon[n++] = argv[i];
     }
-    int rc = sigmund_elevate_with_sudo_canonical(program, n, canon);
+    int rc = hold_elevate_with_sudo_canonical(program, n, canon);
     free(canon);
     return rc;
 }

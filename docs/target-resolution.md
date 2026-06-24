@@ -4,9 +4,9 @@
 
 Outer loop bridge: deep dive for quickstart Step 4, Make Targeting Deterministic.
 
-Target resolution answers one user-facing question: when you type `sigmund stop web`, `sigmund tail 7f3`, or `sigmund dump system:api`, which concrete run did you mean? It does not decide whether the process is safe to signal; that is the identity validator's job.
+Target resolution answers one user-facing question: when you type `hold stop web`, `hold tail 7f3`, or `hold dump system:api`, which concrete run did you mean? It does not decide whether the process is safe to signal; that is the identity validator's job.
 
-The resolver is split because Sigmund has several addressing forms and two authority contexts. `resolve_target` is used for alias creation, while `resolve_action_token` is used for action commands that may expand one alias into multiple concrete targets.
+The resolver is split because On Hold has several addressing forms and two authority contexts. `resolve_target` is used for alias creation, while `resolve_action_token` is used for action commands that may expand one alias into multiple concrete targets.
 
 ## Accepted target forms
 
@@ -68,7 +68,7 @@ flowchart TD
     class NotFound miss
 ```
 
-Root reads private system records directly. When root was reached through sudo and the token does not match a root-managed run, Sigmund can resolve against the invoking user's local store. Direct root without sudo provenance has no invoking user context and cannot resolve `user:<target>`.
+Root reads private system records directly. When root was reached through sudo and the token does not match a root-managed run, On Hold can resolve against the invoking user's local store. Direct root without sudo provenance has no invoking user context and cannot resolve `user:<target>`.
 
 ## Alias intent
 
@@ -84,7 +84,7 @@ Aliases are filtered by command because the same alias label can be attached to 
 | `dump` | Alias-labeled runs that have logs. |
 | `prune` | Alias-labeled past runs that are exited, failed, or stale. |
 
-`record_matches_alias_intent` is the source of this table. If a known alias has no applicable candidate for an action, Sigmund treats that as a successful no-op. If an alias has multiple candidates, it exits 6 and prints candidates unless the command supports `--all` and `--all` was supplied. `--all` applies only to `stop`, `kill`, and `prune`.
+`record_matches_alias_intent` is the source of this table. If a known alias has no applicable candidate for an action, On Hold treats that as a successful no-op. If an alias has multiple candidates, it exits 6 and prints candidates unless the command supports `--all` and `--all` was supplied. `--all` applies only to `stop`, `kill`, and `prune`.
 
 ## Public alias capabilities
 
@@ -93,13 +93,13 @@ A normal user cannot read root-private records, so root-managed alias actions be
 - a concrete run selector plus alias/hash capability, or
 - the `ffffffff` selector for approved multi-target `--all` actions.
 
-Root Sigmund later verifies that the alias still maps to the supplied hash and that concrete run selectors are recorded under that alias. The public side selects intent; the root side rechecks authority.
+Root On Hold later verifies that the alias still maps to the supplied hash and that concrete run selectors are recorded under that alias. The public side selects intent; the root side rechecks authority.
 
 ## Why this design works
 
 The resolver is conservative about authority. It avoids surprising privilege escalation, returns concrete store/run pairs before acting, and lets root re-validate capability data after crossing sudo. That supports the validate-before-signal model because signal code receives a resolved private record path, not an ambiguous user token.
 
-The daemonless constraint also shapes ambiguity behavior. Without a daemon to arbitrate a "current" alias run, Sigmund must either identify one candidate, apply an explicit `--all`, or refuse with candidates.
+The daemonless constraint also shapes ambiguity behavior. Without a daemon to arbitrate a "current" alias run, On Hold must either identify one candidate, apply an explicit `--all`, or refuse with candidates.
 
 ## Implementation map
 

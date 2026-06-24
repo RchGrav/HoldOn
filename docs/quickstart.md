@@ -1,17 +1,17 @@
-# Sigmund quickstart
+# On Hold quickstart
 
-[Docs index](index.md) | [Technical reference loop](index.md#technical-reference-loop) | [Using Sigmund in CI](ci.md)
+[Docs index](index.md) | [Technical reference loop](index.md#technical-reference-loop) | [Using On Hold in CI](ci.md)
 
 This is the outer onboarding loop. Read it straight through to understand the product workflow without being pulled into internals. At the end of each step, keep reading for the next step or open the matching deep dive.
 
 ## Step 1: Start One Thing
 
-Sigmund starts a command so it can outlive the shell or CI step that launched it. You get a short run ID, a log, and a durable record Sigmund can use later.
+On Hold starts a command so it can outlive the shell or CI step that launched it. You get a short run ID, a log, and a durable record On Hold can use later.
 
 Action:
 
 ```bash
-run_id="$(sigmund ./your-server --port 9000)"
+run_id="$(hold ./your-server --port 9000)"
 ```
 
 Expect:
@@ -22,7 +22,7 @@ Expect:
 
 ```mermaid
 flowchart LR
-    Start["sigmund command"] --> Run["running process"]
+    Start["hold command"] --> Run["running process"]
     Start --> Id["run ID"]
     Start --> Log["log"]
     Start --> Record["record"]
@@ -38,7 +38,7 @@ flowchart LR
     class Log,Record,Later state
 ```
 
-Sigmund is doing the process bookkeeping for you: session isolation, log capture, durable identity, and a safe cleanup handle.
+On Hold is doing the process bookkeeping for you: session isolation, log capture, durable identity, and a safe cleanup handle.
 
 Next: Step 2 shows how to inspect, stop, and prune the run you just created.
 
@@ -46,16 +46,16 @@ Dig deeper: [Launcher](launcher.md) explains how the child starts; [Store](store
 
 ## Step 2: Manage It Later
 
-Once you have a run ID or alias, Sigmund can read logs, follow output, attach a console when available, stop the process group, or remove finished state.
+Once you have a run ID or alias, On Hold can read logs, follow output, attach a console when available, stop the process group, or remove finished state.
 
 Action:
 
 ```bash
-sigmund tail "$run_id"
-sigmund dump "$run_id"
-sigmund console "$run_id"   # only for runs started with --console
-sigmund stop "$run_id"
-sigmund prune "$run_id"
+hold tail "$run_id"
+hold dump "$run_id"
+hold console "$run_id"   # only for runs started with --console
+hold stop "$run_id"
+hold prune "$run_id"
 ```
 
 Expect:
@@ -85,38 +85,38 @@ flowchart LR
     class Result refuse
 ```
 
-The important promise is that Sigmund does not blindly send a signal to whatever process currently has a PID. It checks the stored identity first and refuses when the evidence is stale or unknown.
+The important promise is that On Hold does not blindly send a signal to whatever process currently has a PID. It checks the stored identity first and refuses when the evidence is stale or unknown.
 
-Next: Step 3 explains how Sigmund decides whether a command is user-local, system-managed, or a management action.
+Next: Step 3 explains how On Hold decides whether a command is user-local, system-managed, or a management action.
 
 Dig deeper: [Identity and validation](identity.md) explains the safety checks; [CLI contract](cli-contract.md) explains commands, stdout/stderr, and exit codes; [Console](console.md) explains attachable PTY runs.
 
 ## Step 3: Understand Automatic Choices
 
-Sigmund chooses user-local or root-managed behavior from how it was invoked. Most commands are user-local. `--system` and `sudo sigmund ...` use system-managed state.
+On Hold chooses user-local or root-managed behavior from how it was invoked. Most commands are user-local. `--system` and `sudo hold ...` use system-managed state.
 
 Action:
 
 ```bash
-sigmund ./server                 # user-local run
-sigmund --system ./server        # root-managed run
-sudo sigmund ./server            # root-managed run
-sigmund stop api                 # manage target named api
-sigmund -- ./stop                # start a command named ./stop
+hold ./server                 # user-local run
+hold --system ./server        # root-managed run
+sudo hold ./server            # root-managed run
+hold stop api                 # manage target named api
+hold -- ./stop                # start a command named ./stop
 ```
 
 Expect:
 
 - plain starts use your user-local store.
 - `--system` chooses the system store for a new run.
-- `sudo sigmund ...` starts or manages system-owned state.
-- `--` tells Sigmund the next token is the child command, even if it looks like a Sigmund command.
+- `sudo hold ...` starts or manages system-owned state.
+- `--` tells On Hold the next token is the child command, even if it looks like a On Hold command.
 
 ```mermaid
 flowchart TD
     Invoke["your command"] --> System{"--system or sudo?"}
     System -->|"yes"| SystemStore["system store"]
-    System -->|"no"| Owned{"Sigmund command?"}
+    System -->|"no"| Owned{"On Hold command?"}
     Owned -->|"yes"| Manage["manage a target"]
     Owned -->|"no"| UserStore["user store"]
 
@@ -143,16 +143,16 @@ In multiuser systems, names can overlap. Your local alias might be named the sam
 Action:
 
 ```bash
-sigmund stop web
-sigmund stop user:web
-sigmund stop system:web
-sigmund dump user:7f3c2a9d
-sigmund tail system:7f3c2a9d
+hold stop web
+hold stop user:web
+hold stop system:web
+hold dump user:7f3c2a9d
+hold tail system:7f3c2a9d
 ```
 
 Expect:
 
-- `sigmund stop web` uses the default lookup order.
+- `hold stop web` uses the default lookup order.
 - `user:web` never targets system state.
 - `system:web` never targets user-local state.
 - system targets may self-elevate through sudo when private root authority is needed.
@@ -189,10 +189,10 @@ Aliases turn a recorded command into a reusable name. Start the command once, al
 Action:
 
 ```bash
-id="$(sigmund ./your-server --port 9000)"
-sigmund alias "$id" web
-sigmund start web
-sigmund stop web
+id="$(hold ./your-server --port 9000)"
+hold alias "$id" web
+hold start web
+hold stop web
 ```
 
 Expect:
@@ -217,7 +217,7 @@ flowchart LR
     class Start,Manage action
 ```
 
-Aliases are how Sigmund turns an ephemeral run into a repeatable workflow without becoming a full service manager.
+Aliases are how On Hold turns an ephemeral run into a repeatable workflow without becoming a full service manager.
 
 Next: Step 6 shows how root can delegate one registered tool without granting broad root access.
 
@@ -230,25 +230,25 @@ Root can set up one tool and let another user manage only that registered tool, 
 Action:
 
 ```bash
-sudo sigmund --system /usr/bin/redis-server /etc/redis.conf
-sudo sigmund alias <run-id> cache
-sudo sigmund grant cache alice start,stop,tail,dump
+sudo hold --system /usr/bin/redis-server /etc/redis.conf
+sudo hold alias <run-id> cache
+sudo hold grant cache alice start,stop,tail,dump
 ```
 
-`grant` writes managed sudoers policy, so Sigmund intentionally refuses unless it resolves itself to a secured installed executable: a regular root-owned file, not group/world writable, with no whitespace in its path. A source-tree or temporary demo binary can still show starts, aliases, stops, dumps, and pruning, but not sudoers entry creation.
+`grant` writes managed sudoers policy, so On Hold intentionally refuses unless it resolves itself to a secured installed executable: a regular root-owned file, not group/world writable, with no whitespace in its path. A source-tree or temporary demo binary can still show starts, aliases, stops, dumps, and pruning, but not sudoers entry creation.
 
 Then Alice can run:
 
 ```bash
-sigmund stop system:cache
-sigmund dump system:cache
+hold stop system:cache
+hold dump system:cache
 ```
 
 Expect:
 
 - the grant is scoped to one alias and one protected profile hash.
 - only selected actions are granted.
-- root Sigmund rechecks private authority after sudo before acting.
+- root On Hold rechecks private authority after sudo before acting.
 - Alice does not receive a general root shell.
 
 ```mermaid
@@ -275,14 +275,14 @@ Dig deeper: [Security and privilege boundaries](security.md) explains sudo self-
 
 ## Step 7: Use It In CI
 
-Sigmund is useful when a CI workflow needs a helper process to survive one step and be cleaned up in another.
+On Hold is useful when a CI workflow needs a helper process to survive one step and be cleaned up in another.
 
 Action:
 
 ```yaml
 - name: Start helper
   run: |
-    run_id="$(./sigmund ./your-server --port 9000)"
+    run_id="$(./hold ./your-server --port 9000)"
     echo "HELPER_RUN_ID=$run_id" >> "$GITHUB_ENV"
 
 - name: Run tests
@@ -290,7 +290,7 @@ Action:
 
 - name: Stop helper
   if: always()
-  run: ./sigmund stop "$HELPER_RUN_ID"
+  run: ./hold stop "$HELPER_RUN_ID"
 ```
 
 Expect:
@@ -319,8 +319,8 @@ This is the smallest useful CI shape: start, save the ID, run work, dump logs on
 
 Finish: [Back to documentation index](index.md)
 
-Dig deeper: [Using Sigmund in CI](ci.md) has copyable recipes; [CLI contract](cli-contract.md) explains script-safe output and exit codes.
+Dig deeper: [Using On Hold in CI](ci.md) has copyable recipes; [CLI contract](cli-contract.md) explains script-safe output and exit codes.
 
 ## Continue
 
-[Back to docs index](index.md) | [Top](#sigmund-quickstart) | [Technical reference loop](index.md#technical-reference-loop) | [Using Sigmund in CI](ci.md)
+[Back to docs index](index.md) | [Top](#hold-quickstart) | [Technical reference loop](index.md#technical-reference-loop) | [Using On Hold in CI](ci.md)

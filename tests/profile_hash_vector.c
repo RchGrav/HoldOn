@@ -2,12 +2,12 @@
  *
  * The profile hash is a stable capability key: existing aliases, profiles and
  * sudoers grants are keyed to exactly the binary-path + argv framing in
- * sigmund_profile_hash_for_argv. These golden vectors fail loudly if that
+ * hold_profile_hash_for_argv. These golden vectors fail loudly if that
  * framing ever changes (added context, reordered fields, different separators).
  * If you intend to change the hash, that is a breaking change to on-disk state;
  * update these vectors deliberately. */
-#include "sigmund/config.h"
-#include "sigmund/store.h"
+#include "hold/config.h"
+#include "hold/store.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -24,17 +24,17 @@ int main(void) {
     char *a3[] = {"x"};
     struct vec vs[] = {
         {"/bin/sleep", 2, a1,
-         "b6565705c9e7f5e645ad55c3c8cd748d859cc1b06b9438506014258629a38451"},
+         "adfeec7cb96b52c70249c44528f0390a2bb14b517b47351af451ad1067524910"},
         {"/usr/local/bin/server", 5, a2,
-         "3a2d7e028056ff419a35145021defabc3141a388874ca055c5fbaa360db9f939"},
+         "a0303069a1ceca23898976944fc2800fab797da3376c1eed60bcf0271455040a"},
         {"", 0, a3,
-         "fdb741da4390ba2ed58240c21fcbd8943a50b271805d1169fa27727241fb24fc"},
+         "ea43223103d795b68a3b38cc7deaf4bfe28bd9b330da4cee98d1fcc7abbfd736"},
     };
     size_t n = sizeof(vs) / sizeof(vs[0]);
     int fails = 0;
     for (size_t i = 0; i < n; i++) {
         char out[PROFILE_HASH_STR_LEN];
-        sigmund_profile_hash_for_argv(vs[i].binary_path, vs[i].argc, vs[i].argv, out);
+        hold_profile_hash_for_argv(vs[i].binary_path, vs[i].argc, vs[i].argv, out);
         if (strcmp(out, vs[i].want) != 0) {
             fprintf(stderr, "FAIL: binary_path='%s' argc=%d\n  got  %s\n  want %s\n",
                     vs[i].binary_path, vs[i].argc, out, vs[i].want);
@@ -48,18 +48,18 @@ int main(void) {
         char h1[PROFILE_HASH_STR_LEN], h2[PROFILE_HASH_STR_LEN];
         char *g1a[] = {"a", "b c"};
         char *g1b[] = {"a b", "c"};
-        sigmund_profile_hash_for_argv("/x", 2, g1a, h1);
-        sigmund_profile_hash_for_argv("/x", 2, g1b, h2);
+        hold_profile_hash_for_argv("/x", 2, g1a, h1);
+        hold_profile_hash_for_argv("/x", 2, g1b, h2);
         if (strcmp(h1, h2) == 0) { fprintf(stderr, "COLLISION: [a,\"b c\"] == [\"a b\",c]\n"); fails++; }
 
         char *c2[] = {"a", "b"};
-        sigmund_profile_hash_for_argv("/x", 2, c2, h1);
-        sigmund_profile_hash_for_argv("/x", 1, c2, h2);
+        hold_profile_hash_for_argv("/x", 2, c2, h1);
+        hold_profile_hash_for_argv("/x", 1, c2, h2);
         if (strcmp(h1, h2) == 0) { fprintf(stderr, "COLLISION: argc 2 == argc 1 on same argv\n"); fails++; }
 
         char *c3[] = {"a"};
-        sigmund_profile_hash_for_argv("/x", 1, c3, h1);
-        sigmund_profile_hash_for_argv("/y", 1, c3, h2);
+        hold_profile_hash_for_argv("/x", 1, c3, h1);
+        hold_profile_hash_for_argv("/y", 1, c3, h2);
         if (strcmp(h1, h2) == 0) { fprintf(stderr, "COLLISION: binary_path /x == /y\n"); fails++; }
     }
 

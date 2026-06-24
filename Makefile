@@ -12,7 +12,7 @@ endif
 TEST_LDFLAGS ?=
 VERSION_BASE ?= $(shell sed -n '1s/[[:space:]]*$$//p' VERSION 2>/dev/null || printf dev)
 VERSION ?= $(shell if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git describe --tags --exact-match 2>/dev/null || printf '%s-%s%s\n' "$(VERSION_BASE)" "$$(git rev-parse --short HEAD)" "$$(git diff --quiet 2>/dev/null || echo -dirty)"; else printf '%s\n' "$(VERSION_BASE)"; fi)
-VERSION_CPPFLAG := -DSIGMUND_VERSION=\"$(VERSION)\"
+VERSION_CPPFLAG := -DHOLD_VERSION=\"$(VERSION)\"
 
 # Every translation unit. wildcard is portable in GNU make; one glob per layer
 # directory (GNU make has no portable recursive **). main.c + cli.c sit directly
@@ -30,38 +30,34 @@ SRCS := $(wildcard src/*.c) \
 HASH_VECTOR_SRCS := $(wildcard src/core/*.c) $(wildcard src/platform/*.c) $(wildcard src/store/*.c)
 
 # Separate object trees per build "personality" so the test objects (built with
-# -DSIGMUND_TESTING and a different SIGMUND_BOOT_ID_PATH) can never be linked
+# -DHOLD_TESTING and a different HOLD_BOOT_ID_PATH) can never be linked
 # into a release binary, and vice versa.
 OBJS      := $(patsubst src/%.c,obj/%.o,$(SRCS))
 TEST_OBJS := $(patsubst src/%.c,obj-test/%.o,$(SRCS))
 
 INCLUDES := -Iinclude
 ALL_CPPFLAGS := $(CPPFLAGS) $(EXTRA_CPPFLAGS) $(INCLUDES) $(VERSION_CPPFLAG)
-TEST_CPPFLAGS := -DSIGMUND_TESTING -DSIGMUND_BOOT_ID_PATH='"/tmp/sigmund_test_boot_id"'
+TEST_CPPFLAGS := -DHOLD_TESTING -DHOLD_BOOT_ID_PATH='"/tmp/hold_test_boot_id"'
 
-all: sigmund mund
+all: hold
 
 obj/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-sigmund: $(OBJS)
+hold: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(STATIC_LDFLAGS) -o $@ $(OBJS)
 
-sigmund-dynamic: $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o sigmund-dynamic $(OBJS)
-
-mund: sigmund
-	cp sigmund mund
+hold-dynamic: $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o hold-dynamic $(OBJS)
 
 obj-test/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 test: $(TEST_OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o sigmund $(TEST_OBJS)
-	cp sigmund mund
-	@bash tests/test_sigmund.sh
+	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o hold $(TEST_OBJS)
+	@bash tests/test_hold.sh
 	@$(MAKE) viewer-filter-test
 	@$(MAKE) hash-vector
 	@bash tests/test_version_makefile.sh
@@ -92,7 +88,7 @@ lint:
 	@bash scripts/lint_layers.sh
 
 clean:
-	rm -f sigmund mund sigmund-dynamic hash-vector viewer-filter-test
+	rm -f hold hold-dynamic hash-vector viewer-filter-test
 	rm -rf obj obj-test
 
 .PHONY: all clean test check ci lint hash-vector viewer-filter-test print-version

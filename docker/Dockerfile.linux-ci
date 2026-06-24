@@ -1,4 +1,4 @@
-# Reproducible Linux build+test environment for sigmund, mirroring the GitHub CI
+# Reproducible Linux build+test environment for hold, mirroring the GitHub CI
 # toolchain (ubuntu-latest). Used by scripts/linux.sh to run scripts/ci.sh, the
 # root-runner lane, or the release build matrix (scripts/release_build.sh)
 # locally on any host that has Apple `container` or docker, so "build+test on

@@ -1,5 +1,5 @@
-#include "sigmund/config.h"
-#include "sigmund/log_viewer.h"
+#include "hold/config.h"
+#include "hold/log_viewer.h"
 
 static int failures = 0;
 
@@ -11,7 +11,7 @@ static int failures = 0;
 } while (0)
 
 static int temp_log_fd(void) {
-    char tmpl[] = "/tmp/sigmund-viewer-test.XXXXXX";
+    char tmpl[] = "/tmp/hold-viewer-test.XXXXXX";
     int fd = mkstemp(tmpl);
     if (fd < 0) {
         perror("mkstemp");
@@ -47,19 +47,19 @@ static void test_literal_filter(void) {
     write_all_or_die(fd, "alpha\nneedle one\nbeta\nneedle two\n");
     rewind_or_die(fd);
 
-    struct sigmund_log_filter_options opts;
-    sigmund_log_filter_options_init(&opts);
+    struct hold_log_filter_options opts;
+    hold_log_filter_options_init(&opts);
     opts.literal = "needle";
     opts.max_results = 2;
     opts.visible_capacity = 2;
-    struct sigmund_log_filter_result result;
-    EXPECT_TRUE("literal filter succeeds", sigmund_log_filter_fd(fd, &opts, &result) == 0);
+    struct hold_log_filter_result result;
+    EXPECT_TRUE("literal filter succeeds", hold_log_filter_fd(fd, &opts, &result) == 0);
     EXPECT_TRUE("literal returns two lines", result.line_count == 2);
     EXPECT_TRUE("first literal line", result.line_count > 0 && strstr(result.lines[0], "needle one"));
     EXPECT_TRUE("second literal line", result.line_count > 1 && strstr(result.lines[1], "needle two"));
     EXPECT_TRUE("visible offsets are recorded", result.line_count > 1 && result.line_offsets[0] < result.line_offsets[1]);
     EXPECT_TRUE("next offset advances", result.next_offset > result.line_offsets[1]);
-    sigmund_log_filter_result_free(&result);
+    hold_log_filter_result_free(&result);
     close(fd);
 }
 
@@ -71,18 +71,18 @@ static void test_similarity_filter(void) {
                      "debug cache warmed successfully\n");
     rewind_or_die(fd);
 
-    struct sigmund_log_filter_options opts;
-    sigmund_log_filter_options_init(&opts);
+    struct hold_log_filter_options opts;
+    hold_log_filter_options_init(&opts);
     opts.similar_examples[0] = "error database connection timeout";
     opts.similar_example_count = 1;
     opts.similar_threshold = 0.45;
     opts.max_results = 1;
     opts.visible_capacity = 1;
-    struct sigmund_log_filter_result result;
-    EXPECT_TRUE("similar filter succeeds", sigmund_log_filter_fd(fd, &opts, &result) == 0);
+    struct hold_log_filter_result result;
+    EXPECT_TRUE("similar filter succeeds", hold_log_filter_fd(fd, &opts, &result) == 0);
     EXPECT_TRUE("similar returns one line", result.line_count == 1);
     EXPECT_TRUE("similar line selected", result.line_count > 0 && strstr(result.lines[0], "database connection timeout"));
-    sigmund_log_filter_result_free(&result);
+    hold_log_filter_result_free(&result);
     close(fd);
 }
 
@@ -91,18 +91,18 @@ static void test_match_ring_wraps(void) {
     write_all_or_die(fd, "hit-0\nhit-1\nhit-2\nhit-3\n");
     rewind_or_die(fd);
 
-    struct sigmund_log_filter_options opts;
-    sigmund_log_filter_options_init(&opts);
+    struct hold_log_filter_options opts;
+    hold_log_filter_options_init(&opts);
     opts.literal = "hit";
     opts.max_results = 4;
     opts.visible_capacity = 4;
     opts.match_ring_capacity = 2;
-    struct sigmund_log_filter_result result;
-    EXPECT_TRUE("ring filter succeeds", sigmund_log_filter_fd(fd, &opts, &result) == 0);
+    struct hold_log_filter_result result;
+    EXPECT_TRUE("ring filter succeeds", hold_log_filter_fd(fd, &opts, &result) == 0);
     EXPECT_TRUE("all matches counted", result.match_count == 4);
     EXPECT_TRUE("ring capped", result.match_ring_count == 2);
     EXPECT_TRUE("ring start advanced", result.match_ring_start == 0 || result.match_ring_start == 1);
-    sigmund_log_filter_result_free(&result);
+    hold_log_filter_result_free(&result);
     close(fd);
 }
 
@@ -115,17 +115,17 @@ static void test_lazy_large_file_stops_after_first_screen(void) {
     off_t size = lseek(fd, 0, SEEK_END);
     rewind_or_die(fd);
 
-    struct sigmund_log_filter_options opts;
-    sigmund_log_filter_options_init(&opts);
+    struct hold_log_filter_options opts;
+    hold_log_filter_options_init(&opts);
     opts.literal = "match early";
     opts.max_results = 2;
     opts.visible_capacity = 2;
-    struct sigmund_log_filter_result result;
-    EXPECT_TRUE("lazy large filter succeeds", sigmund_log_filter_fd(fd, &opts, &result) == 0);
+    struct hold_log_filter_result result;
+    EXPECT_TRUE("lazy large filter succeeds", hold_log_filter_fd(fd, &opts, &result) == 0);
     EXPECT_TRUE("first screen has two matches", result.line_count == 2);
     EXPECT_TRUE("did not scan whole file", result.bytes_read < (size_t)size / 4);
     EXPECT_TRUE("did not reach eof", !result.reached_eof);
-    sigmund_log_filter_result_free(&result);
+    hold_log_filter_result_free(&result);
     close(fd);
 }
 
@@ -134,23 +134,23 @@ static void test_next_offset_resumes_next_screen(void) {
     write_all_or_die(fd, "hit one\nhit two\nhit three\nhit four\n");
     rewind_or_die(fd);
 
-    struct sigmund_log_filter_options opts;
-    sigmund_log_filter_options_init(&opts);
+    struct hold_log_filter_options opts;
+    hold_log_filter_options_init(&opts);
     opts.literal = "hit";
     opts.max_results = 2;
     opts.visible_capacity = 2;
-    struct sigmund_log_filter_result first;
-    EXPECT_TRUE("first page succeeds", sigmund_log_filter_fd(fd, &opts, &first) == 0);
+    struct hold_log_filter_result first;
+    EXPECT_TRUE("first page succeeds", hold_log_filter_fd(fd, &opts, &first) == 0);
     EXPECT_TRUE("first page has first hit", first.line_count > 0 && strstr(first.lines[0], "hit one"));
     EXPECT_TRUE("first page has second hit", first.line_count > 1 && strstr(first.lines[1], "hit two"));
 
     EXPECT_TRUE("seek to next offset", lseek(fd, first.next_offset, SEEK_SET) == first.next_offset);
-    struct sigmund_log_filter_result second;
-    EXPECT_TRUE("second page succeeds", sigmund_log_filter_fd(fd, &opts, &second) == 0);
+    struct hold_log_filter_result second;
+    EXPECT_TRUE("second page succeeds", hold_log_filter_fd(fd, &opts, &second) == 0);
     EXPECT_TRUE("second page has third hit", second.line_count > 0 && strstr(second.lines[0], "hit three"));
     EXPECT_TRUE("second page has fourth hit", second.line_count > 1 && strstr(second.lines[1], "hit four"));
-    sigmund_log_filter_result_free(&second);
-    sigmund_log_filter_result_free(&first);
+    hold_log_filter_result_free(&second);
+    hold_log_filter_result_free(&first);
     close(fd);
 }
 
@@ -162,19 +162,19 @@ static void test_backward_tail_window_finds_recent_matches_without_full_scan(voi
     write_all_or_die(fd, "recent needle one\nrecent needle two\nrecent needle three\n");
     off_t end = lseek(fd, 0, SEEK_END);
 
-    struct sigmund_log_filter_options opts;
-    sigmund_log_filter_options_init(&opts);
+    struct hold_log_filter_options opts;
+    hold_log_filter_options_init(&opts);
     opts.literal = "recent needle";
     opts.max_results = 2;
     opts.visible_capacity = 2;
-    struct sigmund_log_filter_result result;
-    EXPECT_TRUE("backward tail filter succeeds", sigmund_log_filter_backward_fd(fd, &opts, end, 65536, &result) == 0);
+    struct hold_log_filter_result result;
+    EXPECT_TRUE("backward tail filter succeeds", hold_log_filter_backward_fd(fd, &opts, end, 65536, &result) == 0);
     EXPECT_TRUE("backward tail returns requested visible lines", result.line_count == 2);
     EXPECT_TRUE("backward tail keeps chronological order", result.line_count > 1 &&
                     strstr(result.lines[0], "recent needle two") &&
                     strstr(result.lines[1], "recent needle three"));
     EXPECT_TRUE("backward tail did not scan whole file", result.bytes_read < (size_t)end / 4);
-    sigmund_log_filter_result_free(&result);
+    hold_log_filter_result_free(&result);
     close(fd);
 }
 
@@ -186,17 +186,17 @@ static void test_backward_sparse_window_reports_partial(void) {
     }
     off_t end = lseek(fd, 0, SEEK_END);
 
-    struct sigmund_log_filter_options opts;
-    sigmund_log_filter_options_init(&opts);
+    struct hold_log_filter_options opts;
+    hold_log_filter_options_init(&opts);
     opts.literal = "ancient needle";
     opts.max_results = 1;
     opts.visible_capacity = 1;
-    struct sigmund_log_filter_result result;
-    EXPECT_TRUE("backward sparse filter succeeds", sigmund_log_filter_backward_fd(fd, &opts, end, 32768, &result) == 0);
+    struct hold_log_filter_result result;
+    EXPECT_TRUE("backward sparse filter succeeds", hold_log_filter_backward_fd(fd, &opts, end, 32768, &result) == 0);
     EXPECT_TRUE("sparse backward window does not scan to ancient match", result.line_count == 0);
     EXPECT_TRUE("sparse backward window reports limited scan", result.scan_limited);
     EXPECT_TRUE("sparse backward window bounded bytes", result.bytes_read < (size_t)end / 4);
-    sigmund_log_filter_result_free(&result);
+    hold_log_filter_result_free(&result);
     close(fd);
 }
 

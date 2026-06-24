@@ -4,9 +4,9 @@
 
 Outer loop bridge: deep dive for quickstart Step 1, Start One Thing.
 
-The store is where Sigmund puts the facts users rely on later: run IDs, logs, aliases, root-public discovery hints, and optional console sockets. If `sigmund tail <id>` or `sigmund stop <id>` works after the original shell is gone, it is because this state survived on disk.
+The store is where On Hold puts the facts users rely on later: run IDs, logs, aliases, root-public discovery hints, and optional console sockets. If `hold tail <id>` or `hold stop <id>` works after the original shell is gone, it is because this state survived on disk.
 
-Sigmund has two stores: a user-local store for normal starts and a system-managed store for root, sudo, and `--system` starts.
+On Hold has two stores: a user-local store for normal starts and a system-managed store for root, sudo, and `--system` starts.
 
 The store is the replacement for a daemon's memory. Every future command has to recover intent from files, then validate live process state separately.
 
@@ -15,7 +15,7 @@ The store is the replacement for a daemon's memory. Every future command has to 
 User-local state lives under:
 
 ```text
-~/.local/state/sigmund
+~/.local/state/hold
 ```
 
 The user store uses the base directory for run records, logs, `profiles.json`, `aliases.json`, and a `console/` subdirectory. `ensure_user_store_for_current_user` creates the base and console directory as `0700`.
@@ -23,11 +23,11 @@ The user store uses the base directory for run records, logs, `profiles.json`, `
 System-managed state lives under:
 
 ```text
-Linux: /var/lib/sigmund
-macOS: /var/db/sigmund
+Linux: /var/lib/hold
+macOS: /var/db/hold
 ```
 
-In test builds, `SIGMUND_TEST_SYSTEM_STATE_DIR` can override that path. The production code does not take an arbitrary environment override for the system store.
+In test builds, `HOLD_TEST_SYSTEM_STATE_DIR` can override that path. The production code does not take an arbitrary environment override for the system store.
 
 ```text
 <system>/
@@ -97,7 +97,7 @@ flowchart TD
 
 Private run records are written as `.<id>.tmp` and renamed to `<id>.json`. Public index records use the same pattern in the public directory. Profile and alias files are also written through temp files and atomic rename, then the containing directory is fsynced where the code can do so.
 
-This pattern matters because Sigmund has no daemon to reconstruct partially written state. If a process is recorded, future actions must be able to trust that the record is syntactically complete enough to load and evaluate.
+This pattern matters because On Hold has no daemon to reconstruct partially written state. If a process is recorded, future actions must be able to trust that the record is syntactically complete enough to load and evaluate.
 
 ## Public and private authority
 

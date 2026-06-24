@@ -2,14 +2,14 @@
 # Privilege-delegation lane: run the regression suite as a NON-root user that can
 # elevate via passwordless sudo, and let the suite elevate per-test.
 #
-# This mirrors how sigmund is actually used and must be tested: you invoke it as
+# This mirrors how hold is actually used and must be tested: you invoke it as
 # yourself, and it sudo-elevates only the operations that need root — and the
 # elevated process must know WHICH non-root user invoked it (the SUDO_UID/
 # SUDO_USER provenance), not merely that it is running as root. Running the whole
 # suite as root would erase that distinction (and leave root-owned build
 # artifacts a non-root cleanup cannot remove, which is exactly what used to break
 # this lane). The suite's as_user/as_root/as_sudo_from_user helpers do the
-# per-test elevation; SIGMUND_REQUIRE_ROOT_TESTS=1 turns any skip into a failure,
+# per-test elevation; HOLD_REQUIRE_ROOT_TESTS=1 turns any skip into a failure,
 # so this lane proves the elevated tests really executed (that is its job, vs the
 # user-runner which merely permits them to skip).
 #
@@ -26,7 +26,7 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true >/dev/null 2>&1; then
   echo "test_root.sh: need passwordless sudo — the elevated tests must be able to run," >&2
-  echo "  and SIGMUND_REQUIRE_ROOT_TESTS=1 makes a missing root actor a hard failure." >&2
+  echo "  and HOLD_REQUIRE_ROOT_TESTS=1 makes a missing root actor a hard failure." >&2
   exit 1
 fi
 
@@ -39,14 +39,14 @@ werror="${CFLAGS:--std=c11 -Wall -Wextra -Wpedantic -Werror -O2}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/src"
-# Anchor excludes to repo-root paths: a bare --exclude=sigmund would also drop
-# the include/sigmund/ header directory.
-tar --exclude='./.git' --exclude='./sigmund' --exclude='./sigmund-dynamic' \
+# Anchor excludes to repo-root paths: a bare --exclude=hold would also drop
+# the include/hold/ header directory.
+tar --exclude='./.git' --exclude='./hold' --exclude='./hold-dynamic' \
     --exclude='./hash-vector' --exclude='./obj' --exclude='./obj-test' \
-    --exclude='./sigmund.dSYM' --exclude='./sigmund-dynamic.dSYM' \
+    --exclude='./hold.dSYM' --exclude='./hold-dynamic.dSYM' \
     -C "$src" -cf - . | tar -xf - -C "$tmp/src"
 
 cd "$tmp/src"
 umask 022
 make clean
-SIGMUND_REQUIRE_ROOT_TESTS=1 make test CFLAGS="$werror"
+HOLD_REQUIRE_ROOT_TESTS=1 make test CFLAGS="$werror"

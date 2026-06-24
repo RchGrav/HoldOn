@@ -15,13 +15,13 @@ behind it. "Easy" and "flexible" are the goals; the sudo grant model is the
 ## Core principle (three layers)
 
 - **sudoers = the safe-crossing gate, not the constraint language.** Its only job
-  is to make using sudo safe: pin *this* sigmund binary, `--system --elevated`,
+  is to make using sudo safe: pin *this* hold binary, `--system --elevated`,
   and *this* profile hash, plus a cheap structural shape of the inputs — so the
   only thing that can cross into root is the exact delegated profile, and a
   root-side bug can only ever be reached with structurally-sane input.
 - **profile = the real, expressive enforcement** (first layer, hash-immutable).
   Ranges, `min <= max`, "if `--tls` then `--cert`", path confinement, ordering,
-  uniqueness — anything sigmund can compute. The flexibility ceiling is the
+  uniqueness — anything hold can compute. The flexibility ceiling is the
   profile's validator (effectively unbounded), **not** the sudoers regex.
 - **the hash = immutability.** It fingerprints the profile, including its base
   argv *and* its input rules, so neither the command nor the allowed-input rules
@@ -42,7 +42,7 @@ This is fail-safe and additive-only: parameters can only *add* validated trailin
 tokens; they can never rewrite the base. It maps cleanly onto optional regex
 groups `( ... )?` (omit -> group absent -> base default). Effective "override" of a
 base default works when the target honors last-wins for repeated flags; that is a
-property of the target CLI, documented, not something sigmund forces.
+property of the target CLI, documented, not something hold forces.
 
 Implication: parameters must be expressible as optional trailing flags. Values
 hard-coded as positionals in the base cannot be overridden by appending; you
@@ -107,7 +107,7 @@ authoritative — both feed the suggester's default guess.
 
 ## CLI-shape suggester (priors + human confirm)
 
-When building a profile from a real invocation, sigmund tokenizes the command and
+When building a profile from a real invocation, hold tokenizes the command and
 proposes a classification. It is a **suggester, not an authority** — it minimizes
 clicks; the human is the oracle that resolves anything ambiguous, in the editor.
 
@@ -136,7 +136,7 @@ focused, stateful session — like editing a partition table:
 - **stateful for authoring**: `select <alias>` then `info` / `list` /
   `param <index|--flag> <pattern[,skip]>` / `unparam` operate on the selection;
 - **stateless for runtime**: invoking a parameterized alias
-  (`sigmund start <alias> --foo X`) stays a plain one-shot command — it is the hot
+  (`hold start <alias> --foo X`) stays a plain one-shot command — it is the hot
   path and scripts call it;
 - **explicit commit**: edits stage, then `commit` (a) re-hashes the profile,
   (b) regenerates the sudoers entry and validates it with `visudo -cf` before
@@ -147,21 +147,21 @@ focused, stateful session — like editing a partition table:
 ## Enforcement, end to end
 
 ```text
-1. user: sigmund start report --date 2026-06-19 --mode summary
-2. sigmund canonicalizes modifier ORDER and enforces UNIQUENESS (regex cannot),
+1. user: hold start report --date 2026-06-19 --mode summary
+2. hold canonicalizes modifier ORDER and enforces UNIQUENESS (regex cannot),
    and runs semantic/relational checks (ranges, min<=max, path confinement)
    against the hash-pinned profile -- the first, expressive layer.
-3. sigmund composes the argv that crosses sudo:
-     sudo -- <abs_sigmund> --system --elevated report <hash> --date 2026-06-19 --mode summary
+3. hold composes the argv that crosses sudo:
+     sudo -- <abs_hold> --system --elevated report <hash> --date 2026-06-19 --mode summary
 4. sudoers matches it against the managed, anchored regex for this alias/profile
    (coarse structural gate; the binary + --elevated + hash + input shape).
-5. if admitted, sudo starts root sigmund.
-6. root sigmund loads the profile by hash, re-validates each value against the
+5. if admitted, sudo starts root hold.
+6. root hold loads the profile by hash, re-validates each value against the
    profile's own rules, appends the validated modifiers to the immutable base
    argv, and execs the target shell-free.
 ```
 
-So order/uniqueness/semantics are handled by sigmund *before* the boundary, the
+So order/uniqueness/semantics are handled by hold *before* the boundary, the
 profile is the authority on values, and the sudoers regex stays a tight, simple
 backstop — never the place the input language is defined.
 
@@ -185,7 +185,7 @@ What the *gate* can express, from `man sudoers`:
   always carry the anchored regex.
 
 Optional complementary hardening: sudo's own `Digest_Spec` (`sha256:<digest>
-/path`) can pin the sigmund binary natively, orthogonal to the profile hash.
+/path`) can pin the hold binary natively, orthogonal to the profile hash.
 
 ## What this can and cannot safely express
 
@@ -196,14 +196,14 @@ numeric magnitude/ranges, unordered-but-unique option sets, cross-field relation
 or any semantics.
 
 Everything in that second list is exactly what the **profile** enforces, and what
-**sigmund normalizes** (order, uniqueness) before the boundary. So the user-facing
+**hold normalizes** (order, uniqueness) before the boundary. So the user-facing
 flexibility is set by the profile, not by ERE; the gate stays a cheap structural
 backstop.
 
 ## Security properties and non-goals
 
 - Two walls: a structural sudoers gate that keeps crossing-into-root safe even if
-  root sigmund has a validation bug, plus the profile's expressive validation.
+  root hold has a validation bug, plus the profile's expressive validation.
 - Opacity is separate from security: the hash and the public surface hide the
   target command, internal flags, and where inputs go — but the security comes
   from the gate + validation, not from hiding.

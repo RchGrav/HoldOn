@@ -1,14 +1,14 @@
 #pragma once
-#ifndef SIGMUND_ACCESS_H
-#define SIGMUND_ACCESS_H
+#ifndef HOLD_ACCESS_H
+#define HOLD_ACCESS_H
 
-#include "sigmund/config.h"
-#include "sigmund/types.h"
+#include "hold/config.h"
+#include "hold/types.h"
 
-int sigmund_detect_invocation(struct sigmund_invocation *inv, bool requested_system, bool elevated);
-int sigmund_init_invoking_user_store(const struct sigmund_invocation *inv, struct sigmund_store *store);
-int sigmund_elevate_with_sudo_canonical(const char *program, int canonical_argc, char **canonical_argv);
-int sigmund_elevate_with_sudo_parsed(const char *program,
+int hold_detect_invocation(struct hold_invocation *inv, bool requested_system, bool elevated);
+int hold_init_invoking_user_store(const struct hold_invocation *inv, struct hold_store *store);
+int hold_elevate_with_sudo_canonical(const char *program, int canonical_argc, char **canonical_argv);
+int hold_elevate_with_sudo_parsed(const char *program,
                                     bool owned,
                                     const char *command,
                                     bool tail,
@@ -20,11 +20,11 @@ int sigmund_elevate_with_sudo_parsed(const char *program,
                                     bool force_raw,
                                     int argc,
                                     char **argv);
-int sigmund_cmd_grant_revoke_action(const struct sigmund_invocation *inv,
-                                   const struct sigmund_store *system_store,
+int hold_cmd_grant_revoke_action(const struct hold_invocation *inv,
+                                   const struct hold_store *system_store,
                                    const char *program,
                                    bool grant,
                                    int argc,
                                    char **argv);
 
-#endif /* SIGMUND_ACCESS_H */
+#endif /* HOLD_ACCESS_H */

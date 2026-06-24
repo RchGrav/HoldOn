@@ -1,7 +1,7 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/platform.h"
-#include "sigmund/core.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/platform.h"
+#include "hold/core.h"
 
 #if defined(__APPLE__)
 static int mac_kinfo_pid(pid_t pid, struct kinfo_proc *kp);
@@ -41,7 +41,7 @@ static int parse_pid_token(const char *tok, pid_t *out) {
 #if !defined(__APPLE__)
 static int read_process_ids_state(pid_t pid, pid_t *pgid_out, pid_t *sid_out, char *state_out) {
     char path[128], buf[4096];
-    if (sigmund_checked_snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid) != 0) {
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid) != 0) {
         return -1;
     }
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -108,7 +108,7 @@ static int read_process_ids_state(pid_t pid, pid_t *pgid_out, pid_t *sid_out, ch
 }
 #endif
 
-enum group_liveness sigmund_group_session_liveness(pid_t pgid, pid_t sid) {
+enum group_liveness hold_group_session_liveness(pid_t pgid, pid_t sid) {
     if (pgid <= 1 || sid <= 0) {
         return GROUP_SCAN_ERROR;
     }
@@ -189,7 +189,7 @@ enum group_liveness sigmund_group_session_liveness(pid_t pgid, pid_t sid) {
 #endif
 }
 
-int sigmund_count_session_escapees(pid_t sid, pid_t expected_pgid) {
+int hold_count_session_escapees(pid_t sid, pid_t expected_pgid) {
 #if defined(__APPLE__)
     int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
     size_t len = 0;
@@ -248,7 +248,7 @@ int sigmund_count_session_escapees(pid_t sid, pid_t expected_pgid) {
 #endif
 }
 
-int sigmund_read_proc_stat_tokens(pid_t pid, char *state_out, uint64_t *starttime_out) {
+int hold_read_proc_stat_tokens(pid_t pid, char *state_out, uint64_t *starttime_out) {
 #if defined(__APPLE__)
     struct kinfo_proc kp;
     if (mac_kinfo_pid(pid, &kp) != 0) {
@@ -267,7 +267,7 @@ int sigmund_read_proc_stat_tokens(pid_t pid, char *state_out, uint64_t *starttim
     return 0;
 #else
     char path[128], buf[4096];
-    if (sigmund_checked_snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid) != 0) {
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid) != 0) {
         return -1;
     }
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -319,7 +319,7 @@ int sigmund_read_proc_stat_tokens(pid_t pid, char *state_out, uint64_t *starttim
 #endif
 }
 
-int sigmund_read_proc_exe(pid_t pid, uint64_t *dev, uint64_t *ino) {
+int hold_read_proc_exe(pid_t pid, uint64_t *dev, uint64_t *ino) {
     struct stat st;
 #if defined(__APPLE__)
     char path[PROC_PIDPATHINFO_MAXSIZE];
@@ -328,7 +328,7 @@ int sigmund_read_proc_exe(pid_t pid, uint64_t *dev, uint64_t *ino) {
     }
 #else
     char path[128];
-    if (sigmund_checked_snprintf(path, sizeof(path), "/proc/%ld/exe", (long)pid) != 0) {
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/exe", (long)pid) != 0) {
         return -1;
     }
 #endif
@@ -340,7 +340,7 @@ int sigmund_read_proc_exe(pid_t pid, uint64_t *dev, uint64_t *ino) {
     return 0;
 }
 
-bool sigmund_leader_present(pid_t pid) {
+bool hold_leader_present(pid_t pid) {
 #if defined(__APPLE__)
     struct kinfo_proc kp;
     if (mac_kinfo_pid(pid, &kp) == 0) {
@@ -349,12 +349,12 @@ bool sigmund_leader_present(pid_t pid) {
 #else
     char path[128];
     struct stat st;
-    if (sigmund_checked_snprintf(path, sizeof(path), "/proc/%ld", (long)pid) != 0) {
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld", (long)pid) != 0) {
         return false;
     }
     if (stat(path, &st) == 0) {
         char stc = 0;
-        if (sigmund_read_proc_stat_tokens(pid, &stc, NULL) == 0 && stc == 'Z') {
+        if (hold_read_proc_stat_tokens(pid, &stc, NULL) == 0 && stc == 'Z') {
             return false;
         }
         return true;
@@ -366,7 +366,7 @@ bool sigmund_leader_present(pid_t pid) {
     return false;
 }
 
-int sigmund_group_exists(pid_t pgid) {
+int hold_group_exists(pid_t pgid) {
     if (kill(-pgid, 0) == 0 || errno == EPERM) {
         return 1;
     }

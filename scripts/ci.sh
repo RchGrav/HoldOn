@@ -11,7 +11,7 @@
 #
 # Env:
 #   CC                     compiler to use (default: cc)
-#   SIGMUND_REQUIRE_ROOT_TESTS=1   turn test skips into failures (set when root)
+#   HOLD_REQUIRE_ROOT_TESTS=1   turn test skips into failures (set when root)
 set -uo pipefail
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
@@ -34,7 +34,7 @@ mark_ok "static-build"
 
 step "dynamic, -Werror"
 must make clean
-must make sigmund-dynamic CC="$CC_BIN" CFLAGS="$WERROR"
+must make hold-dynamic CC="$CC_BIN" CFLAGS="$WERROR"
 mark_ok "dynamic-build"
 
 step "regression suite + profile-hash vector"
@@ -43,8 +43,8 @@ must make test CC="$CC_BIN" CFLAGS="$WERROR"
 mark_ok "suite"
 
 step "ASan/UBSan"
-if printf 'int main(void){return 0;}\n' | "$CC_BIN" -fsanitize=address,undefined -x c - -o /tmp/.sigmund_sanprobe 2>/dev/null; then
-  rm -f /tmp/.sigmund_sanprobe
+if printf 'int main(void){return 0;}\n' | "$CC_BIN" -fsanitize=address,undefined -x c - -o /tmp/.hold_sanprobe 2>/dev/null; then
+  rm -f /tmp/.hold_sanprobe
   must make clean
   must make test CC="$CC_BIN" CFLAGS="$SAN_FLAGS" STATIC_LDFLAGS='' LDFLAGS='-fsanitize=address,undefined' TEST_LDFLAGS='-fsanitize=address,undefined'
   mark_ok "asan-ubsan"

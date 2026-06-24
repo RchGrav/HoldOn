@@ -1,38 +1,38 @@
 #pragma once
-#ifndef SIGMUND_RUNTIME_H
-#define SIGMUND_RUNTIME_H
+#ifndef HOLD_RUNTIME_H
+#define HOLD_RUNTIME_H
 
-#include "sigmund/config.h"
-#include "sigmund/types.h"
+#include "hold/config.h"
+#include "hold/types.h"
 
-bool sigmund_command_accepts_target_tokens(const char *command);
-bool sigmund_start_target_is_within_invoking_home(const struct sigmund_invocation *inv,
+bool hold_command_accepts_target_tokens(const char *command);
+bool hold_start_target_is_within_invoking_home(const struct hold_invocation *inv,
                                                  bool owned,
                                                  const char *command,
                                                  int argc,
                                                  char **argv);
-int sigmund_perform_start(const struct sigmund_invocation *inv,
-                         const struct sigmund_store *store,
+int hold_perform_start(const struct hold_invocation *inv,
+                         const struct hold_store *store,
                          bool tail,
                          bool console_mode,
                          int argc,
                          char **argv,
                          const char *exec_path,
                          const char *run_alias);
-int sigmund_cmd_list_normal(const struct sigmund_store *user_store,
-                           const struct sigmund_store *system_store,
+int hold_cmd_list_normal(const struct hold_store *user_store,
+                           const struct hold_store *system_store,
                            const char *alias_filter,
                            bool iso);
-int sigmund_cmd_list_system(const struct sigmund_store *system_store,
+int hold_cmd_list_system(const struct hold_store *system_store,
                            const char *alias_filter,
                            bool iso);
-enum id_token_scope sigmund_parse_id_token(const char *token, const char **id_out);
-int sigmund_resolve_public_profile_token(const struct sigmund_store *store,
+enum id_token_scope hold_parse_id_token(const char *token, const char **id_out);
+int hold_resolve_public_profile_token(const struct hold_store *store,
                                         const char *token,
                                         char hash[PROFILE_HASH_STR_LEN]);
-int sigmund_cmd_signal_action(const struct sigmund_invocation *inv,
-                             const struct sigmund_store *user_store,
-                             const struct sigmund_store *system_store,
+int hold_cmd_signal_action(const struct hold_invocation *inv,
+                             const struct hold_store *user_store,
+                             const struct hold_store *system_store,
                              const char *program,
                              const char *command,
                              int argc,
@@ -41,98 +41,98 @@ int sigmund_cmd_signal_action(const struct sigmund_invocation *inv,
                              bool graceful,
                              bool all,
                              bool print_cmd);
-int sigmund_cmd_tail_action(const struct sigmund_invocation *inv,
-                           const struct sigmund_store *user_store,
-                           const struct sigmund_store *system_store,
+int hold_cmd_tail_action(const struct hold_invocation *inv,
+                           const struct hold_store *user_store,
+                           const struct hold_store *system_store,
                            const char *program,
                            const char *id_token);
-int sigmund_cmd_dump_action(const struct sigmund_invocation *inv,
-                           const struct sigmund_store *user_store,
-                           const struct sigmund_store *system_store,
+int hold_cmd_dump_action(const struct hold_invocation *inv,
+                           const struct hold_store *user_store,
+                           const struct hold_store *system_store,
                            const char *program,
                            const char *id_token);
-int sigmund_cmd_view_action(const struct sigmund_invocation *inv,
-                           const struct sigmund_store *user_store,
-                           const struct sigmund_store *system_store,
+int hold_cmd_view_action(const struct hold_invocation *inv,
+                           const struct hold_store *user_store,
+                           const struct hold_store *system_store,
                            const char *program,
                            int argc,
                            char **argv);
-int sigmund_cmd_console_action(const struct sigmund_invocation *inv,
-                              const struct sigmund_store *user_store,
-                              const struct sigmund_store *system_store,
+int hold_cmd_console_action(const struct hold_invocation *inv,
+                              const struct hold_store *user_store,
+                              const struct hold_store *system_store,
                               const char *program,
                               const char *id_token);
-int sigmund_cmd_prune_action(const struct sigmund_invocation *inv,
-                            const struct sigmund_store *user_store,
-                            const struct sigmund_store *system_store,
+int hold_cmd_prune_action(const struct hold_invocation *inv,
+                            const struct hold_store *user_store,
+                            const struct hold_store *system_store,
                             const char *program,
                             const char *target_token,
                             bool all);
-int sigmund_elevate_start_token(const char *program,
+int hold_elevate_start_token(const char *program,
                                bool tail,
                                bool console_mode,
                                const char *token_atom,
                                const char *hash,
                                bool multi,
                                int multi_count);
-int sigmund_cmd_start_action(const struct sigmund_invocation *inv,
-                            const struct sigmund_store *user_store,
-                            const struct sigmund_store *system_store,
+int hold_cmd_start_action(const struct hold_invocation *inv,
+                            const struct hold_store *user_store,
+                            const struct hold_store *system_store,
                             const char *program,
-                            const struct sigmund_store *fallback_store,
+                            const struct hold_store *fallback_store,
                             bool tail,
                             bool console_mode,
                             bool multi,
                             int multi_count,
                             int argc,
                             char **argv);
-int sigmund_ensure_start_store_for_command(const struct sigmund_invocation *inv,
+int hold_ensure_start_store_for_command(const struct hold_invocation *inv,
                                           bool requested_system,
                                           bool owned,
                                           const char *command,
                                           int argc,
                                           char **argv,
-                                          struct sigmund_store *store);
-int sigmund_maybe_elevate_requested_system_targets(const char *program,
+                                          struct hold_store *store);
+int hold_maybe_elevate_requested_system_targets(const char *program,
                                                   const char *command,
                                                   int argc,
                                                   char **argv,
                                                   bool all,
                                                   int *rc_out);
-int sigmund_cmd_alias_action(const struct sigmund_invocation *inv,
-                            const struct sigmund_store *user_store,
-                            const struct sigmund_store *system_store,
+int hold_cmd_alias_action(const struct hold_invocation *inv,
+                            const struct hold_store *user_store,
+                            const struct hold_store *system_store,
                             const char *program,
                             int argc,
                             char **argv);
-int sigmund_cmd_aliases_action(const struct sigmund_invocation *inv,
-                              const struct sigmund_store *user_store,
-                              const struct sigmund_store *system_store,
+int hold_cmd_aliases_action(const struct hold_invocation *inv,
+                              const struct hold_store *user_store,
+                              const struct hold_store *system_store,
                               bool verbose);
-int sigmund_cmd_profile_action(const struct sigmund_invocation *inv,
-                              const struct sigmund_store *user_store,
+int hold_cmd_profile_action(const struct hold_invocation *inv,
+                              const struct hold_store *user_store,
                               int argc,
                               char **argv);
-int sigmund_cmd_profile_set_command(const struct sigmund_invocation *inv,
-                                    const struct sigmund_store *user_store,
+int hold_cmd_profile_set_command(const struct hold_invocation *inv,
+                                    const struct hold_store *user_store,
                                     const char *name,
                                     int argc,
                                     char **argv);
-int sigmund_cmd_profile_create_command(const struct sigmund_invocation *inv,
-                                       const struct sigmund_store *user_store,
+int hold_cmd_profile_create_command(const struct hold_invocation *inv,
+                                       const struct hold_store *user_store,
                                        const char *name,
                                        int argc,
                                        char **argv);
-int sigmund_cmd_profile_delete(const struct sigmund_invocation *inv,
-                               const struct sigmund_store *user_store,
+int hold_cmd_profile_delete(const struct hold_invocation *inv,
+                               const struct hold_store *user_store,
                                const char *name);
-int sigmund_cmd_profile_rename(const struct sigmund_invocation *inv,
-                               const struct sigmund_store *user_store,
+int hold_cmd_profile_rename(const struct hold_invocation *inv,
+                               const struct hold_store *user_store,
                                const char *old_name,
                                const char *new_name);
-void sigmund_usage(void);
-int sigmund_cmd_elevated_capability_action(const struct sigmund_invocation *inv,
-                                          const struct sigmund_store *system_store,
+void hold_usage(void);
+int hold_cmd_elevated_capability_action(const struct hold_invocation *inv,
+                                          const struct hold_store *system_store,
                                           const char *command,
                                           bool tail,
                                           bool console_mode,
@@ -141,4 +141,4 @@ int sigmund_cmd_elevated_capability_action(const struct sigmund_invocation *inv,
                                           int argc,
                                           char **argv);
 
-#endif /* SIGMUND_RUNTIME_H */
+#endif /* HOLD_RUNTIME_H */

@@ -1,5 +1,5 @@
-#include "sigmund/config.h"
-#include "sigmund/log_viewer.h"
+#include "hold/config.h"
+#include "hold/log_viewer.h"
 
 #define VIEWER_READ_CHUNK 4096
 #define VIEWER_DEFAULT_VISIBLE 50
@@ -15,12 +15,12 @@ struct term_profile {
 };
 
 struct filter_state {
-    const struct sigmund_log_filter_options *opts;
-    struct term_profile examples[SIGMUND_LOG_VIEWER_MAX_EXAMPLES];
+    const struct hold_log_filter_options *opts;
+    struct term_profile examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
     size_t example_count;
 };
 
-void sigmund_log_filter_options_init(struct sigmund_log_filter_options *opts) {
+void hold_log_filter_options_init(struct hold_log_filter_options *opts) {
     memset(opts, 0, sizeof(*opts));
     opts->similar_threshold = 0.45;
     opts->visible_capacity = VIEWER_DEFAULT_VISIBLE;
@@ -28,7 +28,7 @@ void sigmund_log_filter_options_init(struct sigmund_log_filter_options *opts) {
     opts->max_results = VIEWER_DEFAULT_VISIBLE;
 }
 
-void sigmund_log_filter_result_free(struct sigmund_log_filter_result *result) {
+void hold_log_filter_result_free(struct hold_log_filter_result *result) {
     if (!result) return;
     if (result->lines) {
         for (size_t i = 0; i < result->line_count; i++) free(result->lines[i]);
@@ -109,8 +109,8 @@ static char *dup_line(const char *line, size_t n) {
     return copy;
 }
 
-static int push_visible(struct sigmund_log_filter_result *result,
-                        const struct sigmund_log_filter_options *opts,
+static int push_visible(struct hold_log_filter_result *result,
+                        const struct hold_log_filter_options *opts,
                         const char *line,
                         size_t n,
                         off_t line_offset) {
@@ -123,8 +123,8 @@ static int push_visible(struct sigmund_log_filter_result *result,
     return 0;
 }
 
-static void push_match_offset(struct sigmund_log_filter_result *result,
-                              const struct sigmund_log_filter_options *opts,
+static void push_match_offset(struct hold_log_filter_result *result,
+                              const struct hold_log_filter_options *opts,
                               off_t off) {
     if (opts->match_ring_capacity == 0) return;
     size_t pos;
@@ -138,8 +138,8 @@ static void push_match_offset(struct sigmund_log_filter_result *result,
     result->match_offsets[pos] = off;
 }
 
-static int ensure_result_storage(const struct sigmund_log_filter_options *opts,
-                                 struct sigmund_log_filter_result *result) {
+static int ensure_result_storage(const struct hold_log_filter_options *opts,
+                                 struct hold_log_filter_result *result) {
     result->lines = calloc(opts->visible_capacity ? opts->visible_capacity : 1, sizeof(char *));
     if (!result->lines) return -1;
     result->line_offsets = calloc(opts->visible_capacity ? opts->visible_capacity : 1, sizeof(off_t));
@@ -151,10 +151,10 @@ static int ensure_result_storage(const struct sigmund_log_filter_options *opts,
     return 0;
 }
 
-static int prepare_state(const struct sigmund_log_filter_options *opts, struct filter_state *state) {
+static int prepare_state(const struct hold_log_filter_options *opts, struct filter_state *state) {
     memset(state, 0, sizeof(*state));
     state->opts = opts;
-    if (opts->similar_example_count > SIGMUND_LOG_VIEWER_MAX_EXAMPLES) {
+    if (opts->similar_example_count > HOLD_LOG_VIEWER_MAX_EXAMPLES) {
         errno = EINVAL;
         return -1;
     }
@@ -163,8 +163,8 @@ static int prepare_state(const struct sigmund_log_filter_options *opts, struct f
     return 0;
 }
 
-static int consume_line(struct sigmund_log_filter_result *result,
-                        const struct sigmund_log_filter_options *opts,
+static int consume_line(struct hold_log_filter_result *result,
+                        const struct hold_log_filter_options *opts,
                         const struct filter_state *state,
                         const char *line,
                         size_t n,
@@ -179,28 +179,28 @@ static int consume_line(struct sigmund_log_filter_result *result,
     return 0;
 }
 
-int sigmund_log_filter_fd(int fd,
-                         const struct sigmund_log_filter_options *in_opts,
-                         struct sigmund_log_filter_result *result) {
+int hold_log_filter_fd(int fd,
+                         const struct hold_log_filter_options *in_opts,
+                         struct hold_log_filter_result *result) {
     if (fd < 0 || !in_opts || !result) {
         errno = EINVAL;
         return -1;
     }
 
-    struct sigmund_log_filter_options opts = *in_opts;
+    struct hold_log_filter_options opts = *in_opts;
     if (opts.visible_capacity == 0) opts.visible_capacity = VIEWER_DEFAULT_VISIBLE;
     if (opts.max_results == 0 || opts.max_results > opts.visible_capacity) opts.max_results = opts.visible_capacity;
     if (opts.similar_threshold <= 0.0) opts.similar_threshold = 0.45;
 
     memset(result, 0, sizeof(*result));
     if (ensure_result_storage(&opts, result) != 0) {
-        sigmund_log_filter_result_free(result);
+        hold_log_filter_result_free(result);
         return -1;
     }
 
     struct filter_state state;
     if (prepare_state(&opts, &state) != 0) {
-        sigmund_log_filter_result_free(result);
+        hold_log_filter_result_free(result);
         return -1;
     }
 
@@ -233,7 +233,7 @@ int sigmund_log_filter_fd(int fd,
         if (nr < 0) {
             if (errno == EINTR) continue;
             free(line);
-            sigmund_log_filter_result_free(result);
+            hold_log_filter_result_free(result);
             return -1;
         }
         result->bytes_read += (size_t)nr;
@@ -269,22 +269,22 @@ int sigmund_log_filter_fd(int fd,
 
 oom:
     free(line);
-    sigmund_log_filter_result_free(result);
+    hold_log_filter_result_free(result);
     errno = ENOMEM;
     return -1;
 }
 
-int sigmund_log_filter_backward_fd(int fd,
-                                  const struct sigmund_log_filter_options *in_opts,
+int hold_log_filter_backward_fd(int fd,
+                                  const struct hold_log_filter_options *in_opts,
                                   off_t anchor_offset,
                                   size_t byte_budget,
-                                  struct sigmund_log_filter_result *result) {
+                                  struct hold_log_filter_result *result) {
     if (fd < 0 || !in_opts || !result) {
         errno = EINVAL;
         return -1;
     }
 
-    struct sigmund_log_filter_options opts = *in_opts;
+    struct hold_log_filter_options opts = *in_opts;
     if (opts.visible_capacity == 0) opts.visible_capacity = VIEWER_DEFAULT_VISIBLE;
     if (opts.max_results == 0 || opts.max_results > opts.visible_capacity) opts.max_results = opts.visible_capacity;
     if (opts.similar_threshold <= 0.0) opts.similar_threshold = 0.45;
@@ -292,19 +292,19 @@ int sigmund_log_filter_backward_fd(int fd,
 
     memset(result, 0, sizeof(*result));
     if (ensure_result_storage(&opts, result) != 0) {
-        sigmund_log_filter_result_free(result);
+        hold_log_filter_result_free(result);
         return -1;
     }
 
     struct filter_state state;
     if (prepare_state(&opts, &state) != 0) {
-        sigmund_log_filter_result_free(result);
+        hold_log_filter_result_free(result);
         return -1;
     }
 
     off_t file_end = lseek(fd, 0, SEEK_END);
     if (file_end < 0) {
-        sigmund_log_filter_result_free(result);
+        hold_log_filter_result_free(result);
         return -1;
     }
     if (anchor_offset < 0 || anchor_offset > file_end) anchor_offset = file_end;
@@ -321,13 +321,13 @@ int sigmund_log_filter_backward_fd(int fd,
     size_t span = (size_t)(anchor_offset - start);
     char *buf = malloc(span + 1);
     if (!buf) {
-        sigmund_log_filter_result_free(result);
+        hold_log_filter_result_free(result);
         errno = ENOMEM;
         return -1;
     }
     if (lseek(fd, start, SEEK_SET) < 0) {
         free(buf);
-        sigmund_log_filter_result_free(result);
+        hold_log_filter_result_free(result);
         return -1;
     }
     size_t got = 0;
@@ -336,7 +336,7 @@ int sigmund_log_filter_backward_fd(int fd,
         if (nr < 0) {
             if (errno == EINTR) continue;
             free(buf);
-            sigmund_log_filter_result_free(result);
+            hold_log_filter_result_free(result);
             return -1;
         }
         if (nr == 0) break;
@@ -357,7 +357,7 @@ int sigmund_log_filter_backward_fd(int fd,
         free(ring_lines);
         free(ring_offsets);
         free(buf);
-        sigmund_log_filter_result_free(result);
+        hold_log_filter_result_free(result);
         errno = ENOMEM;
         return -1;
     }
@@ -386,7 +386,7 @@ int sigmund_log_filter_backward_fd(int fd,
                     }
                     free(ring_lines);
                     free(ring_offsets);
-                    sigmund_log_filter_result_free(result);
+                    hold_log_filter_result_free(result);
                     errno = ENOMEM;
                     return -1;
                 }

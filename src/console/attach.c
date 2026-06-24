@@ -1,11 +1,11 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/console.h"
-#include "sigmund/core.h"
-#include "sigmund/console_internal.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/console.h"
+#include "hold/core.h"
+#include "hold/console_internal.h"
 
-int sigmund_run_native_console(const char *sock_path) {
-    int sock = sigmund_connect_console_socket(sock_path);
+int hold_run_native_console(const char *sock_path) {
+    int sock = hold_connect_console_socket(sock_path);
     if (sock < 0) {
         return errno == ENOTSOCK || errno == ENAMETOOLONG ? 5 : 3;
     }
@@ -16,10 +16,10 @@ int sigmund_run_native_console(const char *sock_path) {
     struct termios old_termios;
     if (interactive && tcgetattr(STDIN_FILENO, &old_termios) == 0) {
         struct termios raw;
-        sigmund_make_raw_termios(&old_termios, &raw);
+        hold_make_raw_termios(&old_termios, &raw);
         if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0) {
             terminal_saved = true;
-            if (sigmund_write_all(STDOUT_FILENO, "\033[?1049h\033[H\033[2J", 15) == 0) {
+            if (hold_write_all(STDOUT_FILENO, "\033[?1049h\033[H\033[2J", 15) == 0) {
                 alt_screen = true;
             }
         }
@@ -28,7 +28,7 @@ int sigmund_run_native_console(const char *sock_path) {
     struct sigaction sa, old_winch;
     bool have_old_winch = false;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sigmund_handle_console_sigwinch;
+    sa.sa_handler = hold_handle_console_sigwinch;
     sigemptyset(&sa.sa_mask);
     if (sigaction(SIGWINCH, &sa, &old_winch) == 0) {
         have_old_winch = true;
@@ -45,7 +45,7 @@ int sigmund_run_native_console(const char *sock_path) {
 
     int rc = 0;
     bool stdin_open = true;
-    if (sigmund_write_all(sock, CONSOLE_ATTACH_MAGIC, CONSOLE_ATTACH_MAGIC_LEN) != 0) {
+    if (hold_write_all(sock, CONSOLE_ATTACH_MAGIC, CONSOLE_ATTACH_MAGIC_LEN) != 0) {
         rc = 3;
         goto out;
     }
@@ -54,7 +54,7 @@ int sigmund_run_native_console(const char *sock_path) {
         if (g_console_resized) {
             struct winsize ws;
             g_console_resized = 0;
-            if (sigmund_maybe_get_terminal_size(&ws) == 0 && sigmund_send_console_resize(sock, &ws) != 0) {
+            if (hold_maybe_get_terminal_size(&ws) == 0 && hold_send_console_resize(sock, &ws) != 0) {
                 rc = 3;
                 break;
             }
@@ -91,10 +91,10 @@ int sigmund_run_native_console(const char *sock_path) {
                             continue;
                         }
                         if ((size_t)i > write_start &&
-                            sigmund_write_console_frame(sock, CONSOLE_FRAME_DATA, buf + write_start, (uint16_t)((size_t)i - write_start)) != 0) {
+                            hold_write_console_frame(sock, CONSOLE_FRAME_DATA, buf + write_start, (uint16_t)((size_t)i - write_start)) != 0) {
                             rc = 3;
                         }
-                        if (rc == 0 && sigmund_write_console_frame(sock, CONSOLE_FRAME_DETACH, NULL, 0) != 0) {
+                        if (rc == 0 && hold_write_console_frame(sock, CONSOLE_FRAME_DETACH, NULL, 0) != 0) {
                             rc = 3;
                         }
                         goto out;
@@ -102,11 +102,11 @@ int sigmund_run_native_console(const char *sock_path) {
                     if (rc != 0) {
                         break;
                     }
-                    if (sigmund_write_console_frame(sock, CONSOLE_FRAME_DATA, buf, (uint16_t)n) != 0) {
+                    if (hold_write_console_frame(sock, CONSOLE_FRAME_DATA, buf, (uint16_t)n) != 0) {
                         rc = 3;
                         break;
                     }
-                } else if (sigmund_write_console_frame(sock, CONSOLE_FRAME_DATA, buf, (uint16_t)n) != 0) {
+                } else if (hold_write_console_frame(sock, CONSOLE_FRAME_DATA, buf, (uint16_t)n) != 0) {
                     rc = 3;
                     break;
                 }
@@ -123,7 +123,7 @@ int sigmund_run_native_console(const char *sock_path) {
             char buf[4096];
             ssize_t n = read(sock, buf, sizeof(buf));
             if (n > 0) {
-                if (sigmund_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
+                if (hold_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
                     rc = 3;
                     break;
                 }
@@ -144,7 +144,7 @@ out:
         sigaction(SIGPIPE, &old_pipe, NULL);
     }
     if (alt_screen) {
-        (void)sigmund_write_all(STDOUT_FILENO, "\033[?1049l", 8);
+        (void)hold_write_all(STDOUT_FILENO, "\033[?1049l", 8);
     }
     if (terminal_saved) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_termios);

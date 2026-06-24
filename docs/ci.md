@@ -1,44 +1,44 @@
-# Using Sigmund in CI
+# Using On Hold in CI
 
 [Docs index](index.md) | [Quickstart](quickstart.md) | [Previous: CLI contract](cli-contract.md) | [Loop: Index](index.md) | Related: [Launcher](launcher.md), [Identity](identity.md)
 
 Outer loop bridge: deep dive for quickstart Step 7, Use It In CI.
 
-Sigmund is useful in CI when one step needs to start a long-running helper and later steps need to inspect or stop it. Examples include databases, web servers, emulators, local object stores, test daemons, and language-specific dev servers. It gives CI scripts a durable run ID, a log, and safe process-group teardown without bringing in `tmux`, `systemd`, a custom supervisor, or hand-managed PID files.
+On Hold is useful in CI when one step needs to start a long-running helper and later steps need to inspect or stop it. Examples include databases, web servers, emulators, local object stores, test daemons, and language-specific dev servers. It gives CI scripts a durable run ID, a log, and safe process-group teardown without bringing in `tmux`, `systemd`, a custom supervisor, or hand-managed PID files.
 
 The important CI contract is simple:
 
-- `sigmund <cmd...>` starts the helper detached from the shell's process group.
+- `hold <cmd...>` starts the helper detached from the shell's process group.
 - stdout is only the run ID, so scripts can capture it directly.
 - stderr contains human status such as the log path and stop command.
-- `sigmund dump <id>` prints the saved log and exits.
-- `sigmund stop <id>` validates the recorded process group, sends `SIGTERM`, then escalates to `SIGKILL` if needed.
-- `sigmund prune <id>` removes past run state after teardown.
+- `hold dump <id>` prints the saved log and exits.
+- `hold stop <id>` validates the recorded process group, sends `SIGTERM`, then escalates to `SIGKILL` if needed.
+- `hold prune <id>` removes past run state after teardown.
 
 ## Install in CI
 
-Use the installer handoff file when a workflow needs to install Sigmund and use it in later commands without relying on shell startup files:
+Use the installer handoff file when a workflow needs to install On Hold and use it in later commands without relying on shell startup files:
 
 ```yaml
-- name: Install Sigmund
+- name: Install On Hold
   shell: bash
   run: |
     set -Eeuo pipefail
-    curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh |
-      SIGMUND_INSTALL_DIR="$PWD/.bin" \
-      SIGMUND_ENV_FILE="$PWD/.sigmund-env" \
+    curl -LsSf https://github.com/RchGrav/hold/releases/latest/download/install.sh |
+      HOLD_INSTALL_DIR="$PWD/.bin" \
+      HOLD_ENV_FILE="$PWD/.hold-env" \
       sh
-    cat "$PWD/.sigmund-env" >> "$GITHUB_ENV"
+    cat "$PWD/.hold-env" >> "$GITHUB_ENV"
 
-- name: Check Sigmund
+- name: Check On Hold
   shell: bash
   run: |
-    "$SIGMUND_BIN" --version
+    "$HOLD_BIN" --version
 ```
 
-`SIGMUND_INSTALL_DIR` chooses a job-local install directory. `SIGMUND_ENV_FILE` tells the installer to write `SIGMUND_BIN` and a matching `PATH` update for later steps. Appending that file to `$GITHUB_ENV` makes both values available to the rest of the job.
+`HOLD_INSTALL_DIR` chooses a job-local install directory. `HOLD_ENV_FILE` tells the installer to write `HOLD_BIN` and a matching `PATH` update for later steps. Appending that file to `$GITHUB_ENV` makes both values available to the rest of the job.
 
-For a runnable shell example that installs Sigmund and uv, starts a web server, creates a durable alias, and restarts that alias from another directory, see [examples/uv-webserver-alias.sh](../examples/uv-webserver-alias.sh).
+For a runnable shell example that installs On Hold and uv, starts a web server, creates a durable alias, and restarts that alias from another directory, see [examples/uv-webserver-alias.sh](../examples/uv-webserver-alias.sh).
 
 ## Recipes
 
@@ -51,7 +51,7 @@ This is the basic CI problem: a shell step exits, but the helper should keep run
   shell: bash
   run: |
     set -Eeuo pipefail
-    api_id="$("$SIGMUND_BIN" npm run start:api)"
+    api_id="$("$HOLD_BIN" npm run start:api)"
     echo "API_RUN_ID=$api_id" >> "$GITHUB_ENV"
 
 - name: Test against API
@@ -62,7 +62,7 @@ This is the basic CI problem: a shell step exits, but the helper should keep run
     npm run test:integration
 ```
 
-Benefit: the later step gets a stable Sigmund run ID instead of relying on `$!`, which died with the shell that launched it.
+Benefit: the later step gets a stable On Hold run ID instead of relying on `$!`, which died with the shell that launched it.
 
 ### Show logs only when tests fail
 
@@ -71,10 +71,10 @@ Benefit: the later step gets a stable Sigmund run ID instead of relying on `$!`,
   if: failure()
   shell: bash
   run: |
-    "$SIGMUND_BIN" dump "$API_RUN_ID" || true
+    "$HOLD_BIN" dump "$API_RUN_ID" || true
 ```
 
-Benefit: logs are captured from the file Sigmund created at launch, so you do not need to redirect output by hand or keep a background `tail` alive.
+Benefit: logs are captured from the file On Hold created at launch, so you do not need to redirect output by hand or keep a background `tail` alive.
 
 ### Always stop the whole process group
 
@@ -84,25 +84,25 @@ Benefit: logs are captured from the file Sigmund created at launch, so you do no
   shell: bash
   run: |
     set +e
-    "$SIGMUND_BIN" stop "$API_RUN_ID"
+    "$HOLD_BIN" stop "$API_RUN_ID"
     stop_rc=$?
-    "$SIGMUND_BIN" prune "$API_RUN_ID" || true
+    "$HOLD_BIN" prune "$API_RUN_ID" || true
     exit "$stop_rc"
 ```
 
-Benefit: Sigmund signals the recorded process group after validation. This is safer than `kill "$pid"` and catches child processes that a shell wrapper may have spawned.
+Benefit: On Hold signals the recorded process group after validation. This is safer than `kill "$pid"` and catches child processes that a shell wrapper may have spawned.
 
 ### Start multiple helpers and tear them down together
 
 ```bash
-api_id="$(sigmund npm run start:api)"
-worker_id="$(sigmund npm run start:worker)"
-redis_id="$(sigmund redis-server --port 6379)"
+api_id="$(hold npm run start:api)"
+worker_id="$(hold npm run start:worker)"
+redis_id="$(hold redis-server --port 6379)"
 
-sigmund stop "$api_id" "$worker_id" "$redis_id"
-sigmund prune "$api_id" || true
-sigmund prune "$worker_id" || true
-sigmund prune "$redis_id" || true
+hold stop "$api_id" "$worker_id" "$redis_id"
+hold prune "$api_id" || true
+hold prune "$worker_id" || true
+hold prune "$redis_id" || true
 ```
 
 Benefit: each helper has its own run ID and log, while `stop` can still tear down several recorded process groups in one command.
@@ -112,16 +112,16 @@ Benefit: each helper has its own run ID and log, while `stop` can still tear dow
 Use `tail` when a CI step is intentionally a live monitor:
 
 ```bash
-run_id="$(sigmund ./long-running-smoke-server)"
-sigmund tail "$run_id" &
+run_id="$(hold ./long-running-smoke-server)"
+hold tail "$run_id" &
 tail_pid=$!
 
 ./run-smoke-tests
 test_rc=$?
 
 kill "$tail_pid" 2>/dev/null || true
-sigmund stop "$run_id" || true
-sigmund prune "$run_id" || true
+hold stop "$run_id" || true
+hold prune "$run_id" || true
 exit "$test_rc"
 ```
 
@@ -130,10 +130,10 @@ Benefit: `tail` follows the recorded log without becoming the owner of the helpe
 ### Print the underlying signal command for debugging
 
 ```bash
-sigmund stop --print "$API_RUN_ID"
+hold stop --print "$API_RUN_ID"
 ```
 
-Benefit: this validates the record and prints the process-group signal command Sigmund would use, which is useful when debugging CI cleanup behavior.
+Benefit: this validates the record and prints the process-group signal command On Hold would use, which is useful when debugging CI cleanup behavior.
 
 ### Use a root-managed helper only when needed
 
@@ -141,14 +141,14 @@ Benefit: this validates the record and prints the process-group signal command S
 - name: Start root-managed helper
   shell: bash
   run: |
-    run_id="$(./sigmund --system ./needs-root-managed-state --flag)"
+    run_id="$(./hold --system ./needs-root-managed-state --flag)"
     echo "ROOT_HELPER_RUN_ID=$run_id" >> "$GITHUB_ENV"
 
 - name: Stop root-managed helper
   if: always()
   shell: bash
   run: |
-    ./sigmund stop "system:$ROOT_HELPER_RUN_ID" || true
+    ./hold stop "system:$ROOT_HELPER_RUN_ID" || true
 ```
 
 Benefit: root-managed runs are discoverable through the public redacted index while private command details and logs remain root-only. Use this only when the helper really belongs in system state.
@@ -195,21 +195,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Sigmund
+      - name: Install On Hold
         shell: bash
         run: |
           set -Eeuo pipefail
-          curl -LsSf https://github.com/RchGrav/sigmund/releases/latest/download/install.sh |
-            SIGMUND_INSTALL_DIR="$PWD/.bin" \
-            SIGMUND_ENV_FILE="$PWD/.sigmund-env" \
+          curl -LsSf https://github.com/RchGrav/hold/releases/latest/download/install.sh |
+            HOLD_INSTALL_DIR="$PWD/.bin" \
+            HOLD_ENV_FILE="$PWD/.hold-env" \
             sh
-          cat "$PWD/.sigmund-env" >> "$GITHUB_ENV"
+          cat "$PWD/.hold-env" >> "$GITHUB_ENV"
 
       - name: Start web helper
         shell: bash
         run: |
           set -Eeuo pipefail
-          run_id="$("$SIGMUND_BIN" python3 -m http.server 8765)"
+          run_id="$("$HOLD_BIN" python3 -m http.server 8765)"
           echo "WEB_RUN_ID=$run_id" >> "$GITHUB_ENV"
 
       - name: Wait for web helper
@@ -222,7 +222,7 @@ jobs:
             fi
             sleep 1
           done
-          "$SIGMUND_BIN" dump "$WEB_RUN_ID" || true
+          "$HOLD_BIN" dump "$WEB_RUN_ID" || true
           exit 1
 
       - name: Run integration tests
@@ -237,16 +237,16 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          "$SIGMUND_BIN" dump "$WEB_RUN_ID" || true
+          "$HOLD_BIN" dump "$WEB_RUN_ID" || true
 
       - name: Stop helper
         if: always()
         shell: bash
         run: |
           set +e
-          "$SIGMUND_BIN" stop "$WEB_RUN_ID"
+          "$HOLD_BIN" stop "$WEB_RUN_ID"
           stop_rc=$?
-          "$SIGMUND_BIN" prune "$WEB_RUN_ID" || true
+          "$HOLD_BIN" prune "$WEB_RUN_ID" || true
           exit "$stop_rc"
 ```
 
@@ -258,18 +258,18 @@ Use this shape in any CI system that runs POSIX shell:
 
 ```bash
 set -Eeuo pipefail
-SIGMUND_BIN="${SIGMUND_BIN:-sigmund}"
+HOLD_BIN="${HOLD_BIN:-hold}"
 
-run_id="$("$SIGMUND_BIN" ./your-server --port 9000)"
-printf '%s\n' "$run_id" > .sigmund-your-server-id
+run_id="$("$HOLD_BIN" ./your-server --port 9000)"
+printf '%s\n' "$run_id" > .hold-your-server-id
 
 cleanup() {
   rc=$?
   if [ "$rc" -ne 0 ]; then
-    "$SIGMUND_BIN" dump "$run_id" || true
+    "$HOLD_BIN" dump "$run_id" || true
   fi
-  "$SIGMUND_BIN" stop "$run_id" || true
-  "$SIGMUND_BIN" prune "$run_id" || true
+  "$HOLD_BIN" stop "$run_id" || true
+  "$HOLD_BIN" prune "$run_id" || true
   exit "$rc"
 }
 trap cleanup EXIT
@@ -291,23 +291,23 @@ This keeps the run ID in a shell variable for same-step tests and in a file if a
 Start each service separately and stop each ID during teardown:
 
 ```bash
-SIGMUND_BIN="${SIGMUND_BIN:-sigmund}"
+HOLD_BIN="${HOLD_BIN:-hold}"
 
-api_id="$("$SIGMUND_BIN" npm run start:api)"
-worker_id="$("$SIGMUND_BIN" npm run start:worker)"
-redis_id="$("$SIGMUND_BIN" redis-server --port 6379)"
+api_id="$("$HOLD_BIN" npm run start:api)"
+worker_id="$("$HOLD_BIN" npm run start:worker)"
+redis_id="$("$HOLD_BIN" redis-server --port 6379)"
 
 cleanup() {
   rc=$?
   [ "$rc" -eq 0 ] || {
-    "$SIGMUND_BIN" dump "$api_id" || true
-    "$SIGMUND_BIN" dump "$worker_id" || true
-    "$SIGMUND_BIN" dump "$redis_id" || true
+    "$HOLD_BIN" dump "$api_id" || true
+    "$HOLD_BIN" dump "$worker_id" || true
+    "$HOLD_BIN" dump "$redis_id" || true
   }
-  "$SIGMUND_BIN" stop "$api_id" "$worker_id" "$redis_id" || true
-  "$SIGMUND_BIN" prune "$api_id" || true
-  "$SIGMUND_BIN" prune "$worker_id" || true
-  "$SIGMUND_BIN" prune "$redis_id" || true
+  "$HOLD_BIN" stop "$api_id" "$worker_id" "$redis_id" || true
+  "$HOLD_BIN" prune "$api_id" || true
+  "$HOLD_BIN" prune "$worker_id" || true
+  "$HOLD_BIN" prune "$redis_id" || true
   exit "$rc"
 }
 trap cleanup EXIT
@@ -320,42 +320,42 @@ trap cleanup EXIT
 For strict teardown, handle important `stop` statuses explicitly:
 
 ```bash
-sigmund stop "$run_id"
+hold stop "$run_id"
 stop_rc=$?
 case "$stop_rc" in
   0)
     ;;
   2)
-    echo "Sigmund refused to signal because the run could not be validated" >&2
+    echo "On Hold refused to signal because the run could not be validated" >&2
     ;;
   5)
     echo "No recorded run matched $run_id" >&2
     ;;
   *)
-    echo "sigmund stop failed with exit code $stop_rc" >&2
+    echo "hold stop failed with exit code $stop_rc" >&2
     ;;
 esac
 exit "$stop_rc"
 ```
 
-Exit code 2 matters in CI. It means Sigmund protected you from signaling a process group it could not prove was still the one it started. That is a test infrastructure problem worth surfacing, not a cleanup detail to hide.
+Exit code 2 matters in CI. It means On Hold protected you from signaling a process group it could not prove was still the one it started. That is a test infrastructure problem worth surfacing, not a cleanup detail to hide.
 
 ## Root-Managed Helpers
 
 Use `--system` only when the helper really needs root-managed state:
 
 ```bash
-run_id="$(sigmund --system ./root-helper --flag)"
+run_id="$(hold --system ./root-helper --flag)"
 echo "ROOT_HELPER_RUN_ID=$run_id" >> "$GITHUB_ENV"
 ```
 
-Later commands such as `sigmund stop system:<id>` may self-elevate through sudo when the public root index can identify the target. Normal user-local runs do not need `--system`, and user-local matches win over root-public collisions.
+Later commands such as `hold stop system:<id>` may self-elevate through sudo when the public root index can identify the target. Normal user-local runs do not need `--system`, and user-local matches win over root-public collisions.
 
 ## What to Avoid
 
 - Do not parse the human start banner. Capture stdout for the run ID.
 - Do not use `tail` where a finite `dump` is enough.
-- Do not ignore exit code 2 from `stop`; it is Sigmund's safety refusal.
+- Do not ignore exit code 2 from `stop`; it is On Hold's safety refusal.
 - Do not use `--system` just to make a run visible. Use it only for root-managed helpers.
 - Do not assume a public root row is authoritative liveness. Root/private validation happens when the action runs.
 
@@ -365,4 +365,4 @@ For maintainers, the primary functions are `perform_start`, `cmd_dump_action`, `
 
 ## Continue
 
-[Finish after Step 7](index.md) | [Back to docs index](index.md) | [Top](#using-sigmund-in-ci) | [Loop to start](index.md) | Branch to: [CLI contract](cli-contract.md), [Launcher](launcher.md), [Identity](identity.md)
+[Finish after Step 7](index.md) | [Back to docs index](index.md) | [Top](#using-hold-in-ci) | [Loop to start](index.md) | Branch to: [CLI contract](cli-contract.md), [Launcher](launcher.md), [Identity](identity.md)

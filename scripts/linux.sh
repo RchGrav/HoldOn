@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 repo="$(pwd)"
-image="sigmund-linux-ci"
+image="hold-linux-ci"
 dockerfile="docker/Dockerfile.linux-ci"
 
 rt=""
@@ -26,7 +26,7 @@ done
 # packaged tarballs land back on the host (everything else writes only inside).
 out_host=""
 case "${1:-}" in
-  root)            inner_cmd='chown -R ci:ci /work/sigmund && exec sudo -u ci -H bash /work/sigmund/scripts/test_root.sh' ;;
+  root)            inner_cmd='chown -R ci:ci /work/hold && exec sudo -u ci -H bash /work/hold/scripts/test_root.sh' ;;
   release)         shift
                    out_host="${1:-dist}"
                    mkdir -p "$out_host"
@@ -43,11 +43,11 @@ echo "linux.sh: runtime=$rt  image=$image  cmd=[$inner_cmd]${out_host:+  out=$ou
 # Copy the read-only-mounted repo into the container fs so the build and any
 # test-user actor write only inside the container, leaving the host tree clean.
 inner="set -e
-cp -a /src /work/sigmund
-cd /work/sigmund
+cp -a /src /work/hold
+cd /work/hold
 # clear only build artifacts (not untracked source) so uncommitted changes are
 # testable; the copy is fresh each run anyway.
-rm -rf obj obj-test sigmund sigmund-dynamic hash-vector 2>/dev/null || true
+rm -rf obj obj-test hold hold-dynamic hash-vector 2>/dev/null || true
 $inner_cmd"
 
 if [ -n "$out_host" ]; then

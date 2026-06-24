@@ -1,6 +1,6 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/core.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/core.h"
 
 static uint32_t rotr32(uint32_t x, unsigned n);
 static void sha256_block(struct sha256_ctx *c, const unsigned char *p);
@@ -46,7 +46,7 @@ static void sha256_block(struct sha256_ctx *c, const unsigned char *p) {
     c->h[4] += e; c->h[5] += f; c->h[6] += g; c->h[7] += h;
 }
 
-void sigmund_sha256_init(struct sha256_ctx *c) {
+void hold_sha256_init(struct sha256_ctx *c) {
     c->h[0] = 0x6a09e667U; c->h[1] = 0xbb67ae85U; c->h[2] = 0x3c6ef372U; c->h[3] = 0xa54ff53aU;
     c->h[4] = 0x510e527fU; c->h[5] = 0x9b05688cU; c->h[6] = 0x1f83d9abU; c->h[7] = 0x5be0cd19U;
     c->len = 0;
@@ -70,7 +70,7 @@ static void sha256_update(struct sha256_ctx *c, const void *data, size_t n) {
     }
 }
 
-void sigmund_sha256_final(struct sha256_ctx *c, unsigned char out[32]) {
+void hold_sha256_final(struct sha256_ctx *c, unsigned char out[32]) {
     c->buf[c->off++] = 0x80;
     if (c->off > 56) {
         while (c->off < 64) c->buf[c->off++] = 0;
@@ -88,7 +88,7 @@ void sigmund_sha256_final(struct sha256_ctx *c, unsigned char out[32]) {
     }
 }
 
-void sigmund_hex_encode(const unsigned char *bytes, size_t n, char *out, size_t out_n) {
+void hold_hex_encode(const unsigned char *bytes, size_t n, char *out, size_t out_n) {
     static const char hex[] = "0123456789abcdef";
     if (out_n < n * 2 + 1) {
         if (out_n > 0) out[0] = '\0';
@@ -101,7 +101,7 @@ void sigmund_hex_encode(const unsigned char *bytes, size_t n, char *out, size_t 
     out[n * 2] = '\0';
 }
 
-int sigmund_rand_bytes(uint8_t *buf, size_t n) {
+int hold_rand_bytes(uint8_t *buf, size_t n) {
     size_t off = 0;
 #if defined(__linux__)
     bool fallback = false;
@@ -149,7 +149,7 @@ static void sha256_update_cstr(struct sha256_ctx *ctx, const char *s) {
     sha256_update(ctx, s, strlen(s));
 }
 
-void sigmund_sha256_update_nul_field(struct sha256_ctx *ctx, const char *s) {
+void hold_sha256_update_nul_field(struct sha256_ctx *ctx, const char *s) {
     static const unsigned char nul = 0;
     sha256_update_cstr(ctx, s ? s : "");
     sha256_update(ctx, &nul, 1);

@@ -41,7 +41,7 @@ jobs:
           make clean
           make
           make clean
-          make sigmund-dynamic
+          make hold-dynamic
       - name: Run test suite
         run: make test
 
@@ -55,34 +55,34 @@ jobs:
         include:
           - target: linux-amd64-gnu-static
             dockcross_image: ""
-            make_target: sigmund
+            make_target: hold
             static_ldflags: -static
-            package_binary: sigmund
+            package_binary: hold
           - target: linux-amd64-gnu-dynamic
             dockcross_image: ""
-            make_target: sigmund-dynamic
+            make_target: hold-dynamic
             static_ldflags: ''
-            package_binary: sigmund-dynamic
+            package_binary: hold-dynamic
           - target: linux-arm64-gnu-static
             dockcross_image: dockcross/linux-arm64
-            make_target: sigmund
+            make_target: hold
             static_ldflags: -static
-            package_binary: sigmund
+            package_binary: hold
           - target: linux-arm64-gnu-dynamic
             dockcross_image: dockcross/linux-arm64
-            make_target: sigmund-dynamic
+            make_target: hold-dynamic
             static_ldflags: ''
-            package_binary: sigmund-dynamic
+            package_binary: hold-dynamic
           - target: linux-armhf-gnu-static
             dockcross_image: dockcross/linux-armv7
-            make_target: sigmund
+            make_target: hold
             static_ldflags: -static
-            package_binary: sigmund
+            package_binary: hold
           - target: linux-armhf-gnu-dynamic
             dockcross_image: dockcross/linux-armv7
-            make_target: sigmund-dynamic
+            make_target: hold-dynamic
             static_ldflags: ''
-            package_binary: sigmund-dynamic
+            package_binary: hold-dynamic
     steps:
       - uses: actions/checkout@v5
 
@@ -149,7 +149,7 @@ jobs:
       - name: Package tarball
         run: |
           mkdir -p dist
-          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ needs.version.outputs.value }}" sigmund dist
+          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ needs.version.outputs.value }}" hold dist
 
       - name: Upload musl artifact
         uses: actions/upload-artifact@v6
@@ -182,19 +182,19 @@ jobs:
 
       - name: Run macOS-specific tests
         env:
-          SIGMUND_EXPECT_UNAME_M: ${{ matrix.uname_m }}
+          HOLD_EXPECT_UNAME_M: ${{ matrix.uname_m }}
         run: bash ./.github/scripts/test_macos_ci.sh
 
       - name: Build macOS binary
         run: |
           make clean
           make CC=clang STATIC_LDFLAGS='' CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2'
-          file sigmund
+          file hold
 
       - name: Package tarball
         run: |
           mkdir -p dist
-          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ needs.version.outputs.value }}" sigmund dist
+          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ needs.version.outputs.value }}" hold dist
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v6
@@ -233,7 +233,7 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd dist
-          sha256sum sigmund-*.tar.gz install.sh > SHA256SUMS
+          sha256sum hold-*.tar.gz install.sh > SHA256SUMS
 
       - name: Publish release artifacts
         uses: softprops/action-gh-release@v2
@@ -243,7 +243,7 @@ jobs:
           overwrite_files: true
           files: |
             dist/install.sh
-            dist/sigmund-*.tar.gz
+            dist/hold-*.tar.gz
             dist/SHA256SUMS
 
       - name: Smoke-test GitHub one-line installer
@@ -252,8 +252,8 @@ jobs:
           trap 'rm -rf "$install_tmp"' EXIT
           curl -LsSf --retry 5 --retry-delay 2 \
             "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ needs.version.outputs.tag }}/install.sh" |
-            SIGMUND_INSTALL_DIR="$install_tmp/bin" SIGMUND_UPDATE_PROFILE=0 sh
-          installed_version="$("$install_tmp/bin/sigmund" --version)"
-          mund_version="$("$install_tmp/bin/mund" --version)"
+            HOLD_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh
+          installed_version="$("$install_tmp/bin/hold" --version)"
+          hold_version="$("$install_tmp/bin/hold" --version)"
           test "$installed_version" = "${{ needs.version.outputs.tag }}"
-          test "$mund_version" = "${{ needs.version.outputs.tag }}"
+          test "$hold_version" = "${{ needs.version.outputs.tag }}"

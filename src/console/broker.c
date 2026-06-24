@@ -1,8 +1,8 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/console.h"
-#include "sigmund/core.h"
-#include "sigmund/console_internal.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/console.h"
+#include "hold/core.h"
+#include "hold/console_internal.h"
 
 /* Set by the SIGWINCH handler below; read by run_native_console in attach.c. */
 volatile sig_atomic_t g_console_resized = 0;
@@ -32,7 +32,7 @@ static bool authorize_console_client(int client,
                                      bool have_allowed_peer_uid,
                                      uid_t allowed_peer_uid);
 
-void sigmund_handle_console_sigwinch(int signo) {
+void hold_handle_console_sigwinch(int signo) {
     (void)signo;
     g_console_resized = 1;
 }
@@ -72,7 +72,7 @@ static void broker_fail_errno(int parent_pipe,
     if (err == 0) {
         err = EIO;
     }
-    (void)sigmund_write_all(parent_pipe, &err, sizeof(err));
+    (void)hold_write_all(parent_pipe, &err, sizeof(err));
     broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, target, 127);
 }
 
@@ -88,16 +88,16 @@ static bool authorize_console_client(int client,
                                      bool have_allowed_peer_uid,
                                      uid_t allowed_peer_uid) {
     uid_t peer_uid = (uid_t)-1;
-    if (sigmund_console_peer_uid(client, &peer_uid) != 0 ||
+    if (hold_console_peer_uid(client, &peer_uid) != 0 ||
         !console_peer_uid_allowed(peer_uid, owner_uid, have_allowed_peer_uid, allowed_peer_uid)) {
-        static const char msg[] = "sigmund: console attach denied\n";
-        (void)sigmund_write_all(client, msg, sizeof(msg) - 1);
+        static const char msg[] = "hold: console attach denied\n";
+        (void)hold_write_all(client, msg, sizeof(msg) - 1);
         return false;
     }
     return true;
 }
 
-void sigmund_run_console_broker(int parent_pipe,
+void hold_run_console_broker(int parent_pipe,
                                const char *log_path,
                                const char *sock_path,
                                uid_t owner_uid,
@@ -116,7 +116,7 @@ void sigmund_run_console_broker(int parent_pipe,
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, EINVAL);
     }
 
-    listener = sigmund_make_console_listener(sock_path);
+    listener = hold_make_console_listener(sock_path);
     if (listener < 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
     }
@@ -124,7 +124,7 @@ void sigmund_run_console_broker(int parent_pipe,
     if (logfd < 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
     }
-    if (sigmund_open_console_pty(&master, &slave) != 0) {
+    if (hold_open_console_pty(&master, &slave) != 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, target, errno);
     }
 
@@ -161,7 +161,7 @@ void sigmund_run_console_broker(int parent_pipe,
             dup2(slave, STDOUT_FILENO) < 0 ||
             dup2(slave, STDERR_FILENO) < 0) {
             int e = errno;
-            (void)sigmund_write_all(exec_pipe[1], &e, sizeof(e));
+            (void)hold_write_all(exec_pipe[1], &e, sizeof(e));
             _exit(127);
         }
         if (slave > STDERR_FILENO) {
@@ -173,13 +173,13 @@ void sigmund_run_console_broker(int parent_pipe,
             execvp(argv[0], argv);
         }
         int e = errno;
-        (void)sigmund_write_all(exec_pipe[1], &e, sizeof(e));
+        (void)hold_write_all(exec_pipe[1], &e, sizeof(e));
         _exit(127);
     }
 
     close(exec_pipe[1]);
     int child_errno = 0;
-    int handshake = sigmund_read_exec_handshake(exec_pipe[0], &child_errno);
+    int handshake = hold_read_exec_handshake(exec_pipe[0], &child_errno);
     int handshake_errno = errno;
     close(exec_pipe[0]);
     close(slave);
@@ -207,7 +207,7 @@ void sigmund_run_console_broker(int parent_pipe,
     struct console_client_state client_state;
     memset(&client_state, 0, sizeof(client_state));
     struct console_replay_buffer replay;
-    sigmund_console_replay_init(&replay);
+    hold_console_replay_init(&replay);
     bool target_done = false;
     while (1) {
         if (!target_done) {
@@ -251,7 +251,7 @@ void sigmund_run_console_broker(int parent_pipe,
                     close(next);
                 } else if (client >= 0) {
                     close(next);
-                } else if (sigmund_console_replay_write(&replay, next) != 0) {
+                } else if (hold_console_replay_write(&replay, next) != 0) {
                     close(next);
                 } else {
                     client = next;
@@ -264,7 +264,7 @@ void sigmund_run_console_broker(int parent_pipe,
             unsigned char buf[4096];
             ssize_t n = read(client, buf, sizeof(buf));
             if (n > 0) {
-                int input_rc = sigmund_broker_process_client_input(&client_state, master, buf, (size_t)n);
+                int input_rc = hold_broker_process_client_input(&client_state, master, buf, (size_t)n);
                 if (input_rc != 0) {
                     close(client);
                     client = -1;
@@ -273,7 +273,7 @@ void sigmund_run_console_broker(int parent_pipe,
                 }
             } else if (n == 0) {
                 if (!client_state.decided && client_state.pending_len > 0) {
-                    (void)sigmund_write_all(master, client_state.pending, client_state.pending_len);
+                    (void)hold_write_all(master, client_state.pending, client_state.pending_len);
                     client_state.pending_len = 0;
                 }
                 client_input_closed = true;
@@ -288,9 +288,9 @@ void sigmund_run_console_broker(int parent_pipe,
             char buf[4096];
             ssize_t n = read(master, buf, sizeof(buf));
             if (n > 0) {
-                (void)sigmund_write_all(logfd, buf, (size_t)n);
-                sigmund_console_replay_append(&replay, buf, (size_t)n);
-                if (client >= 0 && sigmund_write_all(client, buf, (size_t)n) != 0) {
+                (void)hold_write_all(logfd, buf, (size_t)n);
+                hold_console_replay_append(&replay, buf, (size_t)n);
+                if (client >= 0 && hold_write_all(client, buf, (size_t)n) != 0) {
                     close(client);
                     client = -1;
                     client_input_closed = false;
@@ -302,7 +302,7 @@ void sigmund_run_console_broker(int parent_pipe,
     }
 
     if (client >= 0) close(client);
-    sigmund_console_replay_free(&replay);
+    hold_console_replay_free(&replay);
     if (have_old_pipe) {
         sigaction(SIGPIPE, &old_pipe, NULL);
     }

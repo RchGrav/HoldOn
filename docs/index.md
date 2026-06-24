@@ -1,19 +1,19 @@
-# Sigmund documentation index
+# On Hold documentation index
 
-[Repository README](../README.md) | [Outer onboarding loop](quickstart.md) | [Technical reference loop](#technical-reference-loop) | [Current spec](SPEC.md) | [0.4.0 UX spec](MUND_0_4_UX_SPEC.md) | [0.4.0 alignment](0.4.0-alignment.md)
+[Repository README](../README.md) | [Outer onboarding loop](quickstart.md) | [Technical reference loop](#technical-reference-loop) | [Current spec](SPEC.md) | [0.4.0 UX spec](HOLD_0_4_UX_SPEC.md) | [0.4.0 alignment](0.4.0-alignment.md)
 
-This is the top-level guide to how Sigmund works. Start with the [quickstart](quickstart.md): it walks from the first command to deterministic targeting, aliases, and scoped root delegation with simple diagrams, and links into the deeper subsystem pages as each concept appears.
+This is the top-level guide to how On Hold works. Start with the [quickstart](quickstart.md): it walks from the first command to deterministic targeting, aliases, and scoped root delegation with simple diagrams, and links into the deeper subsystem pages as each concept appears.
 
-Sigmund is a daemonless process launcher and recorder. It starts a command in a new session, writes a durable run record and log path, and later uses that record to inspect, tail, stop, kill, attach, or prune the tracked process group.
+On Hold is a daemonless process launcher and recorder. It starts a command in a new session, writes a durable run record and log path, and later uses that record to inspect, tail, stop, kill, attach, or prune the tracked process group.
 
-> 0.4.0 redesign note: most reference pages describe the current 0.3.x/legacy command contract. The intended `mund` redesign and current branch gap matrix live in [Mund 0.4 UX and CLI specification](MUND_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
+> 0.4.0 redesign note: most reference pages describe the current 0.3.x/legacy command contract. The intended `hold` redesign and current branch gap matrix live in [Hold 0.4 UX and CLI specification](HOLD_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
 
 The philosophy is simple:
 
-- Make the easy path easy: `sigmund <cmd...>` gives users a run ID, log, and safe cleanup path.
+- Make the easy path easy: `hold <cmd...>` gives users a run ID, log, and safe cleanup path.
 - Make automatic choices predictable: invocation shape decides user-local versus system-managed behavior.
 - Make precision available: `user:<target>`, `system:<target>`, aliases, and grants let users say exactly what they mean.
-- Validate before signal: if Sigmund cannot prove a recorded process group is still the intended run, it refuses instead of guessing.
+- Validate before signal: if On Hold cannot prove a recorded process group is still the intended run, it refuses instead of guessing.
 
 ## Navigation Model
 
@@ -27,9 +27,9 @@ The documentation has two layers:
 
 | If you want to... | Start with | Then go deeper |
 | --- | --- | --- |
-| Install Sigmund | [Installing Sigmund](install.md) | [Using Sigmund in CI](ci.md) |
+| Install On Hold | [Installing On Hold](install.md) | [Using On Hold in CI](ci.md) |
 | Learn the normal workflow | [Quickstart](quickstart.md) | [Launcher](launcher.md), [Store](store.md) |
-| Use Sigmund in CI | [Using Sigmund in CI](ci.md) | [CLI contract](cli-contract.md), [Identity](identity.md) |
+| Use On Hold in CI | [Using On Hold in CI](ci.md) | [CLI contract](cli-contract.md), [Identity](identity.md) |
 | Understand target choices and collisions | [Quickstart targeting](quickstart.md#step-4-make-targeting-deterministic) | [Target resolution](target-resolution.md) |
 | Create reusable names | [Quickstart aliases](quickstart.md#step-5-create-an-alias) | [Profiles and aliases](profiles-and-aliases.md) |
 | Delegate one root-managed tool safely | [Quickstart delegation](quickstart.md#step-6-delegate-one-root-managed-tool) | [Security](security.md) |
@@ -38,7 +38,7 @@ The documentation has two layers:
 
 ```mermaid
 flowchart LR
-    Start["sigmund <cmd...>"] --> RunId["stdout: run ID"]
+    Start["hold <cmd...>"] --> RunId["stdout: run ID"]
     Start --> Log["stderr: human status"]
     Start --> Record["private run record"]
     Record --> Later["tail, dump, stop, kill, console, prune"]
@@ -56,7 +56,7 @@ flowchart LR
     class Validate,Act safety
 ```
 
-That is the promise Sigmund makes to users: a simple launch command turns into a durable handle, and later management commands use that handle carefully instead of relying on a hand-copied PID.
+That is the promise On Hold makes to users: a simple launch command turns into a durable handle, and later management commands use that handle carefully instead of relying on a hand-copied PID.
 
 ## Architecture
 
@@ -77,7 +77,7 @@ flowchart TD
     Resolver --> UserStore["User store"]
     Resolver --> Public
     Resolver --> Sudo["sudo when system target needs root"]
-    Sudo --> RootAction["Root Sigmund"]
+    Sudo --> RootAction["Root On Hold"]
     RootAction --> RootStore["System store"]
 
     Manage --> Validator["Identity validator"]
@@ -115,7 +115,7 @@ flowchart TD
     Profiles --> Security["Security"]
     Security --> Console["Console"]
     Console --> CLI["CLI contract"]
-    CLI --> CI["Using Sigmund in CI"]
+    CLI --> CI["Using On Hold in CI"]
     CI --> Quick
     CI --> Index
     Target --> Quick
@@ -138,7 +138,7 @@ Every subsystem page links back here, names the quickstart step it explains, res
 ## Inner Layer Pages
 
 1. [Quickstart](quickstart.md): user workflow, automatic choices, deterministic targeting, aliases, and scoped root delegation.
-2. [Installing Sigmund](install.md): one-line install, root/user install mode, platform detection, checksums, and script handoff.
+2. [Installing On Hold](install.md): one-line install, root/user install mode, platform detection, checksums, and script handoff.
 3. [Launcher](launcher.md): starts, fork/setsid/exec, logs, records, and launch rollback.
 4. [Store](store.md): user-local and system-managed state, public redaction, atomic writes, and pruning.
 5. [Identity and validation](identity.md): boot ID, starttime, executable identity, session membership, run states, and signal refusal.
@@ -147,25 +147,25 @@ Every subsystem page links back here, names the quickstart step it explains, res
 8. [Security and privilege boundaries](security.md): `--system`, sudo self-elevation, capability argv, and managed sudoers.
 9. [Console](console.md): PTY console starts, private sockets, native attach, terminal sizing, and log teeing.
 10. [CLI contract](cli-contract.md): parser behavior, stdout/stderr, flags, no-op behavior, and exit codes.
-11. [Using Sigmund in CI](ci.md): copyable CI patterns for start, readiness, logs, teardown, exit codes, and multiple helpers.
+11. [Using On Hold in CI](ci.md): copyable CI patterns for start, readiness, logs, teardown, exit codes, and multiple helpers.
 
 ## Branch by Question
 
 | If you want to understand... | Read |
 | --- | --- |
-| How to install Sigmund and hand its path to scripts | [Installing Sigmund](install.md) |
+| How to install On Hold and hand its path to scripts | [Installing On Hold](install.md) |
 | How a command keeps running after the CI step or shell exits | [Quickstart](quickstart.md), then [Launcher](launcher.md) |
 | Where run IDs, logs, aliases, and public root hints live | [Store](store.md) |
 | Why `stop` is safer than `kill $PID` | [Identity and validation](identity.md) |
 | How IDs, aliases, `user:`, and `system:` choose a target | [Target resolution](target-resolution.md) |
 | How to reuse a recorded command as an alias | [Profiles and aliases](profiles-and-aliases.md) |
 | How to let another user manage one root-run tool | [Quickstart](quickstart.md#step-6-delegate-one-root-managed-tool), then [Security](security.md) |
-| How to script Sigmund in CI | [Using Sigmund in CI](ci.md), then [CLI contract](cli-contract.md) |
+| How to script On Hold in CI | [Using On Hold in CI](ci.md), then [CLI contract](cli-contract.md) |
 
 ## Reference
 
 - [Current implementation specification](SPEC.md)
-- [Mund 0.4 UX and CLI implementation plan](MUND_0_4_UX_SPEC.md)
+- [Hold 0.4 UX and CLI implementation plan](HOLD_0_4_UX_SPEC.md)
 - [Documentation plan and review notes](PLAN.md)
 - [Repository README](../README.md)
 
@@ -176,13 +176,13 @@ Every subsystem page links back here, names the quickstart step it explains, res
 ## Implementation map
 
 For maintainers, the source is organized by layer under `src/` (with public APIs in
-`include/sigmund/`): `core/` (primitives, JSON, SHA-256), `platform/` (OS facts),
+`include/hold/`): `core/` (primitives, JSON, SHA-256), `platform/` (OS facts),
 `store/` (durable state), `console/` (attachable PTY), `access/` (privilege and
 sudoers), `runtime/` (product behavior), and `cli.c` + `main.c`. The main source
-anchors for this overview are `main` (`src/main.c`), `sigmund_perform_start`
-(`src/runtime/start.c`), `sigmund_write_record_atomic` /
-`sigmund_write_public_index_atomic` (`src/store/record.c`),
-`sigmund_resolve_action_token` (`src/runtime/resolve.c`), `sigmund_eval_state`
-(`src/runtime/state.c`), `sigmund_do_signal_action` (`src/runtime/signal.c`),
-`sigmund_elevate_with_sudo_canonical` (`src/access/elevate.c`), and
-`sigmund_cmd_elevated_capability_action` (`src/runtime/commands.c`).
+anchors for this overview are `main` (`src/main.c`), `hold_perform_start`
+(`src/runtime/start.c`), `hold_write_record_atomic` /
+`hold_write_public_index_atomic` (`src/store/record.c`),
+`hold_resolve_action_token` (`src/runtime/resolve.c`), `hold_eval_state`
+(`src/runtime/state.c`), `hold_do_signal_action` (`src/runtime/signal.c`),
+`hold_elevate_with_sudo_canonical` (`src/access/elevate.c`), and
+`hold_cmd_elevated_capability_action` (`src/runtime/commands.c`).

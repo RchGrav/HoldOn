@@ -35,7 +35,7 @@ show()    { file "$1" | sed 's/^/    /'; }
 runv()    { ./"$1" --version | sed "s|^|    runs ($1): |"; }
 emit() { # target  binary
   if "$pkg" "$1" "$ver" "$2" "$out" >/dev/null; then
-    printf '    packaged: sigmund-%s-%s.tar.gz\n' "$ver" "$1"; ok=$((ok + 1))
+    printf '    packaged: hold-%s-%s.tar.gz\n' "$ver" "$1"; ok=$((ok + 1))
   else
     printf '    PACKAGE FAILED: %s\n' "$1" >&2; fail=$((fail + 1))
   fi
@@ -48,7 +48,7 @@ Darwin)
   make clean >/dev/null
   if make CC=clang STATIC_LDFLAGS='' \
        CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2' >"$log" 2>&1; then
-    show sigmund; runv sigmund; emit "macos-$hostm" sigmund
+    show hold; runv hold; emit "macos-$hostm" hold
   else bfail; fi
   ;;
 Linux)
@@ -60,14 +60,14 @@ Linux)
 
   section "Linux gnu native ($hostm -> $gnu_arch) static"
   make clean >/dev/null
-  if make sigmund STATIC_LDFLAGS='-static' >"$log" 2>&1; then
-    show sigmund; runv sigmund; emit "linux-$gnu_arch-gnu-static" sigmund
+  if make hold STATIC_LDFLAGS='-static' >"$log" 2>&1; then
+    show hold; runv hold; emit "linux-$gnu_arch-gnu-static" hold
   else bfail; fi
 
   section "Linux gnu native ($gnu_arch) dynamic"
   make clean >/dev/null
-  if make sigmund-dynamic STATIC_LDFLAGS='' >"$log" 2>&1; then
-    show sigmund-dynamic; emit "linux-$gnu_arch-gnu-dynamic" sigmund-dynamic
+  if make hold-dynamic STATIC_LDFLAGS='' >"$log" 2>&1; then
+    show hold-dynamic; emit "linux-$gnu_arch-gnu-dynamic" hold-dynamic
   else bfail; fi
 
   if command -v zig >/dev/null 2>&1; then
@@ -83,9 +83,9 @@ Linux)
       if make CC="zig cc -target $zt" \
            CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -O2 -s' \
            STATIC_LDFLAGS='-static' >"$log" 2>&1; then
-        show sigmund
-        [ "$target" = "linux-$gnu_arch-musl-static" ] && runv sigmund
-        emit "$target" sigmund
+        show hold
+        [ "$target" = "linux-$gnu_arch-musl-static" ] && runv hold
+        emit "$target" hold
       else bfail; fi
     done
   else
@@ -102,6 +102,6 @@ esac
 
 rm -f "$log"
 section "artifacts in $out"
-ls -la "$out"/sigmund-"$ver"-*.tar.gz 2>/dev/null | awk '{print "   ", $NF, $5"B"}'
+ls -la "$out"/hold-"$ver"-*.tar.gz 2>/dev/null | awk '{print "   ", $NF, $5"B"}'
 printf '\n===== release build: %d ok, %d failed, %d skipped =====\n' "$ok" "$fail" "$skip"
 [ "$fail" -eq 0 ]

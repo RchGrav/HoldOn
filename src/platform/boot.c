@@ -1,16 +1,16 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/platform.h"
-#include "sigmund/core.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/platform.h"
+#include "hold/core.h"
 
 static int get_boot_id(char *buf, size_t n);
 
 static int get_boot_id(char *buf, size_t n) {
-    const char *path = getenv("SIGMUND_BOOT_ID_PATH");
+    const char *path = getenv("HOLD_BOOT_ID_PATH");
     if (path && *path) {
-        return sigmund_read_file_trim(path, buf, n);
+        return hold_read_file_trim(path, buf, n);
     }
-    if (sigmund_read_file_trim(SIGMUND_BOOT_ID_PATH, buf, n) == 0) {
+    if (hold_read_file_trim(HOLD_BOOT_ID_PATH, buf, n) == 0) {
         return 0;
     }
 #if defined(__APPLE__)
@@ -24,7 +24,7 @@ static int get_boot_id(char *buf, size_t n) {
     return -1;
 }
 
-bool sigmund_current_boot_id(char *buf, size_t n) {
+bool hold_current_boot_id(char *buf, size_t n) {
     if (n == 0) {
         return false;
     }

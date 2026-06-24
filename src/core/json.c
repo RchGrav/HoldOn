@@ -1,13 +1,13 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/core.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/core.h"
 
 static int skip_json_string(const char **pp);
 static int match_json_string(const char *p, const char *lit, const char **endp, bool *matched);
 static int skip_json_value_impl(const char **pp, int depth);
 static int json_get_string_array_alloc(const char *j, const char *key, char ***argv_out, int *argc_out);
 
-void sigmund_json_escape(FILE *f, const char *s) {
+void hold_json_escape(FILE *f, const char *s) {
     for (; *s; s++) {
         if (*s == '"' || *s == '\\') {
             fprintf(f, "\\%c", *s);
@@ -29,21 +29,21 @@ void sigmund_json_escape(FILE *f, const char *s) {
     }
 }
 
-int sigmund_write_json_argv(FILE *f, int argc, char **argv) {
+int hold_write_json_argv(FILE *f, int argc, char **argv) {
     fputs("[", f);
     for (int i = 0; i < argc; i++) {
         if (i > 0) {
             fputs(", ", f);
         }
         fputc('"', f);
-        sigmund_json_escape(f, argv[i]);
+        hold_json_escape(f, argv[i]);
         fputc('"', f);
     }
     fputs("]", f);
     return 0;
 }
 
-const char *sigmund_skip_ws(const char *p) {
+const char *hold_skip_ws(const char *p) {
     while (*p && isspace((unsigned char)*p)) p++;
     return p;
 }
@@ -73,7 +73,7 @@ static int skip_json_string(const char **pp) {
 }
 
 /* BMP-only; surrogate pairs are rejected. */
-int sigmund_parse_json_string(const char *p, char *out, size_t n, const char **endp) {
+int hold_parse_json_string(const char *p, char *out, size_t n, const char **endp) {
     if (*p != '"') return -1;
     p++;
     size_t i = 0;
@@ -201,7 +201,7 @@ static int skip_json_value_impl(const char **pp, int depth) {
         return -1;
     }
 
-    const char *p = sigmund_skip_ws(*pp);
+    const char *p = hold_skip_ws(*pp);
     if (*p == '"') {
         if (skip_json_string(&p) != 0) return -1;
         *pp = p;
@@ -211,16 +211,16 @@ static int skip_json_value_impl(const char **pp, int depth) {
         char open = *p, close = (open == '{') ? '}' : ']';
         p++;
         while (*p) {
-            p = sigmund_skip_ws(p);
+            p = hold_skip_ws(p);
             if (*p == close) { *pp = p + 1; return 0; }
             if (open == '{') {
                 if (skip_json_string(&p) != 0) return -1;
-                p = sigmund_skip_ws(p);
+                p = hold_skip_ws(p);
                 if (*p != ':') return -1;
                 p++;
             }
             if (skip_json_value_impl(&p, depth + 1) != 0) return -1;
-            p = sigmund_skip_ws(p);
+            p = hold_skip_ws(p);
             if (*p == ',') p++;
         }
         return -1;
@@ -230,36 +230,36 @@ static int skip_json_value_impl(const char **pp, int depth) {
     return 0;
 }
 
-int sigmund_skip_json_value(const char **pp) {
+int hold_skip_json_value(const char **pp) {
     return skip_json_value_impl(pp, 0);
 }
 
-int sigmund_json_find_key(const char *j, const char *k, const char **v) {
-    const char *p = sigmund_skip_ws(j);
+int hold_json_find_key(const char *j, const char *k, const char **v) {
+    const char *p = hold_skip_ws(j);
     if (*p != '{') return -1;
     p++;
     while (*p) {
-        p = sigmund_skip_ws(p);
+        p = hold_skip_ws(p);
         if (*p == '}') return -1;
         bool key_match = false;
         if (match_json_string(p, k, &p, &key_match) != 0) return -1;
-        p = sigmund_skip_ws(p);
+        p = hold_skip_ws(p);
         if (*p != ':') return -1;
-        p = sigmund_skip_ws(p + 1);
+        p = hold_skip_ws(p + 1);
         if (key_match) {
             *v = p;
             return 0;
         }
-        if (sigmund_skip_json_value(&p) != 0) return -1;
-        p = sigmund_skip_ws(p);
+        if (hold_skip_json_value(&p) != 0) return -1;
+        p = hold_skip_ws(p);
         if (*p == ',') p++;
     }
     return -1;
 }
 
-int sigmund_json_get_i64(const char *j, const char *k, int64_t *out) {
+int hold_json_get_i64(const char *j, const char *k, int64_t *out) {
     const char *v;
-    if (sigmund_json_find_key(j, k, &v) != 0) {
+    if (hold_json_find_key(j, k, &v) != 0) {
         return -1;
     }
     if (*v == '+') return -1;
@@ -267,26 +267,26 @@ int sigmund_json_get_i64(const char *j, const char *k, int64_t *out) {
     errno = 0;
     long long x = strtoll(v, &end, 10);
     if (end == v || errno != 0) return -1;
-    end = (char *)sigmund_skip_ws(end);
+    end = (char *)hold_skip_ws(end);
     if (*end && *end != ',' && *end != '}' && *end != ']') return -1;
     *out = x;
     return 0;
 }
 
-int sigmund_json_get_bool(const char *j, const char *k, bool *out) {
+int hold_json_get_bool(const char *j, const char *k, bool *out) {
     const char *v;
-    if (sigmund_json_find_key(j, k, &v) != 0) {
+    if (hold_json_find_key(j, k, &v) != 0) {
         return -1;
     }
-    v = sigmund_skip_ws(v);
+    v = hold_skip_ws(v);
     if (strncmp(v, "true", 4) == 0) {
-        const char *end = sigmund_skip_ws(v + 4);
+        const char *end = hold_skip_ws(v + 4);
         if (*end && *end != ',' && *end != '}' && *end != ']') return -1;
         *out = true;
         return 0;
     }
     if (strncmp(v, "false", 5) == 0) {
-        const char *end = sigmund_skip_ws(v + 5);
+        const char *end = hold_skip_ws(v + 5);
         if (*end && *end != ',' && *end != '}' && *end != ']') return -1;
         *out = false;
         return 0;
@@ -294,9 +294,9 @@ int sigmund_json_get_bool(const char *j, const char *k, bool *out) {
     return -1;
 }
 
-int sigmund_json_get_u64(const char *j, const char *k, uint64_t *out) {
+int hold_json_get_u64(const char *j, const char *k, uint64_t *out) {
     const char *v;
-    if (sigmund_json_find_key(j, k, &v) != 0) {
+    if (hold_json_find_key(j, k, &v) != 0) {
         return -1;
     }
     if (*v == '+' || *v == '-') return -1;
@@ -304,29 +304,29 @@ int sigmund_json_get_u64(const char *j, const char *k, uint64_t *out) {
     errno = 0;
     unsigned long long x = strtoull(v, &end, 10);
     if (end == v || errno != 0) return -1;
-    end = (char *)sigmund_skip_ws(end);
+    end = (char *)hold_skip_ws(end);
     if (*end && *end != ',' && *end != '}' && *end != ']') return -1;
     *out = x;
     return 0;
 }
 
-int sigmund_json_get_str(const char *j, const char *k, char *out, size_t n) {
+int hold_json_get_str(const char *j, const char *k, char *out, size_t n) {
     const char *v;
-    if (sigmund_json_find_key(j, k, &v) != 0) return -1;
-    return sigmund_parse_json_string(sigmund_skip_ws(v), out, n, NULL);
+    if (hold_json_find_key(j, k, &v) != 0) return -1;
+    return hold_parse_json_string(hold_skip_ws(v), out, n, NULL);
 }
 
-int sigmund_json_get_argv_display(const char *j, char *out, size_t n) {
+int hold_json_get_argv_display(const char *j, char *out, size_t n) {
     const char *v;
-    if (sigmund_json_find_key(j, "argv", &v) != 0 || *v != '[') {
+    if (hold_json_find_key(j, "argv", &v) != 0 || *v != '[') {
         return -1;
     }
-    v = sigmund_skip_ws(v + 1);
+    v = hold_skip_ws(v + 1);
     size_t off = 0;
     bool first = true;
     while (*v && *v != ']') {
-        char arg[SIGMUND_PATH_MAX];
-        if (sigmund_parse_json_string(v, arg, sizeof(arg), &v) != 0) {
+        char arg[HOLD_PATH_MAX];
+        if (hold_parse_json_string(v, arg, sizeof(arg), &v) != 0) {
             return -1;
         }
         if (!first) {
@@ -334,13 +334,13 @@ int sigmund_json_get_argv_display(const char *j, char *out, size_t n) {
             out[off++] = ' ';
             out[off] = '\0';
         }
-        if (sigmund_append_cmd_human(out, n, &off, arg) != 0) {
+        if (hold_append_cmd_human(out, n, &off, arg) != 0) {
             return -1;
         }
         first = false;
-        v = sigmund_skip_ws(v);
+        v = hold_skip_ws(v);
         if (*v == ',') {
-            v = sigmund_skip_ws(v + 1);
+            v = hold_skip_ws(v + 1);
         } else if (*v != ']') {
             return -1;
         }
@@ -349,7 +349,7 @@ int sigmund_json_get_argv_display(const char *j, char *out, size_t n) {
     return 0;
 }
 
-void sigmund_free_argv_alloc(char **argv, int argc) {
+void hold_free_argv_alloc(char **argv, int argc) {
     if (!argv) {
         return;
     }
@@ -363,10 +363,10 @@ static int json_get_string_array_alloc(const char *j, const char *key, char ***a
     *argv_out = NULL;
     *argc_out = 0;
     const char *v;
-    if (sigmund_json_find_key(j, key, &v) != 0 || *v != '[') {
+    if (hold_json_find_key(j, key, &v) != 0 || *v != '[') {
         return -1;
     }
-    v = sigmund_skip_ws(v + 1);
+    v = hold_skip_ws(v + 1);
     int cap = 4;
     int argc = 0;
     char **argv = calloc((size_t)cap + 1, sizeof(char *));
@@ -374,37 +374,37 @@ static int json_get_string_array_alloc(const char *j, const char *key, char ***a
         return -1;
     }
     while (*v && *v != ']') {
-        char arg[SIGMUND_PATH_MAX];
-        if (sigmund_parse_json_string(v, arg, sizeof(arg), &v) != 0) {
-            sigmund_free_argv_alloc(argv, argc);
+        char arg[HOLD_PATH_MAX];
+        if (hold_parse_json_string(v, arg, sizeof(arg), &v) != 0) {
+            hold_free_argv_alloc(argv, argc);
             return -1;
         }
         if (argc == cap) {
             cap *= 2;
             char **next = realloc(argv, ((size_t)cap + 1) * sizeof(char *));
             if (!next) {
-                sigmund_free_argv_alloc(argv, argc);
+                hold_free_argv_alloc(argv, argc);
                 return -1;
             }
             argv = next;
         }
         argv[argc] = strdup(arg);
         if (!argv[argc]) {
-            sigmund_free_argv_alloc(argv, argc);
+            hold_free_argv_alloc(argv, argc);
             return -1;
         }
         argc++;
         argv[argc] = NULL;
-        v = sigmund_skip_ws(v);
+        v = hold_skip_ws(v);
         if (*v == ',') {
-            v = sigmund_skip_ws(v + 1);
+            v = hold_skip_ws(v + 1);
         } else if (*v != ']') {
-            sigmund_free_argv_alloc(argv, argc);
+            hold_free_argv_alloc(argv, argc);
             return -1;
         }
     }
     if (*v != ']' || argc == 0) {
-        sigmund_free_argv_alloc(argv, argc);
+        hold_free_argv_alloc(argv, argc);
         return -1;
     }
     *argv_out = argv;
@@ -412,15 +412,15 @@ static int json_get_string_array_alloc(const char *j, const char *key, char ***a
     return 0;
 }
 
-int sigmund_json_get_argv_alloc(const char *j, char ***argv_out, int *argc_out) {
+int hold_json_get_argv_alloc(const char *j, char ***argv_out, int *argc_out) {
     return json_get_string_array_alloc(j, "argv", argv_out, argc_out);
 }
 
-int sigmund_json_get_args_alloc(const char *j, char ***argv_out, int *argc_out) {
+int hold_json_get_args_alloc(const char *j, char ***argv_out, int *argc_out) {
     return json_get_string_array_alloc(j, "args", argv_out, argc_out);
 }
 
-int sigmund_copy_argv(char ***out, int argc, char **argv) {
+int hold_copy_argv(char ***out, int argc, char **argv) {
     *out = NULL;
     if (argc <= 0 || !argv) {
         errno = EINVAL;
@@ -433,7 +433,7 @@ int sigmund_copy_argv(char ***out, int argc, char **argv) {
     for (int i = 0; i < argc; i++) {
         copy[i] = strdup(argv[i]);
         if (!copy[i]) {
-            sigmund_free_argv_alloc(copy, i);
+            hold_free_argv_alloc(copy, i);
             return -1;
         }
     }

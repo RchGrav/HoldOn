@@ -1,4 +1,4 @@
-# Sigmund CLI UX review
+# On Hold CLI UX review
 
 Date: 2026-06-23
 
@@ -6,28 +6,28 @@ Date: 2026-06-23
 
 ## Focused 0.4 spec draft
 
-The implementation-oriented version of these decisions now lives in [Mund 0.4 UX and CLI specification draft](MUND_0_4_UX_SPEC.md), including the detailed pager/live-filter/similarity-filter requirements.
+The implementation-oriented version of these decisions now lives in [Hold 0.4 UX and CLI specification draft](HOLD_0_4_UX_SPEC.md), including the detailed pager/live-filter/similarity-filter requirements.
 
 
-Sigmund already has a strong product core: `sigmund <cmd>` is simpler than `nohup`, safer than PID files, and far lighter than `systemd`. The current CLI is scriptable and technically coherent, but it exposes internal concepts too early: run IDs, aliases, profiles, public/root stores, target scopes, grants, console mode, pruning, and validation semantics all appear as separate pieces the user must assemble.
+On Hold already has a strong product core: `hold <cmd>` is simpler than `nohup`, safer than PID files, and far lighter than `systemd`. The current CLI is scriptable and technically coherent, but it exposes internal concepts too early: run IDs, aliases, profiles, public/root stores, target scopes, grants, console mode, pruning, and validation semantics all appear as separate pieces the user must assemble.
 
-The highest-leverage UX move is to turn Sigmund from a collection of legacy verbs into one guided command language for long-running jobs. For 0.4.0, the new `mund` UX is intended to replace the legacy primary surface, while preserving the good stdout/stderr, exit-code, and scriptability contracts for automation.
+The highest-leverage UX move is to turn On Hold from a collection of legacy verbs into one guided command language for long-running jobs. For 0.4.0, the new `hold` UX is intended to replace the legacy primary surface, while preserving the good stdout/stderr, exit-code, and scriptability contracts for automation.
 
 Recommended direction:
 
 1. Move to one unified stacked command grammar shared by normal CLI, captive shell, and Cisco-style config files.
 2. Make `profile`, `run`, `show`, `start`, `stop`, `logs`, `grant`, `clean`, `doctor`, `import`, and `export` the primary language everywhere.
-3. Let users stack captive-shell commands directly from the normal prompt, e.g. `mund profile web set env PORT=3000`, `mund show profile web`, `mund logs web --follow`.
+3. Let users stack captive-shell commands directly from the normal prompt, e.g. `hold profile web set env PORT=3000`, `hold show profile web`, `hold logs web --follow`.
 4. Make this a deliberate breaking CLI redesign for 0.4.0: replace current legacy commands (`alias`, `aliases`, `list`, `tail`, `dump`, `console`, `prune`, action-first forms) with the unified stacked grammar instead of carrying them as primary UX.
-5. Add a profile editor: `mund profile web edit` and an interactive `profile web` submode for advanced recipe, cwd, env, console, restart/readiness metadata, and access policy.
+5. Add a profile editor: `hold profile web edit` and an interactive `profile web` submode for advanced recipe, cwd, env, console, restart/readiness metadata, and access policy.
 6. Add profile config import/export so every captive-shell edit can be represented as a Cisco-style command transcript, while JSON remains canonical on disk.
 7. Add safer lifecycle affordances: adopt current run into profile, “start or attach/tail”, “doctor/status”, suggested next commands, and cleanup prompts.
 
 ## Current UX strengths
 
-- **Best possible first command**: `sigmund <command> [args...]` starts a background process without requiring config.
+- **Best possible first command**: `hold <command> [args...]` starts a background process without requiring config.
 - **Scriptability is protected**: successful starts print only the run ID to stdout; banners go to stderr.
-- **Safety story is excellent**: Sigmund validates process identity before signaling, and refuses unsafe actions.
+- **Safety story is excellent**: On Hold validates process identity before signaling, and refuses unsafe actions.
 - **Short run IDs are approachable**: 8 hex chars are easier than full UUIDs.
 - **Docs are unusually complete**: README, quickstart, technical loop, CLI contract, profiles, security, and console docs exist.
 - **Root delegation is differentiated**: scoped sudoers-managed aliases are a powerful capability few small launchers offer.
@@ -51,22 +51,22 @@ Suggested fix: introduce `profile` as the primary noun and keep `alias` as a fri
 Observed behavior:
 
 ```sh
-id=$(sigmund sleep 20)
-sigmund alias "$id" web
-sigmund start web
+id=$(hold sleep 20)
+hold alias "$id" web
+hold start web
 ```
 
 This starts a second `sleep 20` because the original run was not labeled `web`; future alias starts are labeled, but the source run is not. The docs say aliases allow later commands to use the name, and also say `start <alias>` refuses if that alias already has a running process. That is technically true only after a run was started through the alias, but it is surprising immediately after alias creation.
 
 Suggested fix options:
 
-- Prefer: `sigmund alias <id> <name>` should label/adopt the source run as `<name>` by default.
-- Or: print a warning and next step: “Pinned recipe as web. The existing run is still 04a7dda8; use `sigmund adopt 04a7dda8 web` to manage it as web.”
+- Prefer: `hold alias <id> <name>` should label/adopt the source run as `<name>` by default.
+- Or: print a warning and next step: “Pinned recipe as web. The existing run is still 04a7dda8; use `hold adopt 04a7dda8 web` to manage it as web.”
 - Or: split verbs: `profile create-from-run <id> web` creates recipe only; `profile adopt <id> web` labels the current run.
 
 ### 4. `list` omits key human context
 
-Current `sigmund list` columns are `RUNID STATE STARTED RESULT CMD`. It does not show alias/profile label, console availability, scope, or log size/path. The user must remember or inspect separate commands.
+Current `hold list` columns are `RUNID STATE STARTED RESULT CMD`. It does not show alias/profile label, console availability, scope, or log size/path. The user must remember or inspect separate commands.
 
 Suggested fix: default human list should include profile/alias and affordances, e.g.:
 
@@ -85,15 +85,15 @@ For normal users, stop-then-prune is chore-like. The safe cleanup path should be
 
 Suggested fixes:
 
-- Add `mund prune <target>`: stop if running, then prune after confirmation / `--force`.
-- Add `mund stop <target> --prune`.
+- Add `hold prune <target>`: stop if running, then prune after confirmation / `--force`.
+- Add `hold stop <target> --prune`.
 - In interactive mode, offer `stop`, `stop + prune`, and `prune exited`.
 
 ### 6. Advanced root/system profile features need a dedicated editor
 
-`grant` and root-managed profiles are powerful but currently command-shaped. An advanced “profile editing mode” would let Sigmund grow without turning every setting into a long flag list.
+`grant` and root-managed profiles are powerful but currently command-shaped. An advanced “profile editing mode” would let On Hold grow without turning every setting into a long flag list.
 
-Suggested fix: add `mund profile <name> edit` that opens `$EDITOR` or an interactive form with validation.
+Suggested fix: add `hold profile <name> edit` that opens `$EDITOR` or an interactive form with validation.
 
 
 
@@ -109,25 +109,25 @@ run -- <cmd> [args...]      # launch one ad hoc command and print a run ID
 stop|logs|open <target>     # act on concrete executions selected by run ID or safe profile-name shorthand
 ```
 
-`run` should be a command, not a branch/namespace for existing executions. One-shot commands like `mund run web stop` read backwards and should be avoided. Use natural action verbs instead.
+`run` should be a command, not a branch/namespace for existing executions. One-shot commands like `hold run web stop` read backwards and should be avoided. Use natural action verbs instead.
 
 Profile-name targeting is a convenience resolver, not a different kind of process identity. It should work only when singular and safe:
 
-- `mund logs web` is valid only if profile `web` has exactly one relevant run for the requested action.
-- `mund stop web` is valid only if profile `web` has exactly one running run.
-- If profile `web` has zero running runs, report that there is nothing to stop and suggest `mund profile web start`.
+- `hold logs web` is valid only if profile `web` has exactly one relevant run for the requested action.
+- `hold stop web` is valid only if profile `web` has exactly one running run.
+- If profile `web` has zero running runs, report that there is nothing to stop and suggest `hold profile web start`.
 - If profile `web` has multiple running runs, refuse with candidates and require a run ID, `--all`, or an explicit selector.
-- `mund profile web stop` should be avoided; the profile itself is not stopped.
+- `hold profile web stop` should be avoided; the profile itself is not stopped.
 
 Preferred wording:
 
 ```text
-mund run -- npm run dev        # launch an ad hoc command, producing a run ID
-mund profile web start         # launch the web definition, producing a run ID
-mund stop 04a7dda8             # stop this exact execution
-mund stop web                  # stop web only if exactly one web run is running
-mund stop web --all            # stop all running executions launched from web
-mund logs web --follow         # follow logs only if web resolves to one run
+hold run -- npm run dev        # launch an ad hoc command, producing a run ID
+hold profile web start         # launch the web definition, producing a run ID
+hold stop 04a7dda8             # stop this exact execution
+hold stop web                  # stop web only if exactly one web run is running
+hold stop web --all            # stop all running executions launched from web
+hold logs web --follow         # follow logs only if web resolves to one run
 ```
 
 This preserves the safety property: concrete runs are controlled by run ID, while profile names are ergonomic selectors only when unambiguous.
@@ -140,29 +140,29 @@ Examples:
 
 ```sh
 # one-shot CLI
-sigmund show runs
-sigmund show profile web
-mund profile web set command -- /usr/bin/python3 -m http.server 9000
-mund profile web set cwd /srv/web
-mund profile web set env PYTHONUNBUFFERED=1
-mund profile web start
-mund logs web --follow
-mund stop web
-mund clean exited --dry-run
+hold show runs
+hold show profile web
+hold profile web set command -- /usr/bin/python3 -m http.server 9000
+hold profile web set cwd /srv/web
+hold profile web set env PYTHONUNBUFFERED=1
+hold profile web start
+hold logs web --follow
+hold stop web
+hold clean exited --dry-run
 ```
 
 The same operations in captive mode:
 
 ```text
-mund> show runs
-mund> profile web
-mund(profile:web)> set command -- /usr/bin/python3 -m http.server 9000
-mund(profile:web)> set cwd /srv/web
-mund(profile:web)> set env PYTHONUNBUFFERED=1
-mund(profile:web)> start
-mund(profile:web)> logs --follow
-mund(profile:web)> exit
-mund> stop web
+hold> show runs
+hold> profile web
+hold(profile:web)> set command -- /usr/bin/python3 -m http.server 9000
+hold(profile:web)> set cwd /srv/web
+hold(profile:web)> set env PYTHONUNBUFFERED=1
+hold(profile:web)> start
+hold(profile:web)> logs --follow
+hold(profile:web)> exit
+hold> stop web
 ```
 
 The same operations as an importable config transcript:
@@ -180,17 +180,17 @@ exit
 Recommended grammar shape:
 
 ```text
-mund show runs|profiles|profile <name>|run <id-or-singular-profile>|grants|config
-mund profile <name> create|edit|delete|start|restart|status|export
-mund profile <name> set command|cwd|env|console|multi|readiness|cleanup ...
-mund profile <name> unset env|readiness|description|tag ...
-mund status|inspect|logs|open|stop|kill|prune <id-or-singular-profile>
-mund adopt <run-id> <profile>
-mund grant <profile> <principal> <actions>
-mund revoke <profile> <principal> <actions>
-mund clean exited|stale|failed [--dry-run|--yes]
-mund import <file> [--dry-run|--yes]
-mund export profile <name> [--format cli|json]
+hold show runs|profiles|profile <name>|run <id-or-singular-profile>|grants|config
+hold profile <name> create|edit|delete|start|restart|status|export
+hold profile <name> set command|cwd|env|console|multi|readiness|cleanup ...
+hold profile <name> unset env|readiness|description|tag ...
+hold status|inspect|logs|open|stop|kill|prune <id-or-singular-profile>
+hold adopt <run-id> <profile>
+hold grant <profile> <principal> <actions>
+hold revoke <profile> <principal> <actions>
+hold clean exited|stale|failed [--dry-run|--yes]
+hold import <file> [--dry-run|--yes]
+hold export profile <name> [--format cli|json]
 ```
 
 This design lets users learn one mental model:
@@ -204,17 +204,17 @@ Because there are no existing users to protect, 0.4.0 should cut over cleanly in
 Breaking 0.4.0 replacements:
 
 ```text
-sigmund alias <id> <name>       => mund adopt <run-id> <profile> / mund profile <name> create-from-run <id>
-sigmund aliases                 => mund show profiles
-sigmund list                    => mund show runs
-sigmund tail <target>           => mund logs <target> --follow
-sigmund dump <target>           => mund logs <target> --plain
-sigmund console <target>        => mund open <target>
-sigmund prune <target>          => mund prune <target>
-sigmund start <alias>           => mund profile <name> start
-sigmund stop <target>           => mund stop <target>
-sigmund kill <target>           => mund kill <target>
-sigmund grant/revoke ...        => mund profile <name> grant/revoke ...
+hold alias <id> <name>       => hold adopt <run-id> <profile> / hold profile <name> create-from-run <id>
+hold aliases                 => hold show profiles
+hold list                    => hold show runs
+hold tail <target>           => hold logs <target> --follow
+hold dump <target>           => hold logs <target> --plain
+hold console <target>        => hold open <target>
+hold prune <target>          => hold prune <target>
+hold start <alias>           => hold profile <name> start
+hold stop <target>           => hold stop <target>
+hold kill <target>           => hold kill <target>
+hold grant/revoke ...        => hold profile <name> grant/revoke ...
 ```
 
 The cleaner product is one language, three surfaces. 0.4.0 should be the cutover point.
@@ -222,7 +222,7 @@ The cleaner product is one language, three surfaces. 0.4.0 should be the cutover
 
 ## 0.4.0 breaking redesign stance
 
-No one is using Sigmund yet, so the product should spend this freedom now. Version 0.4.0 should be treated as the CLI redesign release that replaces the legacy command surface with the unified stacked grammar.
+No one is using On Hold yet, so the product should spend this freedom now. Version 0.4.0 should be treated as the CLI redesign release that replaces the legacy command surface with the unified stacked grammar.
 
 Principles for 0.4.0:
 
@@ -237,8 +237,8 @@ The 0.4.0 user promise should be:
 
 ```text
 Use the same words everywhere:
-  mund profile web start
-  mund> profile web; start
+  hold profile web start
+  hold> profile web; start
   profile web; start; exit   # config transcript
 ```
 
@@ -255,61 +255,61 @@ Then layer the UX:
 
 | Layer | Target user | Interface | Promise |
 | --- | --- | --- | --- |
-| Fast CLI | scripts and power users | `sigmund <cmd>`, `sigmund stop <id>` | stable, parseable, minimal |
-| Friendly CLI | everyday users | `mund run --`, `mund show runs`, `mund prune`, `mund logs` | memorable verbs, good defaults |
-| Interactive shell | humans operating jobs | `mund shell` / bare `mund` | discoverable dashboard and guided actions |
-| Profile editor | advanced setup | `mund profile web edit` | validated durable configuration |
+| Fast CLI | scripts and power users | `hold <cmd>`, `hold stop <id>` | stable, parseable, minimal |
+| Friendly CLI | everyday users | `hold run --`, `hold show runs`, `hold prune`, `hold logs` | memorable verbs, good defaults |
+| Interactive shell | humans operating jobs | `hold shell` / bare `hold` | discoverable dashboard and guided actions |
+| Profile editor | advanced setup | `hold profile web edit` | validated durable configuration |
 
 ## Recommended command additions
 
 ### Friendly replacements for legacy verbs
 
-Replace legacy primary verbs with memorable `mund` equivalents:
+Replace legacy primary verbs with memorable `hold` equivalents:
 
 ```text
-mund show runs              -> list current runs
-mund logs <target>          -> follow/plain log viewer
-mund logs <target> --plain  -> plain dump-style output
-mund prune <target>         -> safe prune workflow
-mund restart <profile>      -> explicit restart sugar if release policy allows it
-mund status [target]        -> richer inspection
-mund inspect <target>       -> dump record/profile metadata
-mund doctor                 -> explain stores, permissions, stale records
+hold show runs              -> list current runs
+hold logs <target>          -> follow/plain log viewer
+hold logs <target> --plain  -> plain dump-style output
+hold prune <target>         -> safe prune workflow
+hold restart <profile>      -> explicit restart sugar if release policy allows it
+hold status [target]        -> richer inspection
+hold inspect <target>       -> dump record/profile metadata
+hold doctor                 -> explain stores, permissions, stale records
 ```
 
 ### Profile commands
 
 ```text
-mund profile list
-mund profile <name> show
-mund profile <name> create -- <cmd> [args...]
-mund profile <name> create-from-run <id> [--adopt]
-mund profile <name> edit
-mund profile <old> rename <new>
-mund profile <name> delete
-mund profile <name> grant <user> [actions]
-mund profile <name> revoke <user> [actions]
+hold profile list
+hold profile <name> show
+hold profile <name> create -- <cmd> [args...]
+hold profile <name> create-from-run <id> [--adopt]
+hold profile <name> edit
+hold profile <old> rename <new>
+hold profile <name> delete
+hold profile <name> grant <user> [actions]
+hold profile <name> revoke <user> [actions]
 ```
 
 Compatibility:
 
 ```text
-sigmund alias <id> <name>      -> profile from-run <id> <name> --adopt? or legacy recipe-only mode
-sigmund aliases                -> profile list
-mund profile <name> start   -> start reusable profile
+hold alias <id> <name>      -> profile from-run <id> <name> --adopt? or legacy recipe-only mode
+hold aliases                -> profile list
+hold profile <name> start   -> start reusable profile
 ```
 
 ### Hybrid “do what I mean” commands
 
 ```text
-mund up web                 # start if stopped; if running, print status + logs/open hint
-mund down web               # stop all running runs for profile web
-mund restart web
-mund open web               # attach console if available, otherwise logs
-mund clean                  # prune exited/stale with preview
+hold up web                 # start if stopped; if running, print status + logs/open hint
+hold down web               # stop all running runs for profile web
+hold restart web
+hold open web               # attach console if available, otherwise logs
+hold clean                  # prune exited/stale with preview
 ```
 
-These make Sigmund feel like a daily tool, not just a process record API.
+These make On Hold feel like a daily tool, not just a process record API.
 
 
 ## Navigable view namespaces and reversible redirects
@@ -385,7 +385,7 @@ cd recent
 Example tree view:
 
 ```text
-mund> tree running
+hold> tree running
 /running
   web
     04a7dda8  12s  console off  python -m http.server 9000
@@ -396,7 +396,7 @@ mund> tree running
 Profile-first view:
 
 ```text
-mund> tree profiles
+hold> tree profiles
 /profiles
   web
     definition
@@ -418,21 +418,21 @@ Canonicalization rule:
 Example navigation:
 
 ```text
-mund> cd profiles/web
-mund(/profiles/web)> cd running
+hold> cd profiles/web
+hold(/profiles/web)> cd running
 redirect: /profiles/web/running -> /running/web
-mund(/running/web)> ls
+hold(/running/web)> ls
 04a7dda8  running  12s  python -m http.server 9000
-mund(/running/web)> back
-mund(/profiles/web)>
+hold(/running/web)> back
+hold(/profiles/web)>
 ```
 
 Direct navigation should backtrack canonically:
 
 ```text
-mund> cd running/web
-mund(/running/web)> back
-mund(/running)>
+hold> cd running/web
+hold(/running/web)> back
+hold(/running)>
 ```
 
 This gives users multiple mental entry points without duplicating behavior. A profile-centric user can start from `profile web`; an operator can start from `running`; a debugger can start from `failed`; all routes resolve to the same concrete run objects.
@@ -453,11 +453,11 @@ ls
 Inside a view, commands can be context-relative:
 
 ```text
-mund(/running/web)> logs 04a7dda8
-mund(/running/web)> stop 04a7dda8
-mund(/profiles/web)> start
-mund(/profiles/web)> export --format cli
-mund(/failed/web)> logs a1b2c3d4 --dump
+hold(/running/web)> logs 04a7dda8
+hold(/running/web)> stop 04a7dda8
+hold(/profiles/web)> start
+hold(/profiles/web)> export --format cli
+hold(/failed/web)> logs a1b2c3d4 --dump
 ```
 
 The important UX property: namespaces can connect backwards for discoverability, but concrete actions still resolve to stable run IDs or singular safe selectors before acting.
@@ -467,10 +467,10 @@ The important UX property: namespaces can connect backwards for discoverability,
 ### Entry points
 
 ```sh
-mund                 # if no args and TTY: open dashboard, not usage error
-mund shell
-mund menu
-mund profile web edit
+hold                 # if no args and TTY: open dashboard, not usage error
+hold shell
+hold menu
+hold profile web edit
 ```
 
 For non-TTY/no args, keep usage and exit nonzero for compatibility.
@@ -478,7 +478,7 @@ For non-TTY/no args, keep usage and exit nonzero for compatibility.
 ### Top-level dashboard sketch
 
 ```text
-sigmund v0.4  daemonless process guardian
+hold v0.4  daemonless process guardian
 
 Runs
   NAME      ID        STATE    AGE   MODE     COMMAND
@@ -489,24 +489,24 @@ Runs
 Profiles: web, api, cache(system)
 
 Type: start <profile>, logs <name|id>, open <name|id>, stop <name|id>, profile, clean, help, quit
-sigmund> 
+hold>
 ```
 
 ### Cisco/diskpart-style submodes
 
 ```text
-mund> profile web
-mund(profile:web)> show
-mund(profile:web)> set cwd /srv/web
-mund(profile:web)> set env NODE_ENV=development
-mund(profile:web)> set console on
-mund(profile:web)> set readiness tcp localhost:3000 timeout 10s
-mund(profile:web)> save
-mund(profile:web)> start
-mund(profile:web)> exit
-mund> logs web
-mund> stop web
-mund> prune web
+hold> profile web
+hold(profile:web)> show
+hold(profile:web)> set cwd /srv/web
+hold(profile:web)> set env NODE_ENV=development
+hold(profile:web)> set console on
+hold(profile:web)> set readiness tcp localhost:3000 timeout 10s
+hold(profile:web)> save
+hold(profile:web)> start
+hold(profile:web)> exit
+hold> logs web
+hold> stop web
+hold> prune web
 ```
 
 Rejected historical sketch: do not use a `run` submode such as `run api; tail; stop; prune` for 0.4.0. `run` is launch-only, and management actions stay as natural verbs (`logs`, `stop`, `prune`) over a run ID or singular safe profile selector.
@@ -566,7 +566,7 @@ Suggested conceptual shape:
    - `unset env DEBUG`
    - `grant alice start,stop,tail`
 
-Start with JSON because Sigmund already has JSON infrastructure, but consider a more human format later if dependency policy allows it.
+Start with JSON because On Hold already has JSON infrastructure, but consider a more human format later if dependency policy allows it.
 
 
 ## Profile import/export and config files
@@ -576,26 +576,26 @@ The captive shell should not become a configuration island. Every profile that c
 Recommended commands:
 
 ```text
-sigmund profile export <name>              # print one profile config to stdout
-sigmund profile export <name> -o web.json  # write one profile config
-sigmund profile export --all -o profiles/  # write one file per profile
-sigmund profile import web.json            # validate and create/update profile
-sigmund profile import profiles/           # import a directory of profiles
-sigmund profile validate web.json          # check without writing
-sigmund profile diff <name> web.json       # compare stored profile to file
-sigmund profile apply web.json             # validate, show change summary, then write
-sigmund profile print <name>               # human-readable equivalent of export
+hold profile export <name>              # print one profile config to stdout
+hold profile export <name> -o web.json  # write one profile config
+hold profile export --all -o profiles/  # write one file per profile
+hold profile import web.json            # validate and create/update profile
+hold profile import profiles/           # import a directory of profiles
+hold profile validate web.json          # check without writing
+hold profile diff <name> web.json       # compare stored profile to file
+hold profile apply web.json             # validate, show change summary, then write
+hold profile print <name>               # human-readable equivalent of export
 ```
 
 For captive shell parity:
 
 ```text
-sigmund> profile web
-sigmund(profile:web)> export
-sigmund(profile:web)> export web.json
-sigmund(profile:web)> import web.json
-sigmund(profile:web)> diff web.json
-sigmund(profile:web)> validate
+hold> profile web
+hold(profile:web)> export
+hold(profile:web)> export web.json
+hold(profile:web)> import web.json
+hold(profile:web)> diff web.json
+hold(profile:web)> validate
 ```
 
 Design requirements:
@@ -628,10 +628,10 @@ exit
 Equivalent usage:
 
 ```sh
-sigmund profile export web --format cli > web.sigmund
-sigmund profile apply web.sigmund --dry-run
-sigmund profile apply web.sigmund --yes
-sigmund profile export web --format json > web.json
+hold profile export web --format cli > web.hold
+hold profile apply web.hold --dry-run
+hold profile apply web.hold --yes
+hold profile export web --format json > web.json
 ```
 
 This makes the interactive shell a friendly editor for the same durable JSON artifact the CLI can manage, while giving humans a readable Cisco-style config transcript.
@@ -639,7 +639,7 @@ This makes the interactive shell a friendly editor for the same durable JSON art
 
 ## Pager-style live filter viewer
 
-For log, list, and tree views, `mund` should include a pager-style viewer with vi-like movement and immediate keystroke filtering. This is not just a command prompt filter. When the user is inside a page-up/page-down or vi-style viewer, typing should reveal a small filter field at the top and dynamically narrow the visible buffer on every keystroke.
+For log, list, and tree views, `hold` should include a pager-style viewer with vi-like movement and immediate keystroke filtering. This is not just a command prompt filter. When the user is inside a page-up/page-down or vi-style viewer, typing should reveal a small filter field at the top and dynamically narrow the visible buffer on every keystroke.
 
 Viewer behavior:
 
@@ -679,17 +679,17 @@ Important distinction:
 
 This should work consistently for:
 
-- `mund logs <target>`
-- `mund show runs` when opened interactively
-- `mund show profiles`
-- `mund show tree running`
-- `mund show tree time`
-- `mund doctor` diagnostic output
+- `hold logs <target>`
+- `hold show runs` when opened interactively
+- `hold show profiles`
+- `hold show tree running`
+- `hold show tree time`
+- `hold doctor` diagnostic output
 - grants/access tables
 
 For follow-mode logs, filtering should apply to the retained visible buffer and continue filtering new incoming lines. The UI should indicate when a filter is active so users do not think logs have stopped.
 
-This viewer is one of the features that can make `mund` feel dramatically easier than raw shell pipelines: users can enter a view first, then discover the thing they need by simply typing.
+This viewer is one of the features that can make `hold` feel dramatically easier than raw shell pipelines: users can enter a view first, then discover the thing they need by simply typing.
 
 
 ## Example-line similarity filtering
@@ -798,8 +798,8 @@ filter similar
 In non-interactive CLI, expose a deterministic version later if useful:
 
 ```sh
-mund logs web --similar-line 120
-mund logs web --similar 'missing config'
+hold logs web --similar-line 120
+hold logs web --similar 'missing config'
 ```
 
 ## Safety and automation compatibility
@@ -824,7 +824,7 @@ Protect the automation contract:
 
 ### Phase 2: Hybrid interactive shell
 
-- Add `mund shell` line-oriented REPL.
+- Add `hold shell` line-oriented REPL.
 - Support `help`, `show`, `select`, `logs`, `open`, `stop`, `prune`, `start`, and `profile`.
 - Implement command completion/history if practical.
 - Add contextual help and suggested next actions.
@@ -847,7 +847,7 @@ Protect the automation contract:
 
 The best drastic change for 0.4.0 is not to preserve old commands and add a menu beside them. It is to replace the legacy surface with a **one-language, three-surface product**:
 
-- **One-shot CLI**: `mund profile web start`, `mund logs web --follow`, `mund stop web`.
+- **One-shot CLI**: `hold profile web start`, `hold logs web --follow`, `hold stop web`.
 - **Captive shell**: `profile web`, then `start`, `logs`, `stop`, `set env ...`.
 - **Config transcript**: the same captive-shell commands saved in a file and imported/applied.
 
@@ -855,4 +855,4 @@ This gives beginners an embarrassingly easy path while giving power users a comp
 
 ## Product decisions status
 
-The implementation-oriented decisions now live in [Mund 0.4 UX and CLI specification](MUND_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md). Current direction: use `mund` for the operator command, make `profile` the primary noun, keep `run` launch-only, omit `profile <name> stop` as a primary command, and start with a line-oriented captive shell before a richer TUI. Remaining release decisions include restart policy, `/active` and `/history` naming, and how much of the full similarity/deque architecture must ship before 0.4.0.
+The implementation-oriented decisions now live in [Hold 0.4 UX and CLI specification](HOLD_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md). Current direction: use `hold` for the operator command, make `profile` the primary noun, keep `run` launch-only, omit `profile <name> stop` as a primary command, and start with a line-oriented captive shell before a richer TUI. Remaining release decisions include restart policy, `/active` and `/history` naming, and how much of the full similarity/deque architecture must ship before 0.4.0.

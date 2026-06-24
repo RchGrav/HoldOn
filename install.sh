@@ -1,19 +1,19 @@
 #!/bin/sh
 set -eu
 
-REPO_OWNER="${SIGMUND_REPO_OWNER:-RchGrav}"
-REPO_NAME="${SIGMUND_REPO_NAME:-sigmund}"
-GITHUB_BASE="${SIGMUND_GITHUB_BASE:-https://github.com}"
-GITHUB_API="${SIGMUND_GITHUB_API:-https://api.github.com}"
-INSTALLER_VERSION="${SIGMUND_INSTALLER_VERSION:-latest}"
-INSTALL_SYSTEM="${SIGMUND_INSTALL_SYSTEM:-0}"
+REPO_OWNER="${HOLD_REPO_OWNER:-RchGrav}"
+REPO_NAME="${HOLD_REPO_NAME:-hold}"
+GITHUB_BASE="${HOLD_GITHUB_BASE:-https://github.com}"
+GITHUB_API="${HOLD_GITHUB_API:-https://api.github.com}"
+INSTALLER_VERSION="${HOLD_INSTALLER_VERSION:-latest}"
+INSTALL_SYSTEM="${HOLD_INSTALL_SYSTEM:-0}"
 
 note() {
   printf '%s\n' "$*" >&2
 }
 
 die() {
-  note "sigmund installer: error: $*"
+  note "hold installer: error: $*"
   exit 1
 }
 
@@ -26,9 +26,9 @@ Options:
   -h, --help  Show this help.
 
 Environment:
-  SIGMUND_VERSION         Version or tag to install.
-  SIGMUND_INSTALL_SYSTEM  Set to 1 to behave like --system.
-  SIGMUND_INSTALL_DIR     Custom install directory.
+  HOLD_VERSION         Version or tag to install.
+  HOLD_INSTALL_SYSTEM  Set to 1 to behave like --system.
+  HOLD_INSTALL_DIR     Custom install directory.
 EOF
 }
 
@@ -85,7 +85,7 @@ normalize_tag() {
 }
 
 normalize_os() {
-  os=${SIGMUND_INSTALL_TEST_OS:-$(uname -s)}
+  os=${HOLD_INSTALL_TEST_OS:-$(uname -s)}
   case "$os" in
     Darwin|darwin) printf '%s\n' macos ;;
     Linux|linux) printf '%s\n' linux ;;
@@ -94,7 +94,7 @@ normalize_os() {
 }
 
 normalize_arch() {
-  arch=${SIGMUND_INSTALL_TEST_ARCH:-$(uname -m)}
+  arch=${HOLD_INSTALL_TEST_ARCH:-$(uname -m)}
   case "$arch" in
     x86_64|amd64) printf '%s\n' amd64 ;;
     arm64|aarch64) printf '%s\n' arm64 ;;
@@ -106,8 +106,8 @@ normalize_arch() {
 }
 
 detect_libc() {
-  if [ "${SIGMUND_INSTALL_TEST_LIBC:-}" ]; then
-    printf '%s\n' "$SIGMUND_INSTALL_TEST_LIBC"
+  if [ "${HOLD_INSTALL_TEST_LIBC:-}" ]; then
+    printf '%s\n' "$HOLD_INSTALL_TEST_LIBC"
     return
   fi
 
@@ -140,8 +140,8 @@ select_artifact() {
 
   if [ "$os" = macos ]; then
     case "$arch" in
-      arm64) printf 'sigmund-%s-macos-arm64.tar.gz\n' "$version_no_v" ;;
-      amd64) printf 'sigmund-%s-macos-x86_64.tar.gz\n' "$version_no_v" ;;
+      arm64) printf 'hold-%s-macos-arm64.tar.gz\n' "$version_no_v" ;;
+      amd64) printf 'hold-%s-macos-x86_64.tar.gz\n' "$version_no_v" ;;
       *) die "unsupported macOS architecture: $arch" ;;
     esac
     return
@@ -149,25 +149,25 @@ select_artifact() {
 
   case "$arch" in
     amd64|arm64|armhf)
-      case "${SIGMUND_FLAVOR:-}" in
-        gnu-dynamic) printf 'sigmund-%s-linux-%s-gnu-dynamic.tar.gz\n' "$version_no_v" "$arch" ;;
-        gnu-static) printf 'sigmund-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
-        musl-static) printf 'sigmund-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
+      case "${HOLD_FLAVOR:-}" in
+        gnu-dynamic) printf 'hold-%s-linux-%s-gnu-dynamic.tar.gz\n' "$version_no_v" "$arch" ;;
+        gnu-static) printf 'hold-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
+        musl-static) printf 'hold-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
         "")
           case "$libc" in
-            gnu) printf 'sigmund-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
-            musl) printf 'sigmund-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
-            *) die "could not determine Linux libc; set SIGMUND_FLAVOR=gnu-static or SIGMUND_FLAVOR=musl-static" ;;
+            gnu) printf 'hold-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
+            musl) printf 'hold-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
+            *) die "could not determine Linux libc; set HOLD_FLAVOR=gnu-static or HOLD_FLAVOR=musl-static" ;;
           esac
           ;;
-        *) die "unsupported SIGMUND_FLAVOR: $SIGMUND_FLAVOR" ;;
+        *) die "unsupported HOLD_FLAVOR: $HOLD_FLAVOR" ;;
       esac
       ;;
     mipsel|riscv64)
-      if [ "${SIGMUND_FLAVOR:-}" ] && [ "${SIGMUND_FLAVOR:-}" != musl-static ]; then
-        die "$arch only has a musl-static Sigmund artifact"
+      if [ "${HOLD_FLAVOR:-}" ] && [ "${HOLD_FLAVOR:-}" != musl-static ]; then
+        die "$arch only has a musl-static On Hold artifact"
       fi
-      printf 'sigmund-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch"
+      printf 'hold-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch"
       ;;
     *) die "unsupported Linux architecture: $arch" ;;
   esac
@@ -182,8 +182,8 @@ path_contains_dir() {
 }
 
 current_uid() {
-  if [ "${SIGMUND_INSTALL_TEST_UID:-}" ]; then
-    printf '%s\n' "$SIGMUND_INSTALL_TEST_UID"
+  if [ "${HOLD_INSTALL_TEST_UID:-}" ]; then
+    printf '%s\n' "$HOLD_INSTALL_TEST_UID"
   elif command -v id >/dev/null 2>&1; then
     id -u
   else
@@ -231,11 +231,10 @@ validate_archive_layout() {
         if (parts[i] == "..") bad = 1
       }
       sub(/^\.\//, "", p)
-      if (p == "sigmund") found_sigmund = 1
-      if (p == "mund") found_mund = 1
+      if (p == "hold") found_hold = 1
     }
     END {
-      if (bad || !found_sigmund || !found_mund) exit 1
+      if (bad || !found_hold) exit 1
     }
   '
 }
@@ -251,7 +250,7 @@ default_install_dir() {
   elif can_write_dir /usr/local/bin; then
     printf '%s\n' /usr/local/bin
   else
-    [ -n "${HOME:-}" ] || die "HOME is not set; set SIGMUND_INSTALL_DIR"
+    [ -n "${HOME:-}" ] || die "HOME is not set; set HOLD_INSTALL_DIR"
     printf '%s\n' "$HOME/.local/bin"
   fi
 }
@@ -321,20 +320,20 @@ shell_quote() {
 
 write_env_file() {
   env_file=$1
-  sigmund_bin_path=$2
-  mund_bin_path=$3
+  hold_bin_path=$2
+  hold_bin_path=$3
   install_dir=$4
   mkdir -p "$(dirname "$env_file")"
   {
-    printf 'export SIGMUND_BIN=%s\n' "$(shell_quote "$sigmund_bin_path")"
-    printf 'export MUND_BIN=%s\n' "$(shell_quote "$mund_bin_path")"
+    printf 'export HOLD_BIN=%s\n' "$(shell_quote "$hold_bin_path")"
+    printf 'export HOLD_BIN=%s\n' "$(shell_quote "$hold_bin_path")"
     printf 'export PATH=%s:"$PATH"\n' "$(shell_quote "$install_dir")"
   } >"$env_file"
 }
 
 profile_path() {
-  if [ "${SIGMUND_PROFILE:-}" ]; then
-    printf '%s\n' "$SIGMUND_PROFILE"
+  if [ "${HOLD_PROFILE:-}" ]; then
+    printf '%s\n' "$HOLD_PROFILE"
     return
   fi
   shell_name=$(basename "${SHELL:-sh}")
@@ -347,12 +346,12 @@ profile_path() {
 
 maybe_update_profile() {
   install_dir=$1
-  [ "${SIGMUND_UPDATE_PROFILE:-1}" = 1 ] || return 0
+  [ "${HOLD_UPDATE_PROFILE:-1}" = 1 ] || return 0
   [ "$(current_uid)" -ne 0 ] || return 0
   [ -n "${HOME:-}" ] || return 0
 
   profile=$(profile_path)
-  marker="# sigmund installer"
+  marker="# hold installer"
   mkdir -p "$(dirname "$profile")"
   touch "$profile"
   if grep -Fq "$marker" "$profile"; then
@@ -391,7 +390,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-tag=${version_arg:-${SIGMUND_VERSION:-$INSTALLER_VERSION}}
+tag=${version_arg:-${HOLD_VERSION:-$INSTALLER_VERSION}}
 if [ "$tag" = latest ]; then
   tag=$(latest_tag)
   [ -n "$tag" ] || die "could not resolve latest release tag"
@@ -409,13 +408,13 @@ fi
 artifact=$(select_artifact "$version_no_v" "$os" "$arch" "$libc")
 url="$GITHUB_BASE/$REPO_OWNER/$REPO_NAME/releases/download/$tag/$artifact"
 
-if [ "${SIGMUND_INSTALL_DIR:-}" ] && truthy "$INSTALL_SYSTEM"; then
-  die "SIGMUND_INSTALL_DIR cannot be combined with --system or SIGMUND_INSTALL_SYSTEM=1"
+if [ "${HOLD_INSTALL_DIR:-}" ] && truthy "$INSTALL_SYSTEM"; then
+  die "HOLD_INSTALL_DIR cannot be combined with --system or HOLD_INSTALL_SYSTEM=1"
 fi
 
 install_mode=user
-if [ "${SIGMUND_INSTALL_DIR:-}" ]; then
-  install_dir=$SIGMUND_INSTALL_DIR
+if [ "${HOLD_INSTALL_DIR:-}" ]; then
+  install_dir=$HOLD_INSTALL_DIR
   install_mode=custom
 elif truthy "$INSTALL_SYSTEM"; then
   install_dir=/usr/local/bin
@@ -426,8 +425,8 @@ else
     install_mode=system
   fi
 fi
-target="$install_dir/sigmund"
-mund_target="$install_dir/mund"
+target="$install_dir/hold"
+hold_target="$install_dir/hold"
 use_sudo=0
 if [ "$install_mode" = system ] && install_needs_sudo "$install_dir"; then
   use_sudo=1
@@ -437,15 +436,15 @@ if [ "$use_sudo" -eq 1 ]; then
   privilege_note=" with sudo"
 fi
 
-note "sigmund installer"
+note "hold installer"
 note "  detected: $os $arch${libc:+ $libc}"
 note "  version:  $tag"
 note "  artifact: $artifact"
 note "  mode:     $install_mode$privilege_note"
 note "  install:  $target"
-note "            $mund_target"
+note "            $hold_target"
 
-if [ "${SIGMUND_INSTALL_DRY_RUN:-0}" = 1 ]; then
+if [ "${HOLD_INSTALL_DRY_RUN:-0}" = 1 ]; then
   note "dry run: no files changed"
   exit 0
 fi
@@ -457,7 +456,7 @@ need_cmd mktemp
 
 old_umask=$(umask)
 umask 077
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/sigmund-install.XXXXXX") || die "could not create temporary directory"
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/hold-install.XXXXXX") || die "could not create temporary directory"
 umask "$old_umask"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
@@ -479,43 +478,43 @@ validate_archive_layout "$archive" || die "archive layout is invalid for $artifa
 extract="$tmp/extract"
 mkdir -p "$extract"
 tar -xzf "$archive" -C "$extract"
-bin="$extract/sigmund"
-mund_bin="$extract/mund"
-[ -f "$bin" ] && [ ! -L "$bin" ] || die "archive did not contain expected root sigmund binary"
-[ -f "$mund_bin" ] && [ ! -L "$mund_bin" ] || die "archive did not contain expected root mund binary"
+bin="$extract/hold"
+hold_bin="$extract/hold"
+[ -f "$bin" ] && [ ! -L "$bin" ] || die "archive did not contain expected root hold binary"
+[ -f "$hold_bin" ] && [ ! -L "$hold_bin" ] || die "archive did not contain expected root hold binary"
 
 if [ "$use_sudo" -eq 1 ]; then
   install_binary_sudo "$bin" "$target" "$install_dir"
-  install_binary_sudo "$mund_bin" "$mund_target" "$install_dir"
+  install_binary_sudo "$hold_bin" "$hold_target" "$install_dir"
 else
   install_binary_user "$bin" "$target" "$install_dir"
-  install_binary_user "$mund_bin" "$mund_target" "$install_dir"
+  install_binary_user "$hold_bin" "$hold_target" "$install_dir"
 fi
 
 version=$("$target" --version 2>/dev/null || true)
 [ -n "$version" ] || die "installed binary did not run: $target --version"
-mund_version=$("$mund_target" --version 2>/dev/null || true)
-[ -n "$mund_version" ] || die "installed binary did not run: $mund_target --version"
+hold_version=$("$hold_target" --version 2>/dev/null || true)
+[ -n "$hold_version" ] || die "installed binary did not run: $hold_target --version"
 
-if [ "${SIGMUND_ENV_FILE:-}" ]; then
-  write_env_file "$SIGMUND_ENV_FILE" "$target" "$mund_target" "$install_dir"
-  note "wrote environment handoff: $SIGMUND_ENV_FILE"
+if [ "${HOLD_ENV_FILE:-}" ]; then
+  write_env_file "$HOLD_ENV_FILE" "$target" "$hold_target" "$install_dir"
+  note "wrote environment handoff: $HOLD_ENV_FILE"
 fi
 
-if ! path_contains_dir "$install_dir" && [ -z "${SIGMUND_ENV_FILE:-}" ]; then
+if ! path_contains_dir "$install_dir" && [ -z "${HOLD_ENV_FILE:-}" ]; then
   maybe_update_profile "$install_dir"
 fi
 
-note "installed sigmund $version"
+note "installed hold $version"
 note "binary: $target"
-note "binary: $mund_target"
+note "binary: $hold_target"
 if path_contains_dir "$install_dir"; then
-  note "run: mund --help"
+  note "run: hold --help"
 else
   note "current shell PATH does not include $install_dir"
-  note "run now: $mund_target --help"
+  note "run now: $hold_target --help"
   note "or export: PATH=$install_dir:\$PATH"
 fi
 
-printf 'SIGMUND_BIN=%s\n' "$target"
-printf 'MUND_BIN=%s\n' "$mund_target"
+printf 'HOLD_BIN=%s\n' "$target"
+printf 'HOLD_BIN=%s\n' "$hold_target"

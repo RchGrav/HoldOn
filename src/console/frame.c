@@ -1,15 +1,15 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/console.h"
-#include "sigmund/core.h"
-#include "sigmund/console_internal.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/console.h"
+#include "hold/core.h"
+#include "hold/console_internal.h"
 
 static uint16_t load_be16(const unsigned char *p);
 static void store_be16(unsigned char *p, uint16_t v);
 static int apply_pty_size(int master, const unsigned char *payload, size_t len);
 static int broker_process_framed_client(struct console_client_state *state, int master);
 
-void sigmund_console_replay_init(struct console_replay_buffer *replay) {
+void hold_console_replay_init(struct console_replay_buffer *replay) {
     memset(replay, 0, sizeof(*replay));
     replay->data = malloc(CONSOLE_REPLAY_LIMIT);
     if (replay->data) {
@@ -17,12 +17,12 @@ void sigmund_console_replay_init(struct console_replay_buffer *replay) {
     }
 }
 
-void sigmund_console_replay_free(struct console_replay_buffer *replay) {
+void hold_console_replay_free(struct console_replay_buffer *replay) {
     free(replay->data);
     memset(replay, 0, sizeof(*replay));
 }
 
-void sigmund_console_replay_append(struct console_replay_buffer *replay,
+void hold_console_replay_append(struct console_replay_buffer *replay,
                                   const void *buf,
                                   size_t n) {
     if (!replay->data || replay->cap == 0 || n == 0) {
@@ -40,7 +40,7 @@ void sigmund_console_replay_append(struct console_replay_buffer *replay,
     }
 }
 
-int sigmund_console_replay_write(const struct console_replay_buffer *replay, int fd) {
+int hold_console_replay_write(const struct console_replay_buffer *replay, int fd) {
     if (!replay->data || replay->len == 0) {
         return 0;
     }
@@ -48,11 +48,11 @@ int sigmund_console_replay_write(const struct console_replay_buffer *replay, int
     if (first > replay->len) {
         first = replay->len;
     }
-    if (sigmund_write_all(fd, replay->data + replay->start, first) != 0) {
+    if (hold_write_all(fd, replay->data + replay->start, first) != 0) {
         return -1;
     }
     if (replay->len > first &&
-        sigmund_write_all(fd, replay->data, replay->len - first) != 0) {
+        hold_write_all(fd, replay->data, replay->len - first) != 0) {
         return -1;
     }
     return 0;
@@ -67,30 +67,30 @@ static void store_be16(unsigned char *p, uint16_t v) {
     p[1] = (unsigned char)(v & 0xff);
 }
 
-int sigmund_write_console_frame(int fd, unsigned char type, const void *payload, uint16_t len) {
+int hold_write_console_frame(int fd, unsigned char type, const void *payload, uint16_t len) {
     unsigned char header[CONSOLE_FRAME_HEADER_LEN];
     header[0] = type;
     store_be16(header + 1, len);
-    if (sigmund_write_all(fd, header, sizeof(header)) != 0) {
+    if (hold_write_all(fd, header, sizeof(header)) != 0) {
         return -1;
     }
-    if (len > 0 && sigmund_write_all(fd, payload, len) != 0) {
+    if (len > 0 && hold_write_all(fd, payload, len) != 0) {
         return -1;
     }
     return 0;
 }
 
-int sigmund_send_console_resize(int fd, const struct winsize *ws) {
+int hold_send_console_resize(int fd, const struct winsize *ws) {
     if (!ws || ws->ws_row == 0 || ws->ws_col == 0) {
         return 0;
     }
     unsigned char payload[4];
     store_be16(payload, ws->ws_row);
     store_be16(payload + 2, ws->ws_col);
-    return sigmund_write_console_frame(fd, CONSOLE_FRAME_RESIZE, payload, sizeof(payload));
+    return hold_write_console_frame(fd, CONSOLE_FRAME_RESIZE, payload, sizeof(payload));
 }
 
-int sigmund_maybe_get_terminal_size(struct winsize *ws) {
+int hold_maybe_get_terminal_size(struct winsize *ws) {
     memset(ws, 0, sizeof(*ws));
     if (ioctl(STDIN_FILENO, TIOCGWINSZ, ws) == 0 && ws->ws_row > 0 && ws->ws_col > 0) {
         return 0;
@@ -127,7 +127,7 @@ static int broker_process_framed_client(struct console_client_state *state, int 
 
         const unsigned char *payload = state->pending + CONSOLE_FRAME_HEADER_LEN;
         if (type == CONSOLE_FRAME_DATA) {
-            if (len > 0 && sigmund_write_all(master, payload, len) != 0) {
+            if (len > 0 && hold_write_all(master, payload, len) != 0) {
                 return -1;
             }
         } else if (type == CONSOLE_FRAME_RESIZE) {
@@ -142,7 +142,7 @@ static int broker_process_framed_client(struct console_client_state *state, int 
     return 0;
 }
 
-int sigmund_broker_process_client_input(struct console_client_state *state,
+int hold_broker_process_client_input(struct console_client_state *state,
                                        int master,
                                        const unsigned char *buf,
                                        size_t n) {
@@ -152,13 +152,13 @@ int sigmund_broker_process_client_input(struct console_client_state *state,
     if (!state->decided && state->pending_len + n > sizeof(state->pending)) {
         state->decided = true;
         state->framed = false;
-        if (state->pending_len > 0 && sigmund_write_all(master, state->pending, state->pending_len) != 0) {
+        if (state->pending_len > 0 && hold_write_all(master, state->pending, state->pending_len) != 0) {
             return -1;
         }
         state->pending_len = 0;
     }
     if (state->decided && !state->framed) {
-        return sigmund_write_all(master, buf, n);
+        return hold_write_all(master, buf, n);
     }
 
     if (state->pending_len + n > sizeof(state->pending)) {
@@ -173,7 +173,7 @@ int sigmund_broker_process_client_input(struct console_client_state *state,
         if (memcmp(state->pending, CONSOLE_ATTACH_MAGIC, cmp_len) != 0) {
             state->decided = true;
             state->framed = false;
-            if (sigmund_write_all(master, state->pending, state->pending_len) != 0) {
+            if (hold_write_all(master, state->pending, state->pending_len) != 0) {
                 return -1;
             }
             state->pending_len = 0;
@@ -196,7 +196,7 @@ int sigmund_broker_process_client_input(struct console_client_state *state,
     return 0;
 }
 
-void sigmund_make_raw_termios(const struct termios *in, struct termios *out) {
+void hold_make_raw_termios(const struct termios *in, struct termios *out) {
     *out = *in;
     out->c_iflag &= (tcflag_t)~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     out->c_oflag &= (tcflag_t)~OPOST;

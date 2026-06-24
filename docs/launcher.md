@@ -4,20 +4,20 @@
 
 Outer loop bridge: deep dive for quickstart Step 1, Start One Thing.
 
-When you run `sigmund <cmd...>`, the launcher turns that command into a detached run with a short ID and a log. This is the piece that lets a helper survive after the CI step or shell that started it exits.
+When you run `hold <cmd...>`, the launcher turns that command into a detached run with a short ID and a log. This is the piece that lets a helper survive after the CI step or shell that started it exits.
 
 The end result of a successful start is a bare 8-hex run ID on stdout, a private JSON record, a log file, and optionally a console socket. Human status goes through `sig_note`, which writes to stderr unless `--quiet` is set.
 
 ## Start forms
 
-Sigmund supports two start styles:
+On Hold supports two start styles:
 
-- Raw form: `sigmund <cmd> [args...]`.
-- Owned form: `sigmund start <alias>` or `sigmund start <cmd> [args...]`.
+- Raw form: `hold <cmd> [args...]`.
+- Owned form: `hold start <alias>` or `hold start <cmd> [args...]`.
 
 If `start` receives exactly one argument and that token resolves to a profile or alias, `cmd_start_action` starts the stored recipe. Otherwise it starts the provided command. `perform_explicit_start` treats a single explicit command string as `sh -c <string>` and treats multiple arguments as direct argv for `execvp`.
 
-This split exists because Sigmund is a single binary, not a service manager with a configuration language. It must preserve raw argv for scriptability, but it also needs a compact owned command surface for aliases, multi-starts, and privilege crossing.
+This split exists because On Hold is a single binary, not a service manager with a configuration language. It must preserve raw argv for scriptability, but it also needs a compact owned command surface for aliases, multi-starts, and privilege crossing.
 
 ## Launch sequence
 
@@ -26,7 +26,7 @@ sequenceDiagram
     autonumber
     box rgb(220, 252, 231) Launch boundary
     participant CLI as CLI
-    participant Parent as Sigmund parent
+    participant Parent as On Hold parent
     participant Child as Child process
     end
     box rgb(254, 243, 199) Durable state
@@ -57,7 +57,7 @@ sequenceDiagram
 
 The parent creates a close-on-exec pipe before forking. The child writes `errno` to the pipe if `setsid`, redirection, console broker setup, or `exec*` fails. If `exec*` succeeds, the pipe closes because of `FD_CLOEXEC`, and `read_exec_handshake` reports success. This avoids recording a run that never actually launched.
 
-The child calls `setsid`, so the child PID, process group ID, and session ID are initially the same. Sigmund records that identity and later signals the process group with `kill(-pgid, sig)` after validation. This is the minimum machinery needed to outlive the invoking shell while keeping teardown tied to a recorded group rather than a hand-copied PID.
+The child calls `setsid`, so the child PID, process group ID, and session ID are initially the same. On Hold records that identity and later signals the process group with `kill(-pgid, sig)` after validation. This is the minimum machinery needed to outlive the invoking shell while keeping teardown tied to a recorded group rather than a hand-copied PID.
 
 ## Launch states
 
@@ -99,7 +99,7 @@ For non-console runs, stdin is `/dev/null` and stdout/stderr append to `<id>.log
 
 ## Why this design works
 
-The fork/setsid/exec path gives Sigmund the part `nohup` and `setsid` users usually want: a child that outlives the shell's teardown. The record and handshake provide the part a bare background process does not: a durable ID whose process group can later be validated before signaling. Because there is no daemon, the launch path must record enough identity immediately, and it must roll back if it cannot make the record authoritative.
+The fork/setsid/exec path gives On Hold the part `nohup` and `setsid` users usually want: a child that outlives the shell's teardown. The record and handshake provide the part a bare background process does not: a durable ID whose process group can later be validated before signaling. Because there is no daemon, the launch path must record enough identity immediately, and it must roll back if it cannot make the record authoritative.
 
 ## Implementation map
 

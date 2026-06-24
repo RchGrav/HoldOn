@@ -1,7 +1,7 @@
 # Review status
 
 Date: 2026-06-23
-Branch: `mund-0.4.0-redesign`
+Branch: `hold-0.4.0-redesign`
 Scope: release-readiness notes for the 0.4.0 documentation, branch alignment, and hardening plan.
 
 ## Current status
@@ -10,14 +10,14 @@ This file replaces an older review report whose test counts and file references 
 
 0.4.0 is release-ready only after both tracks are complete:
 
-1. the full `mund` CLI/product direction in `docs/MUND_0_4_UX_SPEC.md` is implemented and documented; and
+1. the full `hold` CLI/product direction in `docs/HOLD_0_4_UX_SPEC.md` is implemented and documented; and
 2. the hardening backlog in that same spec is implemented, tested, and reviewed.
 
 ## Latest alignment pass
 
 Date: 2026-06-23
 
-The Autopilot spec-alignment pass added [0.4.0 branch alignment](docs/0.4.0-alignment.md) as the tracked matrix for implemented behavior, accepted v1 deviations, and follow-up gaps. It also labels legacy/current docs so they do not conflict with the 0.4.0 `mund` direction. This pass was docs-only and does not certify runtime release readiness.
+The Autopilot spec-alignment pass added [0.4.0 branch alignment](docs/0.4.0-alignment.md) as the tracked matrix for implemented behavior, accepted v1 deviations, and follow-up gaps. It also labels legacy/current docs so they do not conflict with the 0.4.0 `hold` direction. This pass was docs-only and does not certify runtime release readiness.
 
 ## Verification policy
 
@@ -39,7 +39,7 @@ Commands run for this docs cleanup:
 python3 - <<'PY'
 from pathlib import Path
 import re, sys
-files = [Path(p) for p in ['README.md','docs/install.md','docs/MUND_0_4_UX_SPEC.md','REVIEW.md','docs/index.md']]
+files = [Path(p) for p in ['README.md','docs/install.md','docs/HOLD_0_4_UX_SPEC.md','REVIEW.md','docs/index.md']]
 missing=[]
 for f in files:
     text=f.read_text()
@@ -59,7 +59,7 @@ print('All local markdown link targets exist for touched files.')
 PY
 
 grep -RIn "NSS\|musl-static\|GNU static\|GNU dynamic\|musl static\|STATIC_LDFLAGS" \
-  README.md docs/install.md docs/MUND_0_4_UX_SPEC.md REVIEW.md
+  README.md docs/install.md docs/HOLD_0_4_UX_SPEC.md REVIEW.md
 
 python3 - <<'PY'
 from pathlib import Path
@@ -70,7 +70,7 @@ patterns = [
     re.compile("make clean && " + "make test"),
     re.compile("UBSan build " + "passed"),
 ]
-files = [Path(p) for p in ['REVIEW.md','docs/MUND_0_4_UX_SPEC.md','README.md','docs/install.md']]
+files = [Path(p) for p in ['REVIEW.md','docs/HOLD_0_4_UX_SPEC.md','README.md','docs/install.md']]
 hits = []
 for f in files:
     for i, line in enumerate(f.read_text().splitlines(), 1):
@@ -83,7 +83,7 @@ if hits:
 PY
 
 grep -n "full .*product direction\|release criteria\|later minor\|implementation plan" \
-  docs/MUND_0_4_UX_SPEC.md docs/index.md
+  docs/HOLD_0_4_UX_SPEC.md docs/index.md
 ```
 
 Result: local links in touched files resolved, static-artifact caveats were present in the expected docs, stale historical pass claims were absent, and 0.4.0 scope/alignment language was present.
@@ -93,7 +93,7 @@ Latest implementation pass: `make test` was run on this branch after adding name
 ## Release-readiness checklist
 
 - [x] `make test` completes successfully on this branch for the 2026-06-23 Autopilot alignment pass.
-- [ ] CLI grammar, help text, parser behavior, and documentation agree for the 0.4.0 `mund` surface.
+- [ ] CLI grammar, help text, parser behavior, and documentation agree for the 0.4.0 `hold` surface.
 - [ ] GNU static, GNU dynamic, and musl static install behavior is documented without overstating glibc static portability.
 - [ ] Console attach authorization is peer-credential checked before replaying output or forwarding input.
 - [ ] Signal safety refuses uncertain records instead of relying on display-oriented liveness.

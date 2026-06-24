@@ -236,13 +236,13 @@ if [[ "$install_test" -eq 1 ]]; then
   note "deploy: smoke-testing one-line installer from $installer_url"
   if command -v curl >/dev/null 2>&1; then
     curl -LsSf "$installer_url" |
-      SIGMUND_INSTALL_DIR="$install_tmp/bin" SIGMUND_UPDATE_PROFILE=0 sh
+      HOLD_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh
   else
     wget -qO- "$installer_url" |
-      SIGMUND_INSTALL_DIR="$install_tmp/bin" SIGMUND_UPDATE_PROFILE=0 sh
+      HOLD_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh
   fi
 
-  installed_version=$("$install_tmp/bin/sigmund" --version)
+  installed_version=$("$install_tmp/bin/hold" --version)
   if [[ "$installed_version" != "$tag" && "$installed_version" != "$version" ]]; then
     die "installed version $installed_version did not match $tag"
   fi

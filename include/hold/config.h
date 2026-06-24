@@ -1,6 +1,6 @@
 #pragma once
-#ifndef SIGMUND_CONFIG_H
-#define SIGMUND_CONFIG_H
+#ifndef HOLD_CONFIG_H
+#define HOLD_CONFIG_H
 
 /* Feature-test macros must precede every system header in EVERY translation
  * unit, so this header must be the FIRST include in every .c file. */
@@ -47,16 +47,16 @@
 #define ALIAS_MAX_LEN 64
 #define STOP_TIMEOUT_MS 5000
 #define POLL_SLEEP_MS 25
-#ifndef SIGMUND_VERSION
-#define SIGMUND_VERSION "dev"
+#ifndef HOLD_VERSION
+#define HOLD_VERSION "dev"
 #endif
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
-#define SIGMUND_PATH_MAX PATH_MAX
+#define HOLD_PATH_MAX PATH_MAX
 #define MAX_RECORD_BYTES (1024 * 1024)
-#ifndef SIGMUND_BOOT_ID_PATH
-#define SIGMUND_BOOT_ID_PATH "/proc/sys/kernel/random/boot_id"
+#ifndef HOLD_BOOT_ID_PATH
+#define HOLD_BOOT_ID_PATH "/proc/sys/kernel/random/boot_id"
 #endif
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -69,15 +69,15 @@
 #endif
 #ifndef SOCK_CLOEXEC
 #define SOCK_CLOEXEC 0
-#define SIGMUND_NEED_SOCKET_CLOEXEC 1
+#define HOLD_NEED_SOCKET_CLOEXEC 1
 #endif
 #define JSON_MAX_DEPTH 64
-#ifndef SIGMUND_SYSTEM_STATE_DIR
+#ifndef HOLD_SYSTEM_STATE_DIR
 #if defined(__APPLE__)
-#define SIGMUND_SYSTEM_STATE_DIR "/var/db/sigmund"
+#define HOLD_SYSTEM_STATE_DIR "/var/db/hold"
 #else
-#define SIGMUND_SYSTEM_STATE_DIR "/var/lib/sigmund"
+#define HOLD_SYSTEM_STATE_DIR "/var/lib/hold"
 #endif
 #endif
 
-#endif /* SIGMUND_CONFIG_H */
+#endif /* HOLD_CONFIG_H */

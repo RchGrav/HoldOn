@@ -1,4 +1,4 @@
-# Sigmund documentation plan
+# On Hold documentation plan
 
 [Docs index](index.md) | [Quickstart](quickstart.md) | [Specification](SPEC.md) | [Repository README](../README.md)
 
@@ -6,7 +6,7 @@ Phase 1 status: reviewed and approved for Phase 2.
 
 Phase 2 status: delivered in the linked subsystem pages.
 
-This plan is based on a full read of `src/sigmund.c`. Phase 2 should write the actual documentation under `docs/` and keep it useful for users first, with implementation detail available for maintainers. The code remains the source of truth; `docs/SPEC.md` is useful context, but every behavioral claim in the docs must be verified against `src/sigmund.c`.
+This plan is based on a full read of `src/hold.c`. Phase 2 should write the actual documentation under `docs/` and keep it useful for users first, with implementation detail available for maintainers. The code remains the source of truth; `docs/SPEC.md` is useful context, but every behavioral claim in the docs must be verified against `src/hold.c`.
 
 ## Proposed file tree
 
@@ -28,7 +28,7 @@ docs/
 
 `README.md` now links into `docs/index.md` as the documentation entry point.
 
-I do not plan to create `docs/roadmap.md` in Phase 2 unless a planned behavior must be mentioned. If any source-adjacent note describes behavior that is not implemented in `src/sigmund.c`, it should either be omitted from the current-design docs or quarantined in `docs/roadmap.md` with a clear `planned - not yet implemented` label.
+I do not plan to create `docs/roadmap.md` in Phase 2 unless a planned behavior must be mentioned. If any source-adjacent note describes behavior that is not implemented in `src/hold.c`, it should either be omitted from the current-design docs or quarantined in `docs/roadmap.md` with a clear `planned - not yet implemented` label.
 
 ## Critical plan review
 
@@ -40,7 +40,7 @@ No planned behavior needs to be documented as current behavior, so `docs/roadmap
 
 Phase 2 should anchor the docs to these source regions:
 
-- Public data model: `struct record`, `struct store_paths`, `struct invocation`, `struct resolved_target`, and `struct public_index` near the top of `src/sigmund.c`.
+- Public data model: `struct record`, `struct store_paths`, `struct invocation`, `struct resolved_target`, and `struct public_index` near the top of `src/hold.c`.
 - Store setup and invocation provenance: `init_user_store_from_home`, `ensure_user_store_for_current_user`, `init_system_store`, `ensure_system_store`, and `detect_invocation`.
 - Profile fingerprinting and persistence: `profile_hash_for_argv`, `write_profile_atomic`, `load_profiles`, `write_profiles_atomic`, `alias_lookup_hash`, `alias_upsert_hash`, `alias_lookup_recipe`, and `alias_upsert_recipe`.
 - Record and public-index writes: `write_record_atomic` and `write_public_index_atomic`.
@@ -49,14 +49,14 @@ Phase 2 should anchor the docs to these source regions:
 - Process identity and state validation: `get_boot_id`, `read_process_ids_state`, `group_session_liveness`, `count_session_escapees`, `read_proc_stat_tokens`, `read_proc_exe`, `eval_state`, `do_signal_action`, and `do_print_signal_command`.
 - Target resolution and actions: `parse_id_token`, `resolve_target`, `resolve_action_token`, `append_private_alias_targets`, `append_public_alias_elevation_target`, `cmd_signal_action`, `cmd_tail_action`, `cmd_dump_action`, and `cmd_prune_action`.
 - Sudo crossing and capability checks: `resolve_self_executable_path`, `elevate_with_sudo_canonical`, `elevate_with_sudo_parsed`, `elevate_with_sudo_targets`, `elevate_start_token`, `verify_system_alias_cap`, `ensure_run_recorded_under_alias`, and `cmd_elevated_capability_action`.
-- Sudoers grant management: `cmd_grant_revoke_action`, `validate_sigmund_self_for_sudoers`, `build_sudoers_line`, `write_sudoers_template_file`, and `unlink_sudoers_template_file`.
-- CLI contract: `usage`, the `help_*` functions, `is_sigmund_owned_command`, `command_accepts_target_tokens`, and `main`.
+- Sudoers grant management: `cmd_grant_revoke_action`, `validate_hold_self_for_sudoers`, `build_sudoers_line`, `write_sudoers_template_file`, and `unlink_sudoers_template_file`.
+- CLI contract: `usage`, the `help_*` functions, `is_hold_owned_command`, `command_accepts_target_tokens`, and `main`.
 
 ## Planned documentation pages
 
 ### `docs/index.md`
 
-Index and landing page for the design documentation. It should state Sigmund's operating model in contributor terms: a daemonless, single-binary launcher that records enough durable identity to validate before signaling, sitting between raw `nohup`/`setsid` and a service manager. It should include a top-level architecture diagram that shows the CLI parser, launch path, store layer, public root index, target resolver, sudo boundary, and process-safety evaluator. It should also provide a table of contents with relative links to each subsystem page.
+Index and landing page for the design documentation. It should state On Hold's operating model in contributor terms: a daemonless, single-binary launcher that records enough durable identity to validate before signaling, sitting between raw `nohup`/`setsid` and a service manager. It should include a top-level architecture diagram that shows the CLI parser, launch path, store layer, public root index, target resolver, sudo boundary, and process-safety evaluator. It should also provide a table of contents with relative links to each subsystem page.
 
 Planned diagrams: one top-level Mermaid flowchart using block-like subgraphs, not `block-beta`.
 
@@ -98,25 +98,25 @@ Planned diagrams: sequence diagram for non-root action self-elevation; sequence 
 
 ### `docs/console.md`
 
-Documents attachable console support as implemented: PTY broker setup, native attach, private Unix socket path, terminal size forwarding, log teeing, `sigmund console <target>`, root-managed console elevation, and the fact that public indexes do not expose socket paths. It should also explain that `tail` and `dump` keep using the normal log even for console runs.
+Documents attachable console support as implemented: PTY broker setup, native attach, private Unix socket path, terminal size forwarding, log teeing, `hold console <target>`, root-managed console elevation, and the fact that public indexes do not expose socket paths. It should also explain that `tail` and `dump` keep using the normal log even for console runs.
 
 Planned diagrams: sequence diagram for console start and attach; small component diagram for child, broker, PTY, log, socket, and native attach.
 
 ### `docs/cli-contract.md`
 
-Documents the scripting and command-line contract from `main`, `usage`, and the help functions. It should cover raw start form, Sigmund-owned commands, `--`, `--quiet`, `--print`, `--iso`/`-l`, `--multi`, exit codes, stdout for machine data, stderr for human status, and command-specific no-op/error behavior. It should avoid inventing flags and should match only the current parser.
+Documents the scripting and command-line contract from `main`, `usage`, and the help functions. It should cover raw start form, On Hold-owned commands, `--`, `--quiet`, `--print`, `--iso`/`-l`, `--multi`, exit codes, stdout for machine data, stderr for human status, and command-specific no-op/error behavior. It should avoid inventing flags and should match only the current parser.
 
 Planned diagrams: parser flowchart showing pre-command switches, owned-command parsing, raw command parsing, and dispatch.
 
 ### `docs/ci.md`
 
-Provides practical guidance for using Sigmund in a user's own CI workflows. It should show starting a detached helper, capturing the bare run ID from stdout, using that ID in later steps, dumping logs, stopping the process group, pruning records, handling exit codes, and adapting the pattern for multiple helpers. Any workflow examples must use only flags present in `src/sigmund.c`.
+Provides practical guidance for using On Hold in a user's own CI workflows. It should show starting a detached helper, capturing the bare run ID from stdout, using that ID in later steps, dumping logs, stopping the process group, pruning records, handling exit codes, and adapting the pattern for multiple helpers. Any workflow examples must use only flags present in `src/hold.c`.
 
 Planned diagrams: none required; the workflow and prose should be clearer than a diagram here.
 
 ### `docs/SPEC.md`
 
-Leave this file in place as an implementation-contract reference. Phase 2 may link to it where useful, but the new subsystem pages should not simply duplicate it. If Phase 2 discovers a mismatch between `docs/SPEC.md` and `src/sigmund.c`, the new docs must follow the source and note the mismatch for later correction.
+Leave this file in place as an implementation-contract reference. Phase 2 may link to it where useful, but the new subsystem pages should not simply duplicate it. If Phase 2 discovers a mismatch between `docs/SPEC.md` and `src/hold.c`, the new docs must follow the source and note the mismatch for later correction.
 
 Planned diagrams: no new diagrams planned in this file.
 
@@ -127,7 +127,7 @@ Planned diagrams: no new diagrams planned in this file.
 - Do not present public root-index data as authoritative. The private record is authoritative; public root entries are redacted discovery metadata.
 - Do not present profile hashes as run IDs. Run IDs address runs; profile hashes address protected launch recipes and sudo capabilities.
 - Do not claim global all-user private-state scanning or global all-user run ID uniqueness. The current implementation avoids specific collision scopes based on the active invocation.
-- Do not claim environment capture or scrubbing by Sigmund. `perform_start` inherits the process environment, and privilege-crossing environment behavior is sudo policy.
+- Do not claim environment capture or scrubbing by On Hold. `perform_start` inherits the process environment, and privilege-crossing environment behavior is sudo policy.
 - Use Mermaid diagrams only where they clarify control flow, state, data relationships, or privilege boundaries. Target GitHub's verified Mermaid `11.15.0` renderer, and prefer short labels plus plain flowcharts or sequence/state diagrams.
 - Avoid `block-beta`; GitHub Mermaid support is unreliable for it.
 
@@ -135,7 +135,7 @@ Planned diagrams: no new diagrams planned in this file.
 
 Before treating Phase 2 as complete:
 
-1. Re-read `src/sigmund.c` after drafting.
+1. Re-read `src/hold.c` after drafting.
 2. Verify every function name and behavioral claim against the source.
 3. Confirm `docs/index.md` is the index and includes the top-level architecture diagram plus a relative-link table of contents.
 4. Confirm each subsystem page is linked from `docs/index.md`.
@@ -147,10 +147,10 @@ Before treating Phase 2 as complete:
 ## Phase 1 self-review
 
 - Completeness: the plan covers launcher/session creation, identity validation, stores, root public redaction, target resolution, signal safety, sudo self-elevation, profile hashing, console support, CLI scripting, and the required CI example.
-- Accuracy: page boundaries and source-map entries are drawn from actual structures and functions in `src/sigmund.c`, not from planned behavior.
+- Accuracy: page boundaries and source-map entries are drawn from actual structures and functions in `src/hold.c`, not from planned behavior.
 - Design quality: the planned pages separate conceptual concerns that the source also separates, especially store persistence, target resolution, process validation, and privilege crossing. This should help contributors modify one subsystem without mistaking it for another.
 - Diagram fit: planned diagrams are chosen by subsystem shape: sequences for handshakes and starts, state diagrams for lifecycle/state evaluation, flowcharts for resolution and validation, and ER-style diagrams for persisted records.
 
 ## Continue
 
-[Back to docs index](index.md) | [Quickstart](quickstart.md) | [Top](#sigmund-documentation-plan) | [Specification](SPEC.md)
+[Back to docs index](index.md) | [Quickstart](quickstart.md) | [Top](#hold-documentation-plan) | [Specification](SPEC.md)

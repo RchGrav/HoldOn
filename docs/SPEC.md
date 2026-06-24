@@ -1,20 +1,20 @@
-# Sigmund Specification
+# On Hold Specification
 
-> Status: This page describes the current 0.3.x/legacy implementation contract. For the 0.4.0 `mund` redesign target and current branch gap matrix, see [Mund 0.4 UX and CLI specification](MUND_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
+> Status: This page describes the current 0.3.x/legacy implementation contract. For the 0.4.0 `hold` redesign target and current branch gap matrix, see [Hold 0.4 UX and CLI specification](HOLD_0_4_UX_SPEC.md) and [0.4.0 branch alignment](0.4.0-alignment.md).
 [Docs index](index.md) | [Quickstart](quickstart.md) | [Documentation plan](PLAN.md) | [Repository README](../README.md)
 
-This document describes the current Sigmund implementation contract: user-local state, root-managed state, public redacted discovery, alias/profile resolution, sudo-aware target resolution, argv-preserving fork/wait self-elevation, and process-safety behavior.
+This document describes the current On Hold implementation contract: user-local state, root-managed state, public redacted discovery, alias/profile resolution, sudo-aware target resolution, argv-preserving fork/wait self-elevation, and process-safety behavior.
 
 ## 1. Storage contexts
 
-Sigmund has two storage contexts.
+On Hold has two storage contexts.
 
 ### 1.1 User-local state
 
 Normal non-root starts create records and logs under:
 
 ```text
-~/.local/state/sigmund
+~/.local/state/hold
 ```
 
 Required permissions:
@@ -27,29 +27,29 @@ console:   0700 user:user console sockets, 0600 per socket
 aliases:   0600 user:user aliases.json
 ```
 
-User-local state is private to the user. User aliases store direct launch recipes in `aliases.json`; they do not create a user-global protected profile object. Sigmund does not scan every user's home directory and does not require globally unique run IDs across users.
+User-local state is private to the user. User aliases store direct launch recipes in `aliases.json`; they do not create a user-global protected profile object. On Hold does not scan every user's home directory and does not require globally unique run IDs across users.
 
 ### 1.2 Root-managed state
 
 Root, sudo, and `--system` starts create records and logs under a universal system store:
 
 ```text
-Linux: /var/lib/sigmund
-macOS: /var/db/sigmund
+Linux: /var/lib/hold
+macOS: /var/db/hold
 ```
 
 Layout:
 
 ```text
-/var/lib/sigmund/runs/      private root run records
-/var/lib/sigmund/logs/      private root logs
-/var/lib/sigmund/console/   private root console sockets
-/var/lib/sigmund/profiles.json
-/var/lib/sigmund/public/    public root run index
-/var/lib/sigmund/public/aliases.json
+/var/lib/hold/runs/      private root run records
+/var/lib/hold/logs/      private root logs
+/var/lib/hold/console/   private root console sockets
+/var/lib/hold/profiles.json
+/var/lib/hold/public/    public root run index
+/var/lib/hold/public/aliases.json
 ```
 
-macOS uses the same layout under `/var/db/sigmund`.
+macOS uses the same layout under `/var/db/hold`.
 
 Required permissions:
 
@@ -65,13 +65,13 @@ public index files:   0644 root:root
 public aliases:       0644 root:root
 ```
 
-A root-managed start must never create a run under `/root/.local/state/sigmund` and must never accidentally create a root-managed run inside the invoking user's home state.
+A root-managed start must never create a run under `/root/.local/state/hold` and must never accidentally create a root-managed run inside the invoking user's home state.
 
-Production builds use the compiled system store path. Test builds compiled with `SIGMUND_TESTING` may honor `SIGMUND_TEST_SYSTEM_STATE_DIR`; production root Sigmund must not honor arbitrary user-controlled environment paths for the system store.
+Production builds use the compiled system store path. Test builds compiled with `HOLD_TESTING` may honor `HOLD_TEST_SYSTEM_STATE_DIR`; production root On Hold must not honor arbitrary user-controlled environment paths for the system store.
 
 ## 2. Invocation context
 
-Sigmund detects the current authority and provenance at startup:
+On Hold detects the current authority and provenance at startup:
 
 ```text
 effective UID is root?
@@ -81,7 +81,7 @@ was root reached through sudo?
 who is the invoking user, if sudo provenance exists?
 ```
 
-When `geteuid() == 0`, Sigmund checks:
+When `geteuid() == 0`, On Hold checks:
 
 ```text
 SUDO_UID
@@ -89,7 +89,7 @@ SUDO_GID
 SUDO_USER
 ```
 
-If all are valid, they identify the invoking user. Sigmund resolves the invoking user's home directory through the user database (`getpwuid()`), not `$HOME`. In test builds only, `SIGMUND_TEST_INVOKING_HOME` may override that resolved path so tests can avoid real user homes.
+If all are valid, they identify the invoking user. On Hold resolves the invoking user's home directory through the user database (`getpwuid()`), not `$HOME`. In test builds only, `HOLD_TEST_INVOKING_HOME` may override that resolved path so tests can avoid real user homes.
 
 Root private records for system runs include private provenance metadata:
 
@@ -102,37 +102,37 @@ invoked_via_sudo
 
 This metadata is not written to the public index.
 
-The internal `--elevated` flag marks an intentional sudo self-elevation boundary. It is not a user-facing feature. If `--elevated` is present while `geteuid() != 0`, Sigmund exits with a clean internal error.
+The internal `--elevated` flag marks an intentional sudo self-elevation boundary. It is not a user-facing feature. If `--elevated` is present while `geteuid() != 0`, On Hold exits with a clean internal error.
 
 ## 3. Command parsing
 
-Sigmund has two parsing modes.
+On Hold has two parsing modes.
 
 ### 3.1 Raw start form
 
 ```bash
-sigmund <cmd...>
+hold <cmd...>
 ```
 
-In raw start form, only invocation switches before the child command belong to Sigmund. Once the child command begins, all remaining arguments belong to the child.
+In raw start form, only invocation switches before the child command belong to On Hold. Once the child command begins, all remaining arguments belong to the child.
 
 ```bash
-sigmund --system qemu-system-x86_64 -m 4096
-# --system belongs to Sigmund
+hold --system qemu-system-x86_64 -m 4096
+# --system belongs to On Hold
 
-sigmund qemu-system-x86_64 -m 4096 --system
+hold qemu-system-x86_64 -m 4096 --system
 # --system belongs to qemu-system-x86_64
 ```
 
-Quoted child command text is opaque to Sigmund:
+Quoted child command text is opaque to On Hold:
 
 ```bash
-sigmund sh -c "qemu-system-x86_64 -m 4096 --system"
+hold sh -c "qemu-system-x86_64 -m 4096 --system"
 ```
 
-### 3.2 Sigmund-owned command form
+### 3.2 On Hold-owned command form
 
-If the first non-invocation argument is a known Sigmund command, Sigmund owns that command's argument list. Known commands include:
+If the first non-invocation argument is a known On Hold command, On Hold owns that command's argument list. Known commands include:
 
 ```text
 list
@@ -150,17 +150,17 @@ revoke
 help
 ```
 
-For Sigmund-owned commands, invocation switches may appear before or after the command arguments:
+For On Hold-owned commands, invocation switches may appear before or after the command arguments:
 
 ```bash
-sigmund --system stop 7f3c2a9d
-sigmund stop 7f3c2a9d --system
-sigmund start "qemu-system-x86_64 -m 4096" --system
+hold --system stop 7f3c2a9d
+hold stop 7f3c2a9d --system
+hold start "qemu-system-x86_64 -m 4096" --system
 ```
 
 These canonicalize to the same root-side command shape when elevation is required.
 
-`sigmund help [topic]` is a Sigmund-owned documentation command and never starts a child command named `help`.
+`hold help [topic]` is a On Hold-owned documentation command and never starts a child command named `help`.
 
 ## 4. Start behavior
 
@@ -181,14 +181,14 @@ else:
 Normal non-root start:
 
 ```bash
-sigmund <cmd...>
+hold <cmd...>
 ```
 
 writes:
 
 ```text
-~/.local/state/sigmund/<id>.json
-~/.local/state/sigmund/<id>.log
+~/.local/state/hold/<id>.json
+~/.local/state/hold/<id>.log
 ```
 
 ### 4.3 Root-managed start
@@ -196,9 +196,9 @@ writes:
 These create root-managed runs:
 
 ```bash
-sudo sigmund <cmd...>
-sigmund --system <cmd...>
-sigmund start <cmd...> --system
+sudo hold <cmd...>
+hold --system <cmd...>
+hold start <cmd...> --system
 ```
 
 A root-managed start writes:
@@ -211,9 +211,9 @@ If public index creation fails, startup fails and rolls back. A root-managed run
 
 ### 4.4 Alias start
 
-`sigmund start <alias>` starts the launch recipe currently assigned to that alias.
+`hold start <alias>` starts the launch recipe currently assigned to that alias.
 
-For user-local aliases, Sigmund loads the direct recipe from the user's private `aliases.json` and records the alias label on the new run. For root-managed aliases, Sigmund resolves the public alias to its protected profile hash, crosses sudo with the internal capability argv shape `<verb> <runid_sel> <alias> <hash>` when needed, verifies that alias/hash pair as root, loads the protected root-private profile for `start`, and records the alias label on the new run.
+For user-local aliases, On Hold loads the direct recipe from the user's private `aliases.json` and records the alias label on the new run. For root-managed aliases, On Hold resolves the public alias to its protected profile hash, crosses sudo with the internal capability argv shape `<verb> <runid_sel> <alias> <hash>` when needed, verifies that alias/hash pair as root, loads the protected root-private profile for `start`, and records the alias label on the new run.
 
 `--multi` is an alias-start modifier. Without `--multi`, `start <alias>` refuses when that alias already has a running process. Bare `--multi` starts one additional run and bypasses that guard; `--multi N` and `--multi=N` start N runs.
 
@@ -222,8 +222,8 @@ For user-local aliases, Sigmund loads the direct recipe from the user's private 
 `--console` is a start modifier. It may be used with raw starts or alias starts:
 
 ```bash
-sigmund --console <cmd...>
-sigmund start <alias> --console
+hold --console <cmd...>
+hold start <alias> --console
 ```
 
 A console run records a private `console_sock` path and starts the command behind a per-run PTY broker. Output is tee'd to the normal log, so `tail` and `dump` keep their normal behavior. Console sockets are private state and must not be exposed through the public root index.
@@ -268,7 +268,7 @@ Private root records are authoritative. Public records are derived discovery dat
 
 Private run records store the resolved executable path in `argv[0]`. If a command is launched through a relative path, that relative token is resolved before the record is written, so aliases created from the run inherit an absolute launch recipe instead of depending on the alias creator's current directory.
 
-Because Sigmund is daemonless and cannot continuously refresh root-public state after natural process exit, normal `sigmund list` displays public root rows as `unknown` rather than overselling stale `running` hints. Root/private list and root action commands evaluate authoritative state from private records.
+Because On Hold is daemonless and cannot continuously refresh root-public state after natural process exit, normal `hold list` displays public root rows as `unknown` rather than overselling stale `running` hints. Root/private list and root action commands evaluate authoritative state from private records.
 
 `public/aliases.json` is a flat JSON object mapping validated alias names to 64-character profile hashes:
 
@@ -354,7 +354,7 @@ dump: alias-labeled runs with logs
 prune: prunable alias-labeled past data
 ```
 
-If an alias selection has zero candidates but the alias exists, the action is a successful no-op. If the alias is unknown, the action returns not found. If an alias selection has more than one candidate, Sigmund exits 6 and prints the filtered candidates. `--all` resolves that ambiguity for `stop`, `kill`, and `prune`.
+If an alias selection has zero candidates but the alias exists, the action is a successful no-op. If the alias is unknown, the action returns not found. If an alias selection has more than one candidate, On Hold exits 6 and prints the filtered candidates. `--all` resolves that ambiguity for `stop`, `kill`, and `prune`.
 
 The resolver returns one normative result:
 
@@ -386,7 +386,7 @@ Important invariant:
 
 ```text
 If user-local and root-managed public targets share a plain token,
-normal Sigmund targets the user-local match and does not self-elevate.
+normal On Hold targets the user-local match and does not self-elevate.
 ```
 
 ### 7.2 Root/sudo plain target
@@ -403,7 +403,7 @@ else:
   not found
 ```
 
-This means `sudo sigmund stop <id>` can stop an invoking user's local run when that ID exists only in the invoking user's local state. In the rare conflict where both exist, root-managed wins.
+This means `sudo hold stop <id>` can stop an invoking user's local run when that ID exists only in the invoking user's local state. In the rare conflict where both exist, root-managed wins.
 
 Direct root without sudo provenance has no invoking-user context and resolves plain targets only against root-managed state.
 
@@ -423,7 +423,7 @@ user:<target> never targets root-managed state.
 system:<target> never targets user-local state.
 ```
 
-If `system:<target>` is used from normal non-root invocation, Sigmund may self-elevate. If `user:<target>` is used from root/sudo invocation, Sigmund targets the invoking user's local state when sudo provenance exists. Direct root using `user:<target>` without sudo provenance returns a clean error.
+If `system:<target>` is used from normal non-root invocation, On Hold may self-elevate. If `user:<target>` is used from root/sudo invocation, On Hold targets the invoking user's local state when sudo provenance exists. Direct root using `user:<target>` without sudo provenance returns a clean error.
 
 ### 7.4 Profiles
 
@@ -441,7 +441,7 @@ Protected profile state is stored in `profiles.json` as a hash-keyed object:
 The profile hash is SHA-256 over this stable, NUL-delimited byte stream:
 
 ```text
-sigmund-profile
+hold-profile
 resolved absolute binary path
 argc
 argv[0] index, argv[0]
@@ -449,21 +449,21 @@ argv[1] index, argv[1]
 ...
 ```
 
-The domain string `sigmund-profile` is a fixed namespace label, not a version. Do not append versions or add environment, cwd, uid, timestamp, hostname, or other context to this hash input. Existing aliases, profiles, and sudoers grants are keyed by this digest; changing the input silently invalidates them.
+The domain string `hold-profile` is a fixed namespace label, not a version. Do not append versions or add environment, cwd, uid, timestamp, hostname, or other context to this hash input. Existing aliases, profiles, and sudoers grants are keyed by this digest; changing the input silently invalidates them.
 
-Sigmund does not scrub, allowlist, capture, or hash the launched command's environment. `perform_start` and profile starts use the inherited process environment unchanged. Privilege-crossing starts rely on sudo's standard `env_reset` behavior before root Sigmund reaches `perform_start`; disabling `env_reset` or preserving loader variables through sudoers is host sudo policy, not Sigmund policy.
+On Hold does not scrub, allowlist, capture, or hash the launched command's environment. `perform_start` and profile starts use the inherited process environment unchanged. Privilege-crossing starts rely on sudo's standard `env_reset` behavior before root On Hold reaches `perform_start`; disabling `env_reset` or preserving loader variables through sudoers is host sudo policy, not On Hold policy.
 
-When a normal user targets a root-managed alias, Sigmund resolves the public alias to the current protected hash before self-elevation and carries the internal capability argv shape over sudo:
+When a normal user targets a root-managed alias, On Hold resolves the public alias to the current protected hash before self-elevation and carries the internal capability argv shape over sudo:
 
 ```text
 <verb> <runid_sel> <alias> <hash>
 ```
 
-`runid_sel` is always present. It is a concrete 8-hex run ID, `00000000` for `start`, or `ffffffff` for an approved `--all` action. Root Sigmund must verify that the alias still points at that hash and that selected concrete run records are recorded under that alias before acting.
+`runid_sel` is always present. It is a concrete 8-hex run ID, `00000000` for `start`, or `ffffffff` for an approved `--all` action. Root On Hold must verify that the alias still points at that hash and that selected concrete run records are recorded under that alias before acting.
 
 ## 8. Self-elevation boundary
 
-Normal non-root Sigmund may self-elevate only when:
+Normal non-root On Hold may self-elevate only when:
 
 ```text
 the command is stop, kill, prune, tail, or dump;
@@ -472,7 +472,7 @@ a root-managed public ID or alias matched;
 the target requires elevation.
 ```
 
-`sigmund --system start <alias>` may also self-elevate. Before the sudo boundary, a root-managed alias must be resolved to the internal start capability shape:
+`hold --system start <alias>` may also self-elevate. Before the sudo boundary, a root-managed alias must be resolved to the internal start capability shape:
 
 ```text
 start 00000000 <alias> <hash>
@@ -484,13 +484,13 @@ The elevation boundary is argv-preserving `fork()` + `waitpid()`:
 parent:
   fork()
   waitpid(sudo_child)
-  return sudo/root-Sigmund exit status
+  return sudo/root-On Hold exit status
 
 child:
   execvp("sudo", [
     "sudo",
     "--",
-    "/absolute/path/to/sigmund",
+    "/absolute/path/to/hold",
     "--system",
     "--elevated",
     <canonical-command using system:<id> for ID targets or <runid_sel> <alias> <hash> for alias capabilities>,
@@ -500,7 +500,7 @@ child:
 
 No shell is used. There is no quoting layer, no `sudo sh -c`, and no string command payload.
 
-Before building the sudo argv, Sigmund resolves its own executable path:
+Before building the sudo argv, On Hold resolves its own executable path:
 
 ```text
 Linux: /proc/self/exe
@@ -511,16 +511,16 @@ fallback: realpath(argv[0]) when argv[0] contains '/'
 If it cannot determine a safe executable path, elevation fails before invoking sudo:
 
 ```text
-sigmund: cannot determine executable path for sudo self-elevation
+hold: cannot determine executable path for sudo self-elevation
 ```
 
-For action commands, `stdin`, `stdout`, and `stderr` are inherited by the sudo/root-Sigmund child. Sigmund does not pipe or capture terminal I/O across the elevation boundary. This preserves sudo password prompting, sudo diagnostics, root Sigmund diagnostics, streamed output, and Ctrl-C behavior while still letting the non-root parent return the child status.
+For action commands, `stdin`, `stdout`, and `stderr` are inherited by the sudo/root-On Hold child. On Hold does not pipe or capture terminal I/O across the elevation boundary. This preserves sudo password prompting, sudo diagnostics, root On Hold diagnostics, streamed output, and Ctrl-C behavior while still letting the non-root parent return the child status.
 
 Exit-code contract:
 
 ```text
-If sudo successfully starts root Sigmund:
-  final exit code is root Sigmund's exit code.
+If sudo successfully starts root On Hold:
+  final exit code is root On Hold's exit code.
 
 If sudo cannot authenticate, is denied, or is cancelled:
   sudo owns the failure and its stderr explains it.
@@ -535,7 +535,7 @@ If the child cannot exec sudo at all:
 Normal list:
 
 ```bash
-sigmund list
+hold list
 ```
 
 shows:
@@ -556,8 +556,8 @@ RESULT = -
 Root/system list reads authoritative private root records:
 
 ```bash
-sudo sigmund list
-sigmund --system list
+sudo hold list
+hold --system list
 ```
 
 The implementation may later add non-interactive hydration through `sudo -n`, but any such hydration must be optional and must fall back silently to redacted public rows when unavailable.
@@ -621,9 +621,9 @@ fsync containing directory when possible
 
 ## 11. Process creation and logging
 
-Sigmund launches the child in a new session / process group. Child `stdin` is redirected from `/dev/null`; child `stdout` and `stderr` are redirected to the per-run log.
+On Hold launches the child in a new session / process group. Child `stdin` is redirected from `/dev/null`; child `stdout` and `stderr` are redirected to the per-run log.
 
-Start writes only the bare 8-character run ID to stdout. Human banners and confirmations, including `alias`, `grant`, `revoke`, `stop`, `kill`, and `prune` status lines, go to stderr and are suppressed by `--quiet` where applicable. `sigmund -f <cmd...>` starts and follows the log immediately; `--tail` remains accepted as a compatibility spelling.
+Start writes only the bare 8-character run ID to stdout. Human banners and confirmations, including `alias`, `grant`, `revoke`, `stop`, `kill`, and `prune` status lines, go to stderr and are suppressed by `--quiet` where applicable. `hold -f <cmd...>` starts and follows the log immediately; `--tail` remains accepted as a compatibility spelling.
 
 An exec-success handshake distinguishes successful `execvp()` from immediate exec failure:
 
@@ -638,7 +638,7 @@ Exec-launch failure must leave no record and no orphan log.
 
 ## 12. State evaluation and signaling safety
 
-Before signaling, Sigmund evaluates the record against the current process table.
+Before signaling, On Hold evaluates the record against the current process table.
 
 Checks include:
 
@@ -662,54 +662,54 @@ Signaling refuses `stale` and `unknown` targets. A zombie leader with live same-
 
 ## 13. Prune behavior
 
-`sigmund prune` removes prunable past run data, unreferenced logs, and orphan console sockets. Running records are kept. `sigmund prune <id>` removes exactly one prunable target. `sigmund prune all` removes all prunable targets.
+`hold prune` removes prunable past run data, unreferenced logs, and orphan console sockets. Running records are kept. `hold prune <id>` removes exactly one prunable target. `hold prune all` removes all prunable targets.
 
 Root-managed prune follows the same resolver and elevation rules as other action commands.
 
 ### 13.1 Console behavior
 
-`sigmund console <target>` attaches to a running console-enabled run through the recorded private socket. Interactive attaches save the local terminal, enter an alternate screen, forward terminal resize events to the child PTY, and restore the original terminal state when the attach exits. Ctrl-] detaches without stopping the run. Non-interactive attaches stream stdin/stdout without changing screen state. On attach, the broker replays recent PTY output before live output so reattaches can redraw an idle console without sending input to the child.
+`hold console <target>` attaches to a running console-enabled run through the recorded private socket. Interactive attaches save the local terminal, enter an alternate screen, forward terminal resize events to the child PTY, and restore the original terminal state when the attach exits. Ctrl-] detaches without stopping the run. Non-interactive attaches stream stdin/stdout without changing screen state. On attach, the broker replays recent PTY output before live output so reattaches can redraw an idle console without sending input to the child.
 
-A run ID targets that one run directly. An alias resolves by recorded alias label and the `console` verb intent-set: running runs with `console_sock`. More than one matching alias run exits 6 and prints candidates; zero candidates for a known alias exits 0. A finished run reports that it has exited and points the user to `sigmund dump <id>`. A non-console run reports that it has no console.
+A run ID targets that one run directly. An alias resolves by recorded alias label and the `console` verb intent-set: running runs with `console_sock`. More than one matching alias run exits 6 and prints candidates; zero candidates for a known alias exits 0. A finished run reports that it has exited and points the user to `hold dump <id>`. A non-console run reports that it has no console.
 
 Console is interactive process access and follows the same privilege boundary as `stop` and `kill`: user-local sockets are private to that user, and root-managed console attaches require root authority or a matching sudoers grant. The public root index must not expose console socket paths.
 
 ## 14. Sudoers grants
 
-`sigmund grant` and `sigmund revoke` manage only Sigmund-owned sudoers entries. They require root authority and operate on root-managed profiles only:
+`hold grant` and `hold revoke` manage only On Hold-owned sudoers entries. They require root authority and operate on root-managed profiles only:
 
 ```text
-sigmund grant <alias> <user> [start,stop,kill,tail,dump,prune,console]
-sigmund revoke <alias> <user> [start,stop,kill,tail,dump,prune,console]
+hold grant <alias> <user> [start,stop,kill,tail,dump,prune,console]
+hold revoke <alias> <user> [start,stop,kill,tail,dump,prune,console]
 ```
 
-The grant target must be an existing root-managed alias. The `<user>` argument may be a username, `%group`, or `all`. Sigmund resolves the alias to its immutable profile hash before writing sudoers; the managed filename is keyed by alias and user, and the sudoers command carries a fixed alias/hash pair plus an 8-hex `runid_sel` slot so root can verify the alias/hash pair and selected run records before acting. If the action list is omitted, all supported Sigmund actions for that alias are selected. This is a wildcard over Sigmund's supported alias actions, not arbitrary sudo command access. `purge` is not a supported action; the command is `prune`.
+The grant target must be an existing root-managed alias. The `<user>` argument may be a username, `%group`, or `all`. On Hold resolves the alias to its immutable profile hash before writing sudoers; the managed filename is keyed by alias and user, and the sudoers command carries a fixed alias/hash pair plus an 8-hex `runid_sel` slot so root can verify the alias/hash pair and selected run records before acting. If the action list is omitted, all supported On Hold actions for that alias are selected. This is a wildcard over On Hold's supported alias actions, not arbitrary sudo command access. `purge` is not a supported action; the command is `prune`.
 
-Before writing sudoers, Sigmund resolves its own executable path and refuses to proceed unless that file is root-owned, regular, and not writable by group or world. Managed sudoers lines grant NOPASSWD access only to tightly scoped canonical invocations with one anchored argument regex, such as:
+Before writing sudoers, On Hold resolves its own executable path and refuses to proceed unless that file is root-owned, regular, and not writable by group or world. Managed sudoers lines grant NOPASSWD access only to tightly scoped canonical invocations with one anchored argument regex, such as:
 
 ```text
-alice ALL=(root) NOPASSWD: /usr/bin/sigmund ^--system --elevated (start|stop) [0-9a-f]{8} web-test <hash>$
+alice ALL=(root) NOPASSWD: /usr/bin/hold ^--system --elevated (start|stop) [0-9a-f]{8} web-test <hash>$
 ```
 
-The managed file path is `/etc/sudoers.d/sigmund_<alias>_<user>` in production. Test builds may use `SIGMUND_TEST_SUDOERS_DIR`. Writes go to a same-directory `.tmp` candidate, use mode `0440`, are validated with `visudo -cf <tmp>`, and then `rename()` into place.
+The managed file path is `/etc/sudoers.d/hold_<alias>_<user>` in production. Test builds may use `HOLD_TEST_SUDOERS_DIR`. Writes go to a same-directory `.tmp` candidate, use mode `0440`, are validated with `visudo -cf <tmp>`, and then `rename()` into place.
 
 ## 15. Test harness contract
 
-The test suite must validate Sigmund contexts explicitly rather than inheriting the test runner's EUID.
+The test suite must validate On Hold contexts explicitly rather than inheriting the test runner's EUID.
 
 The harness creates three actors:
 
 ```text
-USER_ACTOR = normal non-root Sigmund context
-ROOT_ACTOR = direct root/system Sigmund context
-SUDO_ACTOR = root Sigmund with SUDO_UID/SUDO_GID/SUDO_USER for USER_ACTOR
+USER_ACTOR = normal non-root On Hold context
+ROOT_ACTOR = direct root/system On Hold context
+SUDO_ACTOR = root On Hold with SUDO_UID/SUDO_GID/SUDO_USER for USER_ACTOR
 ```
 
 Normal-behavior tests run through the user actor. Root/system behavior tests run through the root actor. Mixed-resolution tests use both actors.
 
 When CI starts as root, the harness creates a temporary non-root test user. When CI starts as non-root, the current user is the user actor and `sudo -n` is used for root actor tests when available.
 
-Tests must not touch real `/var/lib/sigmund` or `/var/db/sigmund`. `make test` compiles with `SIGMUND_TESTING` and uses `SIGMUND_TEST_SYSTEM_STATE_DIR`.
+Tests must not touch real `/var/lib/hold` or `/var/db/hold`. `make test` compiles with `HOLD_TESTING` and uses `HOLD_TEST_SYSTEM_STATE_DIR`.
 
 ## 16. Non-goals
 
@@ -717,4 +717,4 @@ This implementation does not add root log visibility for normal users, global al
 
 ## Continue
 
-[Back to docs index](index.md) | [Quickstart](quickstart.md) | [Top](#sigmund-specification) | [Documentation plan](PLAN.md)
+[Back to docs index](index.md) | [Quickstart](quickstart.md) | [Top](#hold-specification) | [Documentation plan](PLAN.md)

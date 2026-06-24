@@ -1,58 +1,58 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/store.h"
-#include "sigmund/core.h"
-#include "sigmund/platform.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/store.h"
+#include "hold/core.h"
+#include "hold/platform.h"
 
-static void free_profiles(struct sigmund_profile *profiles, size_t count);
-static bool profile_equal_argv(const struct sigmund_profile *p, const char *binary_path, int argc, char **argv);
-static int parse_profile_object(const char *j, const char *hash, struct sigmund_profile *profile);
-static int load_profiles(const struct sigmund_store *store, struct sigmund_profile **profiles_out, size_t *count_out);
-static int write_profiles_atomic(const struct sigmund_store *store, const struct sigmund_profile *profiles, size_t count);
+static void free_profiles(struct hold_profile *profiles, size_t count);
+static bool profile_equal_argv(const struct hold_profile *p, const char *binary_path, int argc, char **argv);
+static int parse_profile_object(const char *j, const char *hash, struct hold_profile *profile);
+static int load_profiles(const struct hold_store *store, struct hold_profile **profiles_out, size_t *count_out);
+static int write_profiles_atomic(const struct hold_store *store, const struct hold_profile *profiles, size_t count);
 
 /*
  * This digest is a stable capability key. Do not add versions, environment,
  * cwd, uid, timestamps, or other context: existing aliases, profiles, and
  * sudoers grants are keyed to exactly this binary-path + argv framing.
  */
-void sigmund_profile_hash_for_argv(const char *binary_path, int argc, char **argv, char out[PROFILE_HASH_STR_LEN]) {
+void hold_profile_hash_for_argv(const char *binary_path, int argc, char **argv, char out[PROFILE_HASH_STR_LEN]) {
     struct sha256_ctx ctx;
     unsigned char digest[32];
-    sigmund_sha256_init(&ctx);
-    sigmund_sha256_update_nul_field(&ctx, "sigmund-profile");
-    sigmund_sha256_update_nul_field(&ctx, binary_path);
+    hold_sha256_init(&ctx);
+    hold_sha256_update_nul_field(&ctx, "hold-profile");
+    hold_sha256_update_nul_field(&ctx, binary_path);
     char count[32];
     snprintf(count, sizeof(count), "%d", argc);
-    sigmund_sha256_update_nul_field(&ctx, count);
+    hold_sha256_update_nul_field(&ctx, count);
     for (int i = 0; i < argc; i++) {
         char idx[32];
         snprintf(idx, sizeof(idx), "%d", i);
-        sigmund_sha256_update_nul_field(&ctx, idx);
-        sigmund_sha256_update_nul_field(&ctx, argv[i]);
+        hold_sha256_update_nul_field(&ctx, idx);
+        hold_sha256_update_nul_field(&ctx, argv[i]);
     }
-    sigmund_sha256_final(&ctx, digest);
-    sigmund_hex_encode(digest, sizeof(digest), out, PROFILE_HASH_STR_LEN);
+    hold_sha256_final(&ctx, digest);
+    hold_hex_encode(digest, sizeof(digest), out, PROFILE_HASH_STR_LEN);
 }
 
-void sigmund_free_profile(struct sigmund_profile *p) {
+void hold_free_profile(struct hold_profile *p) {
     if (!p) {
         return;
     }
-    sigmund_free_argv_alloc(p->argv, p->argc);
+    hold_free_argv_alloc(p->argv, p->argc);
     memset(p, 0, sizeof(*p));
 }
 
-static void free_profiles(struct sigmund_profile *profiles, size_t count) {
+static void free_profiles(struct hold_profile *profiles, size_t count) {
     if (!profiles) {
         return;
     }
     for (size_t i = 0; i < count; i++) {
-        sigmund_free_profile(&profiles[i]);
+        hold_free_profile(&profiles[i]);
     }
     free(profiles);
 }
 
-static bool profile_equal_argv(const struct sigmund_profile *p, const char *binary_path, int argc, char **argv) {
+static bool profile_equal_argv(const struct hold_profile *p, const char *binary_path, int argc, char **argv) {
     if (strcmp(p->binary_path, binary_path) != 0 || p->argc != argc) {
         return false;
     }
@@ -64,45 +64,45 @@ static bool profile_equal_argv(const struct sigmund_profile *p, const char *bina
     return true;
 }
 
-static int parse_profile_object(const char *j, const char *hash, struct sigmund_profile *profile) {
+static int parse_profile_object(const char *j, const char *hash, struct hold_profile *profile) {
     memset(profile, 0, sizeof(*profile));
-    if (!sigmund_valid_profile_hash(hash)) {
+    if (!hold_valid_profile_hash(hash)) {
         errno = EINVAL;
         return -1;
     }
-    if (sigmund_json_get_str(j, "bin", profile->binary_path, sizeof(profile->binary_path)) != 0 &&
-        sigmund_json_get_str(j, "binary_path", profile->binary_path, sizeof(profile->binary_path)) != 0) {
+    if (hold_json_get_str(j, "bin", profile->binary_path, sizeof(profile->binary_path)) != 0 &&
+        hold_json_get_str(j, "binary_path", profile->binary_path, sizeof(profile->binary_path)) != 0) {
         return -1;
     }
     if (profile->binary_path[0] != '/') {
         errno = EINVAL;
         return -1;
     }
-    if (sigmund_json_get_args_alloc(j, &profile->argv, &profile->argc) != 0 &&
-        sigmund_json_get_argv_alloc(j, &profile->argv, &profile->argc) != 0) {
-        sigmund_free_profile(profile);
+    if (hold_json_get_args_alloc(j, &profile->argv, &profile->argc) != 0 &&
+        hold_json_get_argv_alloc(j, &profile->argv, &profile->argc) != 0) {
+        hold_free_profile(profile);
         return -1;
     }
-    sigmund_profile_hash_for_argv(profile->binary_path, profile->argc, profile->argv, profile->hash);
+    hold_profile_hash_for_argv(profile->binary_path, profile->argc, profile->argv, profile->hash);
     if (strcmp(profile->hash, hash) != 0) {
-        sigmund_free_profile(profile);
+        hold_free_profile(profile);
         errno = EINVAL;
         return -1;
     }
     return 0;
 }
 
-static int load_profiles(const struct sigmund_store *store, struct sigmund_profile **profiles_out, size_t *count_out) {
+static int load_profiles(const struct hold_store *store, struct hold_profile **profiles_out, size_t *count_out) {
     *profiles_out = NULL;
     *count_out = 0;
     char *j = NULL;
-    if (sigmund_read_owned_file_no_symlink(store->profile_path, &j) != 0) {
+    if (hold_read_owned_file_no_symlink(store->profile_path, &j) != 0) {
         if (errno == ENOENT) {
             return 0;
         }
         return -1;
     }
-    const char *p = sigmund_skip_ws(j);
+    const char *p = hold_skip_ws(j);
     if (*p != '{') {
         free(j);
         errno = EINVAL;
@@ -110,27 +110,27 @@ static int load_profiles(const struct sigmund_store *store, struct sigmund_profi
     }
     p++;
     size_t cap = 0, count = 0;
-    struct sigmund_profile *profiles = NULL;
+    struct hold_profile *profiles = NULL;
     while (1) {
-        p = sigmund_skip_ws(p);
+        p = hold_skip_ws(p);
         if (*p == '}') {
             break;
         }
         char hash[PROFILE_HASH_STR_LEN];
-        if (sigmund_parse_json_string(p, hash, sizeof(hash), &p) != 0 || !sigmund_valid_profile_hash(hash)) {
+        if (hold_parse_json_string(p, hash, sizeof(hash), &p) != 0 || !hold_valid_profile_hash(hash)) {
             free(j);
             free_profiles(profiles, count);
             errno = EINVAL;
             return -1;
         }
-        p = sigmund_skip_ws(p);
+        p = hold_skip_ws(p);
         if (*p != ':') {
             free(j);
             free_profiles(profiles, count);
             errno = EINVAL;
             return -1;
         }
-        p = sigmund_skip_ws(p + 1);
+        p = hold_skip_ws(p + 1);
         if (*p != '{') {
             free(j);
             free_profiles(profiles, count);
@@ -139,7 +139,7 @@ static int load_profiles(const struct sigmund_store *store, struct sigmund_profi
         }
         if (count == cap) {
             size_t next_cap = cap ? cap * 2 : 8;
-            struct sigmund_profile *next = realloc(profiles, next_cap * sizeof(*profiles));
+            struct hold_profile *next = realloc(profiles, next_cap * sizeof(*profiles));
             if (!next) {
                 free(j);
                 free_profiles(profiles, count);
@@ -154,12 +154,12 @@ static int load_profiles(const struct sigmund_store *store, struct sigmund_profi
             return -1;
         }
         count++;
-        if (sigmund_skip_json_value(&p) != 0) {
+        if (hold_skip_json_value(&p) != 0) {
             free(j);
             free_profiles(profiles, count);
             return -1;
         }
-        p = sigmund_skip_ws(p);
+        p = hold_skip_ws(p);
         if (*p == ',') {
             p++;
             continue;
@@ -178,8 +178,8 @@ static int load_profiles(const struct sigmund_store *store, struct sigmund_profi
     return 0;
 }
 
-static int write_profiles_atomic(const struct sigmund_store *store, const struct sigmund_profile *profiles, size_t count) {
-    char dir[SIGMUND_PATH_MAX], tmp[SIGMUND_PATH_MAX];
+static int write_profiles_atomic(const struct hold_store *store, const struct hold_profile *profiles, size_t count) {
+    char dir[HOLD_PATH_MAX], tmp[HOLD_PATH_MAX];
     snprintf(dir, sizeof(dir), "%s", store->profile_path);
     char *slash = strrchr(dir, '/');
     if (!slash) {
@@ -187,7 +187,7 @@ static int write_profiles_atomic(const struct sigmund_store *store, const struct
         return -1;
     }
     *slash = '\0';
-    int fd = sigmund_open_unique_temp(dir, "profiles", 0600, tmp, sizeof(tmp));
+    int fd = hold_open_unique_temp(dir, "profiles", 0600, tmp, sizeof(tmp));
     if (fd < 0) {
         return -1;
     }
@@ -206,11 +206,11 @@ static int write_profiles_atomic(const struct sigmund_store *store, const struct
     fprintf(f, "{\n");
     for (size_t i = 0; i < count; i++) {
         fprintf(f, "  \"");
-        sigmund_json_escape(f, profiles[i].hash);
+        hold_json_escape(f, profiles[i].hash);
         fprintf(f, "\": {\"bin\": \"");
-        sigmund_json_escape(f, profiles[i].binary_path);
+        hold_json_escape(f, profiles[i].binary_path);
         fprintf(f, "\", \"args\": ");
-        sigmund_write_json_argv(f, profiles[i].argc, profiles[i].argv);
+        hold_write_json_argv(f, profiles[i].argc, profiles[i].argv);
         fprintf(f, "}%s\n", i + 1 == count ? "" : ",");
     }
     fprintf(f, "}\n");
@@ -229,26 +229,26 @@ static int write_profiles_atomic(const struct sigmund_store *store, const struct
         errno = saved;
         return -1;
     }
-    (void)sigmund_fsync_dir_path(dir);
+    (void)hold_fsync_dir_path(dir);
     return 0;
 }
 
-int sigmund_write_profile_atomic(const struct sigmund_store *store,
+int hold_write_profile_atomic(const struct hold_store *store,
                                 const char *hash,
                                 const char *binary_path,
                                 int argc,
                                 char **argv) {
-    if (!sigmund_valid_profile_hash(hash) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv) {
+    if (!hold_valid_profile_hash(hash) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv) {
         errno = EINVAL;
         return -1;
     }
     char check_hash[PROFILE_HASH_STR_LEN];
-    sigmund_profile_hash_for_argv(binary_path, argc, argv, check_hash);
+    hold_profile_hash_for_argv(binary_path, argc, argv, check_hash);
     if (strcmp(check_hash, hash) != 0) {
         errno = EINVAL;
         return -1;
     }
-    struct sigmund_profile *profiles = NULL;
+    struct hold_profile *profiles = NULL;
     size_t count = 0;
     if (load_profiles(store, &profiles, &count) != 0) {
         return -1;
@@ -264,7 +264,7 @@ int sigmund_write_profile_atomic(const struct sigmund_store *store,
             return rc;
         }
     }
-    struct sigmund_profile *next = realloc(profiles, (count + 1) * sizeof(*profiles));
+    struct hold_profile *next = realloc(profiles, (count + 1) * sizeof(*profiles));
     if (!next) {
         free_profiles(profiles, count);
         return -1;
@@ -272,8 +272,8 @@ int sigmund_write_profile_atomic(const struct sigmund_store *store,
     profiles = next;
     memset(&profiles[count], 0, sizeof(profiles[count]));
     snprintf(profiles[count].hash, sizeof(profiles[count].hash), "%s", hash);
-    if (sigmund_checked_snprintf(profiles[count].binary_path, sizeof(profiles[count].binary_path), "%s", binary_path) != 0 ||
-        sigmund_copy_argv(&profiles[count].argv, argc, argv) != 0) {
+    if (hold_checked_snprintf(profiles[count].binary_path, sizeof(profiles[count].binary_path), "%s", binary_path) != 0 ||
+        hold_copy_argv(&profiles[count].argv, argc, argv) != 0) {
         free_profiles(profiles, count + 1);
         return -1;
     }
@@ -284,18 +284,18 @@ int sigmund_write_profile_atomic(const struct sigmund_store *store,
     return rc;
 }
 
-int sigmund_load_profile_by_hash(const struct sigmund_store *store, const char *hash, struct sigmund_profile *profile) {
+int hold_load_profile_by_hash(const struct hold_store *store, const char *hash, struct hold_profile *profile) {
     memset(profile, 0, sizeof(*profile));
-    if (!sigmund_valid_profile_hash(hash)) {
+    if (!hold_valid_profile_hash(hash)) {
         errno = EINVAL;
         return -1;
     }
     char *j = NULL;
-    if (sigmund_read_owned_file_no_symlink(store->profile_path, &j) != 0) {
+    if (hold_read_owned_file_no_symlink(store->profile_path, &j) != 0) {
         return -1;
     }
     const char *v = NULL;
-    if (sigmund_json_find_key(j, hash, &v) != 0 || parse_profile_object(v, hash, profile) != 0) {
+    if (hold_json_find_key(j, hash, &v) != 0 || parse_profile_object(v, hash, profile) != 0) {
         free(j);
         return -1;
     }
@@ -303,11 +303,11 @@ int sigmund_load_profile_by_hash(const struct sigmund_store *store, const char *
     return 0;
 }
 
-int sigmund_profile_exists_in_store(const struct sigmund_store *store, const char *hash) {
-    struct sigmund_profile p;
-    if (sigmund_load_profile_by_hash(store, hash, &p) != 0) {
+int hold_profile_exists_in_store(const struct hold_store *store, const char *hash) {
+    struct hold_profile p;
+    if (hold_load_profile_by_hash(store, hash, &p) != 0) {
         return -1;
     }
-    sigmund_free_profile(&p);
+    hold_free_profile(&p);
     return 0;
 }

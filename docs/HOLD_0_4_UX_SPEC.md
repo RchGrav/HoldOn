@@ -1,13 +1,13 @@
-# Mund 0.4 UX and CLI specification draft
+# Hold 0.4 UX and CLI specification draft
 
 Date: 2026-06-23
 Status: authoritative 0.4.0 branch UX specification and release-plan target
 
 ## 1. Product stance
 
-Sigmund remains the project identity; the intended 0.4.0 user-facing command is `mund`.
+On Hold remains the project identity; the intended 0.4.0 user-facing command is `hold`.
 
-`mund` is a guardian shell for background jobs: run it, leave it, find it, watch it, stop it safely.
+`hold` is a guardian shell for background jobs: run it, leave it, find it, watch it, stop it safely.
 
 Version 0.4.0 is intentionally allowed to break the current CLI because the tool has no established user base. This document defines the target product direction for that release. Until the tracked alignment matrix marks a section implemented, treat it as a requirement or follow-up rather than a release claim. The goal is to replace the legacy action-first/alias-based surface with one coherent command language shared by:
 
@@ -40,12 +40,12 @@ Profiles may contain:
 Profile operations are definition-oriented:
 
 ```sh
-mund profile web show
-mund profile web set command -- /usr/bin/python3 -m http.server 9000
-mund profile web set cwd /srv/web
-mund profile web set env PYTHONUNBUFFERED=1
-mund profile web start
-mund profile web export --format cli
+hold profile web show
+hold profile web set command -- /usr/bin/python3 -m http.server 9000
+hold profile web set cwd /srv/web
+hold profile web set env PYTHONUNBUFFERED=1
+hold profile web start
+hold profile web export --format cli
 ```
 
 ### 2.2 Run
@@ -67,36 +67,36 @@ Runs have:
 Execution-control actions target runs. A profile name may be accepted as a convenience selector only when it resolves safely.
 
 ```sh
-mund stop 04a7dda8       # exact run
-mund stop web            # valid only if web has exactly one running run
-mund stop web --all      # explicitly affect all running web runs
-mund logs web --follow   # valid only if web resolves to one relevant run
+hold stop 04a7dda8       # exact run
+hold stop web            # valid only if web has exactly one running run
+hold stop web --all      # explicitly affect all running web runs
+hold logs web --follow   # valid only if web resolves to one relevant run
 ```
 
-If profile `web` has zero matching runs, report that nothing matches and suggest a profile action such as `mund profile web start`. If it has multiple matching runs, refuse and show candidate run IDs unless `--all` or another explicit selector is supplied.
+If profile `web` has zero matching runs, report that nothing matches and suggest a profile action such as `hold profile web start`. If it has multiple matching runs, refuse and show candidate run IDs unless `--all` or another explicit selector is supplied.
 
 ### 2.3 Ad hoc run command
 
 `run` is a launch command, not a namespace for managing existing executions.
 
 ```sh
-mund run -- npm run dev
+hold run -- npm run dev
 ```
 
 Avoid awkward command forms such as:
 
 ```sh
-mund run web stop       # do not use
+hold run web stop       # do not use
 ```
 
 Use natural execution verbs instead:
 
 ```sh
-mund stop web
-mund logs web
-mund open web
-mund status web
-mund prune web
+hold stop web
+hold logs web
+hold open web
+hold status web
+hold prune web
 ```
 
 ## 3. Proposed command grammar
@@ -104,53 +104,53 @@ mund prune web
 The 0.4.0 CLI surface is the command set below. Implementation may stage internal refactors behind this surface, but the release should not defer major user-facing pieces of the grammar to a later minor release.
 
 ```text
-mund run -- <cmd> [args...]
+hold run -- <cmd> [args...]
 
-mund profile <name> show
-mund profile <name> create -- <cmd> [args...]
-mund profile <name> create-from-run <id> [--adopt]
-mund profile <name> edit [--format cli|json]
-mund profile <name> delete
-mund profile <name> rename <new-name>
-mund profile <name> start
-mund profile <name> restart
-mund profile <name> set command -- <cmd> [args...]
-mund profile <name> set cwd <path>
-mund profile <name> set env KEY=VALUE
-mund profile <name> unset env KEY
-mund profile <name> set console on|off
-mund profile <name> set multi allow|deny
-mund profile <name> export [--format cli|json]
-mund profile <name> grant <principal> [actions]
-mund profile <name> revoke <principal> [actions]
+hold profile <name> show
+hold profile <name> create -- <cmd> [args...]
+hold profile <name> create-from-run <id> [--adopt]
+hold profile <name> edit [--format cli|json]
+hold profile <name> delete
+hold profile <name> rename <new-name>
+hold profile <name> start
+hold profile <name> restart
+hold profile <name> set command -- <cmd> [args...]
+hold profile <name> set cwd <path>
+hold profile <name> set env KEY=VALUE
+hold profile <name> unset env KEY
+hold profile <name> set console on|off
+hold profile <name> set multi allow|deny
+hold profile <name> export [--format cli|json]
+hold profile <name> grant <principal> [actions]
+hold profile <name> revoke <principal> [actions]
 
-Current branch profile v1 evidence: `mund profile <name> create -- <cmd> [args...]`, `set command -- <cmd> [args...]`, `rename <new-name>`, and `delete` manage a user-local profile command recipe and round-trip through profile transcript/JSON export. `mund shell` also supports a first profile submode: `profile <name>` enters context, local `show/create/set/start/rename/delete` commands are rewritten through the same name-first grammar, and `back` returns to the top prompt. The remaining field editors (`cwd`, `env`, `console`, `multi`, readiness, cleanup, grants) are still release-gated follow-up work.
+Current branch profile v1 evidence: `hold profile <name> create -- <cmd> [args...]`, `set command -- <cmd> [args...]`, `rename <new-name>`, and `delete` manage a user-local profile command recipe and round-trip through profile transcript/JSON export. `hold shell` also supports a first profile submode: `profile <name>` enters context, local `show/create/set/start/rename/delete` commands are rewritten through the same name-first grammar, and `back` returns to the top prompt. The remaining field editors (`cwd`, `env`, `console`, `multi`, readiness, cleanup, grants) are still release-gated follow-up work.
 
-mund show runs
-mund show profiles
-mund show profile <name>
-mund show grants [profile]
-mund show tree <view>
+hold show runs
+hold show profiles
+hold show profile <name>
+hold show grants [profile]
+hold show tree <view>
 
-mund status <target>
-mund inspect <target>
-mund logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]
-mund view <target> [--follow|-f] [--filter TEXT] [--plain|--interactive]
-mund open <target>
-mund stop <target> [--all]
-mund kill <target> [--all]
-mund prune <target> [--all]
-mund adopt <run-id> <profile>
+hold status <target>
+hold inspect <target>
+hold logs <target> [--follow|-f] [--filter TEXT] [--similar TEXT] [--plain|--interactive]
+hold view <target> [--follow|-f] [--filter TEXT] [--plain|--interactive]
+hold open <target>
+hold stop <target> [--all]
+hold kill <target> [--all]
+hold prune <target> [--all]
+hold adopt <run-id> <profile>
 
-mund clean exited|stale|failed|all [--dry-run|--yes]
-mund doctor [target]
-mund import <file> [--dry-run|--yes]
-mund export profile <name> [--format cli|json]
+hold clean exited|stale|failed|all [--dry-run|--yes]
+hold doctor [target]
+hold import <file> [--dry-run|--yes]
+hold export profile <name> [--format cli|json]
 ```
 
 ## 4. Captive shell and navigation
 
-Bare `mund` on an interactive TTY should open a captive shell/dashboard. In non-TTY contexts, no-arg behavior should not unexpectedly enter an interactive UI.
+Bare `hold` on an interactive TTY should open a captive shell/dashboard. In non-TTY contexts, no-arg behavior should not unexpectedly enter an interactive UI.
 
 The shell supports the same command language as the one-shot CLI, plus navigation commands such as `cd`, `back`, `pwd`, `ls`, and `tree`.
 
@@ -185,25 +185,25 @@ Some paths are convenience paths that canonicalize to another view. Navigation s
 Example:
 
 ```text
-mund> cd profiles/web
-mund(/profiles/web)> cd running
+hold> cd profiles/web
+hold(/profiles/web)> cd running
 redirect: /profiles/web/running -> /running/web
-mund(/running/web)> back
-mund(/profiles/web)>
+hold(/running/web)> back
+hold(/profiles/web)>
 ```
 
 Direct navigation backs up canonically:
 
 ```text
-mund> cd running/web
-mund(/running/web)> back
-mund(/running)>
+hold> cd running/web
+hold(/running/web)> back
+hold(/running)>
 ```
 
 ### 4.3 Universal completion namespaces
 
 Completion is a first-class feature of the CLI library, not a special case inside
-`mund shell`. Any namespace that can be listed by `list`, viewed by `show`, or
+`hold shell`. Any namespace that can be listed by `list`, viewed by `show`, or
 described by `help` should also be available to tab completion through the same
 provider API. The command tree, help output, and completion candidates should
 share one source of truth wherever practical.
@@ -224,13 +224,13 @@ state-actions         stop, logs, view, inspect, clean/prune where valid for the
 The completion provider must be context-aware:
 
 ```text
-mund> p<Tab>                 -> profile
-mund> profile w<Tab>         -> profile web
-mund> save <Tab>             -> recent run IDs plus `last`
-mund> save 8f3a<Tab> as      -> complete the run ID, then suggest `as`
-mund> save last as <Tab>     -> suggest profile names only for explicit overwrite flows; otherwise suggest no existing name
-mund(profile:web)> s<Tab>    -> show/start/set/... local to the profile context
-mund> stop <Tab>             -> active run IDs plus profile names only when they resolve to one active run
+hold> p<Tab>                 -> profile
+hold> profile w<Tab>         -> profile web
+hold> save <Tab>             -> recent run IDs plus `last`
+hold> save 8f3a<Tab> as      -> complete the run ID, then suggest `as`
+hold> save last as <Tab>     -> suggest profile names only for explicit overwrite flows; otherwise suggest no existing name
+hold(profile:web)> s<Tab>    -> show/start/set/... local to the profile context
+hold> stop <Tab>             -> active run IDs plus profile names only when they resolve to one active run
 ```
 
 For 0.4.0, the target is basic, reliable tab completion inside and outside the
@@ -254,16 +254,16 @@ current token or command line. The original text, including blank input, is part
 of the cycle so the user can always return to exactly where they started:
 
 ```text
-mund> s<Tab>       # ambiguous: save/show/start/status/stop, completes only shared prefix if any
-mund> s<Down>      # save
-mund> <Down>       # show
-mund> <Down>       # start
-mund> <Up>         # show
-mund> <cycle...>   # eventually returns to the original `s` or blank input
+hold> s<Tab>       # ambiguous: save/show/start/status/stop, completes only shared prefix if any
+hold> s<Down>      # save
+hold> <Down>       # show
+hold> <Down>       # start
+hold> <Up>         # show
+hold> <cycle...>   # eventually returns to the original `s` or blank input
 ```
 
 No ghost text is part of the design. Completion either inserts real text, shows
-candidates, or cycles concrete candidate replacements in Mund-owned interactive
+candidates, or cycles concrete candidate replacements in Hold-owned interactive
 contexts.
 
 The reusable CLI library should therefore expose for 0.4.0:
@@ -298,10 +298,10 @@ exit
 Commands:
 
 ```sh
-mund export profile web --format cli > web.mund
-mund export profile web --format json > web.json
-mund import web.mund --dry-run
-mund import web.mund --yes
+hold export profile web --format cli > web.hold
+hold export profile web --format json > web.json
+hold import web.hold --dry-run
+hold import web.hold --yes
 ```
 
 Import/apply should validate and show a change summary before overwriting unless `--yes` is supplied.
@@ -342,7 +342,7 @@ q                quit viewer
 
 Backspace to an empty query restores the full view immediately. A dedicated clear key is optional, not required.
 
-Current branch v1 evidence: `mund view <target>` keeps plain output for scripts and opens an interactive TTY viewer by default when stdin/stdout are TTYs. `--plain` forces script-style output and `--interactive` fails closed when no TTY is available. The intended live-log UX is dynamic: `mund logs <target> --follow` / `mund view <target> --follow` opens the live viewer, printable keys update the top filter field per keystroke, Backspace relaxes the filter, and matching live output appears without restarting the command. `--filter TEXT` remains a scripting/seed option, not the primary human flow. Non-TTY follow streams matching lines until the recorded run exits; TTY follow refreshes while running and marks the view exited when the run ends. The v1 keys are printable type-to-filter, Backspace, Space to toggle the highlighted line as a similarity example, arrows/`j`/`k`, PgUp/PgDn, and `q`.
+Current branch v1 evidence: `hold view <target>` keeps plain output for scripts and opens an interactive TTY viewer by default when stdin/stdout are TTYs. `--plain` forces script-style output and `--interactive` fails closed when no TTY is available. The intended live-log UX is dynamic: `hold logs <target> --follow` / `hold view <target> --follow` opens the live viewer, printable keys update the top filter field per keystroke, Backspace relaxes the filter, and matching live output appears without restarting the command. `--filter TEXT` remains a scripting/seed option, not the primary human flow. Non-TTY follow streams matching lines until the recorded run exits; TTY follow refreshes while running and marks the view exited when the run ends. The v1 keys are printable type-to-filter, Backspace, Space to toggle the highlighted line as a similarity example, arrows/`j`/`k`, PgUp/PgDn, and `q`.
 
 ### 6.1 Search vs filter
 
@@ -587,7 +587,7 @@ Default behavior is local and immediate.
 
 For growing logs:
 
-- v1 implementation: `mund logs <target> --follow` routes through `mund view --follow` for a dynamic TTY filter field. `--filter TEXT` can seed/script the same engine, but the human design is type-to-filter after the viewer is open. Plain `mund logs <target>` remains tail-compatible.
+- v1 implementation: `hold logs <target> --follow` routes through `hold view --follow` for a dynamic TTY filter field. `--filter TEXT` can seed/script the same engine, but the human design is type-to-filter after the viewer is open. Plain `hold logs <target>` remains tail-compatible.
 - active live filters are anchored at the tail by default; PgUp moves to older matching windows, and PgDn walks back toward the live edge;
 - when the user is browsing older matches, new log data does not yank the viewport to EOF; follow ticks filter bounded appended slices and keep a separate scan-progress cursor, so sparse matches in large bursts are deferred across ticks rather than skipped; the header reports `newer below` only after a new matching row is found;
 - `--debug-stats` includes `scan_gen`, which increments only when the filter engine refills the visible cache;
@@ -600,7 +600,7 @@ For growing logs:
 
 ## 9. Output contract
 
-The new grammar should preserve Sigmund’s good scripting discipline:
+The new grammar should preserve On Hold’s good scripting discipline:
 
 - stdout is for machine data when a command is intended to be captured;
 - stderr is for human status and diagnostics;
@@ -611,7 +611,7 @@ The new grammar should preserve Sigmund’s good scripting discipline:
 Example:
 
 ```sh
-id="$(mund run -- sleep 30)"
+id="$(hold run -- sleep 30)"
 ```
 
 The command should print only the run ID to stdout on success.
@@ -622,14 +622,14 @@ Current branch status is tracked in [0.4.0 branch alignment and follow-up matrix
 
 Resolved decisions for the current 0.4.0 direction:
 
-1. Use **Sigmund** for the project and **`mund`** for the intended 0.4.0 operator command.
-2. Keep `run` launch-only. Do not make `mund run <target> stop/logs/open` a management namespace.
-3. Omit `profile <name> stop` as a primary command so the definition/run distinction stays clear; use `mund stop <target>` with singular profile resolution rules.
+1. Use **On Hold** for the project and **`hold`** for the intended 0.4.0 operator command.
+2. Keep `run` launch-only. Do not make `hold run <target> stop/logs/open` a management namespace.
+3. Omit `profile <name> stop` as a primary command so the definition/run distinction stays clear; use `hold stop <target>` with singular profile resolution rules.
 4. Treat current Space-selected, local deterministic similarity as the minimum implemented v1 slice until the fuller `S/X/A/D/U` interaction model is implemented.
 
 Still-open release decisions:
 
-1. Whether `mund profile <name> restart` is safe sugar or must require explicit policy such as singular-only vs `--all`.
+1. Whether `hold profile <name> restart` is safe sugar or must require explicit policy such as singular-only vs `--all`.
 2. Whether `/active` and `/history` are primary shell namespaces or aliases over `/running` and state-specific history views.
 3. Whether full before/visible/after deques, raw tail ring, sparse indexes, and richer similarity controls are required before the 0.4.0 release or can remain post-0.4 follow-up with the current dynamic filter as the core feature.
 
@@ -641,8 +641,8 @@ The 0.4.0 CLI redesign should ship with hardening work that makes the new surfac
 
 Requirements:
 
-- Modify `tests/test_sigmund.sh` so every `run_test` invocation has a per-test timeout.
-- Default timeout: `SIGMUND_TEST_TIMEOUT=25` seconds.
+- Modify `tests/test_hold.sh` so every `run_test` invocation has a per-test timeout.
+- Default timeout: `HOLD_TEST_TIMEOUT=25` seconds.
 - Print `RUN: <description>` before each test.
 - On timeout, print:
   - failing test name/description;
@@ -737,10 +737,10 @@ Acceptance:
 
 Requirements:
 
-- Audit `sigmund_mkdir_p0700` and `sigmund_mkdir_p_mode`.
+- Audit `hold_mkdir_p0700` and `hold_mkdir_p_mode`.
 - Replace stat-following path walks with `lstat`/`openat`-style symlink refusal where practical.
 - Ensure `chmod`/`chown` operations cannot be redirected through symlinks.
-- Rename `sigmund_read_owned_file_no_symlink` if ownership is not checked, or add ownership/mode checks where security-sensitive.
+- Rename `hold_read_owned_file_no_symlink` if ownership is not checked, or add ownership/mode checks where security-sensitive.
 - Add tests for symlinked store directories and temp files.
 
 Acceptance:
@@ -795,7 +795,7 @@ Requirements:
 Acceptance:
 
 - Docs accurately describe GNU static, GNU dynamic, and musl static artifacts.
-- The recommended path for true standalone Linux installs is `SIGMUND_FLAVOR=musl-static` or an equivalent musl-targeted static build.
+- The recommended path for true standalone Linux installs is `HOLD_FLAVOR=musl-static` or an equivalent musl-targeted static build.
 
 ### 11.10 Harden release and installer scripts
 
@@ -805,7 +805,7 @@ Requirements:
 - Use `overwrite_files` or an immutable release policy instead.
 - Replace installer temp dir creation with `mktemp -d` and `umask 077`.
 - Prefer mandatory `SHA256SUMS` verification over release-body checksum scraping.
-- Validate archive layout instead of finding the first file named `sigmund`/`mund`.
+- Validate archive layout instead of finding the first file named `hold`/`hold`.
 - Make `package_tarball.sh` deterministic where GNU tar is available.
 - Add installer tests for:
   - missing/malformed checksum;
@@ -836,7 +836,7 @@ Acceptance:
 
 0.4.0 should be considered ready only when both product and hardening criteria are met:
 
-- full `mund` command grammar and product direction in this document are implemented coherently and documented;
+- full `hold` command grammar and product direction in this document are implemented coherently and documented;
 - profile/run target semantics are unambiguous;
 - CLI transcript import/export is specified and tested;
 - pager/live-filter/similarity-filter behavior is implemented to the 0.4.0 interaction contract, with later minor releases limited to refinement rather than deferring the core product feature;

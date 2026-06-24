@@ -1,7 +1,7 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/platform.h"
-#include "sigmund/core.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/platform.h"
+#include "hold/core.h"
 
 static int realpath_copy(const char *path, char *out, size_t n);
 
@@ -10,12 +10,12 @@ static int realpath_copy(const char *path, char *out, size_t n) {
     if (!resolved) {
         return -1;
     }
-    int rc = sigmund_checked_snprintf(out, n, "%s", resolved);
+    int rc = hold_checked_snprintf(out, n, "%s", resolved);
     free(resolved);
     return rc;
 }
 
-int sigmund_resolve_binary_path(const char *argv0, char *out, size_t n) {
+int hold_resolve_binary_path(const char *argv0, char *out, size_t n) {
     if (!argv0 || !*argv0) {
         errno = EINVAL;
         return -1;
@@ -31,9 +31,9 @@ int sigmund_resolve_binary_path(const char *argv0, char *out, size_t n) {
     while (1) {
         const char *colon = strchr(p, ':');
         size_t len = colon ? (size_t)(colon - p) : strlen(p);
-        char dir[SIGMUND_PATH_MAX];
+        char dir[HOLD_PATH_MAX];
         if (len == 0) {
-            if (sigmund_checked_snprintf(dir, sizeof(dir), ".") != 0) {
+            if (hold_checked_snprintf(dir, sizeof(dir), ".") != 0) {
                 return -1;
             }
         } else {
@@ -44,10 +44,10 @@ int sigmund_resolve_binary_path(const char *argv0, char *out, size_t n) {
             memcpy(dir, p, len);
             dir[len] = '\0';
         }
-        char candidate[SIGMUND_PATH_MAX], resolved[SIGMUND_PATH_MAX];
-        if (sigmund_checked_snprintf(candidate, sizeof(candidate), "%s/%s", dir, argv0) == 0 &&
+        char candidate[HOLD_PATH_MAX], resolved[HOLD_PATH_MAX];
+        if (hold_checked_snprintf(candidate, sizeof(candidate), "%s/%s", dir, argv0) == 0 &&
             access(candidate, X_OK) == 0 && realpath_copy(candidate, resolved, sizeof(resolved)) == 0) {
-            return sigmund_checked_snprintf(out, n, "%s", resolved);
+            return hold_checked_snprintf(out, n, "%s", resolved);
         }
         if (!colon) {
             break;
@@ -58,11 +58,11 @@ int sigmund_resolve_binary_path(const char *argv0, char *out, size_t n) {
     return -1;
 }
 
-bool sigmund_path_is_within_dir(const char *path, const char *dir) {
+bool hold_path_is_within_dir(const char *path, const char *dir) {
     if (!path || !*path || !dir || !*dir) {
         return false;
     }
-    char resolved_dir[SIGMUND_PATH_MAX];
+    char resolved_dir[HOLD_PATH_MAX];
     if (!realpath(dir, resolved_dir)) {
         return false;
     }
@@ -74,34 +74,34 @@ bool sigmund_path_is_within_dir(const char *path, const char *dir) {
            (strncmp(path, resolved_dir, len) == 0 && path[len] == '/');
 }
 
-int sigmund_resolve_self_executable_path(const char *argv0, char *out, size_t n) {
+int hold_resolve_self_executable_path(const char *argv0, char *out, size_t n) {
     if (!out || n == 0) {
         errno = EINVAL;
         return -1;
     }
     out[0] = '\0';
 #if defined(__linux__)
-    char proc_path[SIGMUND_PATH_MAX];
+    char proc_path[HOLD_PATH_MAX];
     ssize_t got = readlink("/proc/self/exe", proc_path, sizeof(proc_path) - 1);
     if (got > 0) {
         proc_path[got] = '\0';
-        return sigmund_checked_snprintf(out, n, "%s", proc_path);
+        return hold_checked_snprintf(out, n, "%s", proc_path);
     }
 #endif
 #if defined(__APPLE__)
-    char mac_path[SIGMUND_PATH_MAX];
+    char mac_path[HOLD_PATH_MAX];
     uint32_t mac_size = (uint32_t)sizeof(mac_path);
     if (_NSGetExecutablePath(mac_path, &mac_size) == 0) {
-        char resolved[SIGMUND_PATH_MAX];
+        char resolved[HOLD_PATH_MAX];
         if (realpath(mac_path, resolved)) {
-            return sigmund_checked_snprintf(out, n, "%s", resolved);
+            return hold_checked_snprintf(out, n, "%s", resolved);
         }
     }
 #endif
     if (argv0 && strchr(argv0, '/')) {
-        char resolved[SIGMUND_PATH_MAX];
+        char resolved[HOLD_PATH_MAX];
         if (realpath(argv0, resolved)) {
-            return sigmund_checked_snprintf(out, n, "%s", resolved);
+            return hold_checked_snprintf(out, n, "%s", resolved);
         }
     }
     errno = ENOENT;

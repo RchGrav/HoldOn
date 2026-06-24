@@ -1,5 +1,5 @@
-#include "sigmund/config.h"
-#include "sigmund/log_viewer.h"
+#include "hold/config.h"
+#include "hold/log_viewer.h"
 
 #define VIEWER_FILTER_MAX 255
 #define VIEWER_OFFSET_HISTORY_MAX 1024
@@ -33,11 +33,11 @@ struct viewer_state {
     bool debug_stats;
     bool follow;
     bool follow_exited;
-    sigmund_log_viewer_running_fn is_running;
+    hold_log_viewer_running_fn is_running;
     void *running_userdata;
-    struct sigmund_log_filter_options base_opts;
+    struct hold_log_filter_options base_opts;
     char filter[VIEWER_FILTER_MAX + 1];
-    char *examples[SIGMUND_LOG_VIEWER_MAX_EXAMPLES];
+    char *examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
     size_t example_count;
     off_t start_offset;
     off_t history[VIEWER_OFFSET_HISTORY_MAX];
@@ -229,7 +229,7 @@ static int cache_ensure_capacity(struct viewer_state *state, size_t cap) {
     return 0;
 }
 
-static int cache_load_result(struct viewer_state *state, const struct sigmund_log_filter_result *result, size_t cap) {
+static int cache_load_result(struct viewer_state *state, const struct hold_log_filter_result *result, size_t cap) {
     if (cache_ensure_capacity(state, cap ? cap : 1) != 0) return -1;
     cache_clear(state);
     for (size_t i = 0; i < result->line_count; i++) {
@@ -260,7 +260,7 @@ static void cache_invalidate(struct viewer_state *state) {
     state->cache_valid = false;
 }
 
-static void configure_filter_opts(const struct viewer_state *state, struct sigmund_log_filter_options *opts);
+static void configure_filter_opts(const struct viewer_state *state, struct hold_log_filter_options *opts);
 
 static void reset_filter_navigation(struct viewer_state *state) {
     if (state->follow) {
@@ -290,7 +290,7 @@ static int appended_range_has_match(struct viewer_state *state, off_t start, off
     if (end <= start) return 0;
     if (lseek(state->fd, start, SEEK_SET) < 0) return -1;
 
-    struct sigmund_log_filter_options opts;
+    struct hold_log_filter_options opts;
     configure_filter_opts(state, &opts);
     opts.visible_capacity = 1;
     opts.max_results = 1;
@@ -303,12 +303,12 @@ static int appended_range_has_match(struct viewer_state *state, off_t start, off
         opts.scan_byte_budget = (size_t)appended_bytes;
     }
 
-    struct sigmund_log_filter_result result;
-    if (sigmund_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
+    struct hold_log_filter_result result;
+    if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
     *has_match = result.match_count > 0;
     *scanned_to = result.next_offset > start ? result.next_offset : start;
     if (*scanned_to > end) *scanned_to = end;
-    sigmund_log_filter_result_free(&result);
+    hold_log_filter_result_free(&result);
     return 0;
 }
 
@@ -356,7 +356,7 @@ static int toggle_example(struct viewer_state *state, const char *line) {
             return 0;
         }
     }
-    if (state->example_count >= SIGMUND_LOG_VIEWER_MAX_EXAMPLES) return 0;
+    if (state->example_count >= HOLD_LOG_VIEWER_MAX_EXAMPLES) return 0;
     char *copy = strdup(line);
     if (!copy) return -1;
     state->examples[state->example_count++] = copy;
@@ -364,7 +364,7 @@ static int toggle_example(struct viewer_state *state, const char *line) {
     return 0;
 }
 
-static void configure_filter_opts(const struct viewer_state *state, struct sigmund_log_filter_options *opts) {
+static void configure_filter_opts(const struct viewer_state *state, struct hold_log_filter_options *opts) {
     *opts = state->base_opts;
     opts->literal = state->filter[0] ? state->filter : NULL;
     opts->similar_example_count = state->example_count;
@@ -386,11 +386,11 @@ static void write_sanitized_line(const char *line, size_t width) {
 }
 
 static int refill_cache(struct viewer_state *state) {
-    struct sigmund_log_filter_options opts;
+    struct hold_log_filter_options opts;
     configure_filter_opts(state, &opts);
     size_t visible_rows = state->rows > 4 ? state->rows - 4 : 1;
     size_t scan_budget = visible_rows * VIEWER_SCAN_BYTES_PER_ROW;
-    struct sigmund_log_filter_result result;
+    struct hold_log_filter_result result;
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         if (state->follow && state->at_live_edge) {
             off_t end = lseek(state->fd, 0, SEEK_END);
@@ -400,14 +400,14 @@ static int refill_cache(struct viewer_state *state) {
                 state->newer_scan_offset = end;
             }
         }
-        if (sigmund_log_filter_backward_fd(state->fd, &opts, state->start_offset, scan_budget, &result) != 0) return -1;
+        if (hold_log_filter_backward_fd(state->fd, &opts, state->start_offset, scan_budget, &result) != 0) return -1;
     } else {
         opts.scan_byte_budget = scan_budget;
         if (lseek(state->fd, state->start_offset, SEEK_SET) < 0) return -1;
-        if (sigmund_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
+        if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
     }
     int rc = cache_load_result(state, &result, visible_rows);
-    sigmund_log_filter_result_free(&result);
+    hold_log_filter_result_free(&result);
     return rc;
 }
 
@@ -420,7 +420,7 @@ static int render(struct viewer_state *state) {
     char header[512];
     snprintf(header,
              sizeof(header),
-             "\033[H\033[2Jmund view %s%s | filter: %s%s%s | similar: %zu | q quit\033[K\r\n",
+             "\033[H\033[2Jhold view %s%s | filter: %s%s%s | similar: %zu | q quit\033[K\r\n",
              state->title ? state->title : "",
              state->follow ? " [follow]" : (state->follow_exited ? " [exited]" : ""),
              state->filter[0] ? state->filter : "(type to filter)",
@@ -528,10 +528,10 @@ static void page_up(struct viewer_state *state) {
     cache_invalidate(state);
 }
 
-int sigmund_log_viewer_tty_fd(int fd,
+int hold_log_viewer_tty_fd(int fd,
                              const char *title,
-                             const struct sigmund_log_filter_options *opts,
-                             const struct sigmund_log_viewer_follow *follow,
+                             const struct hold_log_filter_options *opts,
+                             const struct hold_log_viewer_follow *follow,
                              bool debug_stats) {
     if (fd < 0 || !opts || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
         errno = ENOTTY;

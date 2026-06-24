@@ -1,6 +1,6 @@
 # Build output
-/sigmund
-/sigmund-dynamic
+/hold
+/hold-dynamic
 
 # Local release-artifact staging (scripts/release_build.sh, scripts/linux.sh release)
 /dist/
@@ -65,7 +65,7 @@ dkms.conf
 
 # Profile-hash compatibility test binary
 /hash-vector
-/mund
+/hold
 
 # Viewer filter test binary
 /viewer-filter-test

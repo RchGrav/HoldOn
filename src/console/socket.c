@@ -1,8 +1,8 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/console.h"
-#include "sigmund/core.h"
-#include "sigmund/console_internal.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/console.h"
+#include "hold/core.h"
+#include "hold/console_internal.h"
 
 #if !defined(__linux__) && !defined(__APPLE__) && defined(__has_include)
 #if __has_include(<sys/ucred.h>)
@@ -15,7 +15,7 @@ static int console_addr_relative(const char *sock_path,
                                  char *dir,
                                  size_t dirn);
 
-int sigmund_format_console_sock_path(const struct sigmund_store *store,
+int hold_format_console_sock_path(const struct hold_store *store,
                                     const char *id,
                                     char *out,
                                     size_t n) {
@@ -25,7 +25,7 @@ int sigmund_format_console_sock_path(const struct sigmund_store *store,
      * console_addr_relative), so the directory's absolute length does not
      * count against the AF_UNIX sun_path limit. There is therefore no need to
      * fall back to a world-writable location such as /tmp. */
-    return sigmund_checked_snprintf(out, n, "%s/%s.sock", store->console_dir, id);
+    return hold_checked_snprintf(out, n, "%s/%s.sock", store->console_dir, id);
 }
 
 /* AF_UNIX paths are limited to sun_path bytes (104 on macOS, 108 on Linux),
@@ -64,9 +64,9 @@ static int console_addr_relative(const char *sock_path,
     return 0;
 }
 
-int sigmund_make_console_listener(const char *sock_path) {
+int hold_make_console_listener(const char *sock_path) {
     struct sockaddr_un addr;
-    char dir[SIGMUND_PATH_MAX];
+    char dir[HOLD_PATH_MAX];
     if (console_addr_relative(sock_path, &addr, dir, sizeof(dir)) != 0) {
         return -1;
     }
@@ -75,7 +75,7 @@ int sigmund_make_console_listener(const char *sock_path) {
     if (fd < 0) {
         return -1;
     }
-#ifdef SIGMUND_NEED_SOCKET_CLOEXEC
+#ifdef HOLD_NEED_SOCKET_CLOEXEC
     if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
         int saved = errno;
         close(fd);
@@ -134,7 +134,7 @@ int sigmund_make_console_listener(const char *sock_path) {
     return fd;
 }
 
-int sigmund_console_peer_uid(int fd, uid_t *uid_out) {
+int hold_console_peer_uid(int fd, uid_t *uid_out) {
     if (!uid_out) {
         errno = EINVAL;
         return -1;
@@ -178,7 +178,7 @@ int sigmund_console_peer_uid(int fd, uid_t *uid_out) {
 #endif
 }
 
-int sigmund_open_console_pty(int *master_out, int *slave_out) {
+int hold_open_console_pty(int *master_out, int *slave_out) {
     int master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (master < 0) {
         return -1;
@@ -212,19 +212,19 @@ int sigmund_open_console_pty(int *master_out, int *slave_out) {
     return 0;
 }
 
-int sigmund_connect_console_socket(const char *sock_path) {
+int hold_connect_console_socket(const char *sock_path) {
     struct stat st;
     if (stat(sock_path, &st) != 0 || !S_ISSOCK(st.st_mode)) {
-        fprintf(stderr, "sigmund: console socket is not available\n");
+        fprintf(stderr, "hold: console socket is not available\n");
         errno = ENOTSOCK;
         return -1;
     }
 
     struct sockaddr_un addr;
-    char dir[SIGMUND_PATH_MAX];
+    char dir[HOLD_PATH_MAX];
     if (console_addr_relative(sock_path, &addr, dir, sizeof(dir)) != 0) {
         if (errno == ENAMETOOLONG) {
-            fprintf(stderr, "sigmund: console socket path is too long\n");
+            fprintf(stderr, "hold: console socket path is too long\n");
         }
         return -1;
     }
@@ -233,7 +233,7 @@ int sigmund_connect_console_socket(const char *sock_path) {
     if (fd < 0) {
         return -1;
     }
-#ifdef SIGMUND_NEED_SOCKET_CLOEXEC
+#ifdef HOLD_NEED_SOCKET_CLOEXEC
     if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
         int saved = errno;
         close(fd);

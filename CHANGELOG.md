@@ -11,8 +11,8 @@ the internals and makes the build and tests strict and reproducible everywhere.
 
 - The single ~8k-line translation unit is now a layered multi-translation-unit
   architecture (core → platform → store → console/access → runtime → cli) with
-  header-enforced layer boundaries and `sigmund_`-prefixed cross-module symbols.
-  All objects still link into one `sigmund` binary; no archives, no new ABI.
+  header-enforced layer boundaries and `hold_`-prefixed cross-module symbols.
+  All objects still link into one `hold` binary; no archives, no new ABI.
 
 ### Added
 
@@ -31,7 +31,7 @@ the internals and makes the build and tests strict and reproducible everywhere.
 ### Fixed
 
 - The privilege-delegation test lane runs as a non-root user that elevates per
-  test — matching how sigmund is actually used and what its `SUDO_*` provenance
+  test — matching how hold is actually used and what its `SUDO_*` provenance
   checks require — instead of running the whole suite as root.
 
 ### Release notes
@@ -61,11 +61,11 @@ coverage that the socket resides in the store console directory and that the
 launched process runs in the caller's working directory.
 
 Full changelog:
-https://github.com/RchGrav/sigmund/compare/v0.3.7...v0.3.8
+https://github.com/RchGrav/hold/compare/v0.3.7...v0.3.8
 
 ## 0.3.7 - Cross-platform test-validated binaries
 
-This release uses the same Sigmund runtime implementation as 0.3.6. It is the
+This release uses the same On Hold runtime implementation as 0.3.6. It is the
 preferred release because the binaries were rebuilt after the Linux and macOS
 test gates were expanded and verified on real build runners.
 
@@ -90,11 +90,11 @@ expanded test gates passed for Linux and for both macOS build boxes. No runtime
 behavior change beyond the release version string is intended.
 
 Full changelog:
-https://github.com/RchGrav/sigmund/compare/v0.3.6...v0.3.7
+https://github.com/RchGrav/hold/compare/v0.3.6...v0.3.7
 
 ## 0.3.6 - Record-scan fix and demo asset
 
-This point release rebuilds the published binaries because the Sigmund runtime
+This point release rebuilds the published binaries because the On Hold runtime
 changed after 0.3.5.
 
 ### Fixed
@@ -106,7 +106,7 @@ changed after 0.3.5.
 
 ### Added
 
-- Added `demo.sh` as a self-contained release asset for trying Sigmund in a
+- Added `demo.sh` as a self-contained release asset for trying On Hold in a
   temporary sandbox.
 - Added `examples/interactive-demo/` with the source version of the demo.
 - Added `make check` as an alias for `make test`.
@@ -114,16 +114,16 @@ changed after 0.3.5.
 ### Release notes
 
 The binary archives were rebuilt for the `aliases.json` record-scan fix in
-`src/sigmund.c`. The demo and documentation updates are support material
+`src/hold.c`. The demo and documentation updates are support material
 included with the release, not the reason the runtime binaries needed to
 change.
 
 Full changelog:
-https://github.com/RchGrav/sigmund/compare/v0.3.5...v0.3.6
+https://github.com/RchGrav/hold/compare/v0.3.5...v0.3.6
 
 ## 0.3.0 - Alias capability profiles and stable fingerprints
 
-This release promotes Sigmund from run-ID lifecycle management into named
+This release promotes On Hold from run-ID lifecycle management into named
 aliases while preserving the existing user-local and root-managed privilege
 boundary. Run IDs remain concrete process-group handles; aliases are human
 labels and launch recipes; protected hashes are root-managed capability
@@ -131,18 +131,18 @@ material, not normal action targets.
 
 ### Added
 
-- Added `sigmund alias <id> <name>` to create or update an alias from a
+- Added `hold alias <id> <name>` to create or update an alias from a
   recorded run. User-local aliases store a direct recipe in private
   `aliases.json`; root-managed aliases publish only `alias -> hash` while the
   protected recipe stays in root-private `profiles.json`.
-- Added `sigmund start <alias>` so aliases can start the recorded command
+- Added `hold start <alias>` so aliases can start the recorded command
   template without retyping the original argv.
 - Added `--multi [N]` for alias starts. Without it, `start <alias>` refuses when
   that alias already has a running process.
 - Added alias-aware target resolution for `stop`, `kill`, `tail`, `dump`, and
   `prune`; ambiguous alias selections exit 6 and print the matching run IDs.
 - Added `--all` to resolve alias ambiguity for `stop`, `kill`, and `prune`.
-- Added `sigmund aliases` for visible alias lookup. User aliases show `-` in the
+- Added `hold aliases` for visible alias lookup. User aliases show `-` in the
   hash column; system aliases show `<root-managed>` with a truncated protected
   profile hash by default and the full hash with `-v`.
 - Added `stop --print` and `kill --print` as the dry-run replacement for the
@@ -150,10 +150,10 @@ material, not normal action targets.
 - Added root-managed `grant` and `revoke` support for hash-scoped sudoers
   entries covering `start`, `stop`, `kill`, `tail`, `dump`, `prune`, and
   `console`.
-- Added `sigmund --console <cmd...>` and `sigmund console <target>` for
+- Added `hold --console <cmd...>` and `hold console <target>` for
   socat-backed attachable PTY sessions. Console runs still tee output to the
   normal log so `tail` and `dump` continue to work.
-- Added `sigmund help [topic]` plus action `-h` help for the core command
+- Added `hold help [topic]` plus action `-h` help for the core command
   surface.
 - Added `-f` as the documented start-and-follow short form while keeping
   `--tail` as a compatibility spelling.
@@ -162,11 +162,11 @@ material, not normal action targets.
 
 ### Changed
 
-- Profile fingerprints now use the stable `sigmund-profile` domain, resolved
+- Profile fingerprints now use the stable `hold-profile` domain, resolved
   absolute binary path, argc, and indexed argv NUL framing only.
 - Profile fingerprints deliberately exclude environment, cwd, uid, timestamps,
   hostnames, and other context so aliases, profiles, and grants remain stable.
-- Profile starts inherit Sigmund's current environment unchanged; privilege
+- Profile starts inherit On Hold's current environment unchanged; privilege
   crossing continues to rely on sudo's standard `env_reset` behavior.
 - Run IDs are now generated as 8 lowercase hex characters, with `00000000` and
   `ffffffff` reserved for internal capability selectors.
@@ -174,7 +174,7 @@ material, not normal action targets.
   root-managed runs, in the redacted public index.
 - Root-managed alias self-elevation now carries the internal capability argv
   shape `<verb> <runid_sel> <alias> <hash>` so sudoers remains hash-pinned
-  while root Sigmund resolves concrete runs by alias label and command intent.
+  while root On Hold resolves concrete runs by alias label and command intent.
 - Console socket paths are private run-state fields and are cleaned up by
   normal prune lifecycle handling.
 - Start now writes only the bare 8-hex run ID to stdout and writes the human
@@ -191,7 +191,7 @@ material, not normal action targets.
 ### Fixed
 
 - Fixed sudoers profile grants so generated command entries contain the
-  selected run ID slot, alias label, and immutable hash, and root Sigmund
+  selected run ID slot, alias label, and immutable hash, and root On Hold
   verifies the pair plus selected run records before acting.
 - Fixed the profile fingerprint regression test to extract the `bin` value from
   the exact hash entry under test.
@@ -206,7 +206,7 @@ The following checks passed in the update environment:
 make clean && make test CC=gcc CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2'
 make clean && make test CC=clang CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2'
 make clean && make test CC=gcc CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined' STATIC_LDFLAGS='' LDFLAGS='-fsanitize=address,undefined' TEST_LDFLAGS='-fsanitize=address,undefined'
-cppcheck --enable=warning,performance,portability --error-exitcode=1 --suppress=missingIncludeSystem --std=c11 src/sigmund.c
+cppcheck --enable=warning,performance,portability --error-exitcode=1 --suppress=missingIncludeSystem --std=c11 src/hold.c
 ```
 
 ## 0.2.0 - Root-managed state stabilization pass
@@ -216,12 +216,12 @@ This pass hardens the root-managed state boundary without adding future command 
 ### Added
 
 - Added a bounded JSON value skip depth (`JSON_MAX_DEPTH = 64`) so malformed deeply nested records are rejected instead of recursing without limit.
-- Added `O_NOFOLLOW` for Sigmund-owned record, public/private index, and log reads where the platform supports it.
+- Added `O_NOFOLLOW` for On Hold-owned record, public/private index, and log reads where the platform supports it.
 - Added regression coverage for symlinked record/log rejection, deeply nested corrupt JSON rejection, sudo fork/wait status propagation, sudo exec failure, and tail Ctrl-C detach behavior.
 
 ### Changed
 
-- Action self-elevation for `stop`, `kill`, `prune`, `tail`, and `dump` now forks a `sudo` child, waits in the non-root parent, and returns the child/root-Sigmund status while preserving inherited stdio.
+- Action self-elevation for `stop`, `kill`, `prune`, `tail`, and `dump` now forks a `sudo` child, waits in the non-root parent, and returns the child/root-On Hold status while preserving inherited stdio.
 - Renamed internal sudo elevation helpers and regression labels so the code and tests match the fork/wait behavior.
 - Documentation now describes the current user-local/root-managed state model, redacted public index, conservative public `state_hint`, list/no-prompt behavior, root-only log/private details, and plain-ID conflict resolution.
 
@@ -236,14 +236,14 @@ The following checks passed in the update environment:
 
 ```bash
 make clean && make test
-make clean && make CC=clang STATIC_LDFLAGS= CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2' EXTRA_CPPFLAGS=-DSIGMUND_TESTING
-clang --analyze -std=c11 -Wall -Wextra -Wpedantic -DSIGMUND_TESTING -DSIGMUND_BOOT_ID_PATH='"/tmp/sigmund_test_boot_id"' src/sigmund.c
+make clean && make CC=clang STATIC_LDFLAGS= CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2' EXTRA_CPPFLAGS=-DHOLD_TESTING
+clang --analyze -std=c11 -Wall -Wextra -Wpedantic -DHOLD_TESTING -DHOLD_BOOT_ID_PATH='"/tmp/hold_test_boot_id"' src/hold.c
 make clean && UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 make test CC=clang STATIC_LDFLAGS= CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -O1 -g -fno-omit-frame-pointer -fsanitize=undefined' LDFLAGS='-fsanitize=undefined'
 ```
 
 Result: 45/45 tests passed in the root-started harness, including explicit normal-user, direct-root, and sudo-provenance actor paths.
 
-A full clang ASan/UBSan harness run was attempted in this Linux container, but the sanitizer runtime crashed before Sigmund logic in the `sudo -u` actor path. macOS runtime validation is expected to run in CI on a macOS host.
+A full clang ASan/UBSan harness run was attempted in this Linux container, but the sanitizer runtime crashed before On Hold logic in the `sudo -u` actor path. macOS runtime validation is expected to run in CI on a macOS host.
 
 ## Root-managed state and argv-preserving fork/wait elevation update
 
@@ -252,8 +252,8 @@ This update completes the root-managed state split, public redacted discovery be
 ### Added
 
 - Added user-local vs root-managed storage selection:
-  - normal non-root runs use `~/.local/state/sigmund`;
-  - root, sudo, and `--system` runs use `/var/lib/sigmund` on Linux or `/var/db/sigmund` on macOS.
+  - normal non-root runs use `~/.local/state/hold`;
+  - root, sudo, and `--system` runs use `/var/lib/hold` on Linux or `/var/db/hold` on macOS.
 - Added root-managed layout with private `runs/`, private `logs/`, and public `public/` index directories.
 - Added private sudo provenance metadata for root-managed records: `invoked_by_uid`, `invoked_by_gid`, `invoked_by_user`, and `invoked_via_sudo`.
 - Added public root index writing with redacted discovery fields only.
@@ -261,33 +261,33 @@ This update completes the root-managed state split, public redacted discovery be
 - Added argv-preserving sudo self-elevation for action self-elevation:
 
   ```text
-  sudo -- /absolute/path/to/sigmund --system --elevated <canonical-command...>
+  sudo -- /absolute/path/to/hold --system --elevated <canonical-command...>
   ```
 
 - Added executable-path resolution before sudo self-elevation using `/proc/self/exe` on Linux, `_NSGetExecutablePath()` plus `realpath()` on macOS, and `realpath(argv[0])` fallback when safe.
 - Added an internal `--elevated` guard that fails cleanly if present without root authority.
-- Added `SIGMUND_TESTING`-gated test overrides for system state and invoking-user home resolution. Production builds no longer honor an arbitrary environment variable for the root-managed system store.
+- Added `HOLD_TESTING`-gated test overrides for system state and invoking-user home resolution. Production builds no longer honor an arbitrary environment variable for the root-managed system store.
 - Added explicit test actors for user, root, and sudo-provenance contexts so `make test` works whether the test runner starts as root or non-root.
 - Added GitHub CI coverage for a root-started Linux test harness and a macOS runtime test lane.
 - Added regression coverage for long command truncation in `list`, root public state display, root/system store writes, and sudo-context management of unique invoking-user local runs.
 
 ### Changed
 
-- Normal `sigmund list` now shows user-local rows plus redacted root-public rows without prompting for sudo.
-- Root-public rows are displayed with `STATE` as `unknown` because public index state is non-authoritative and daemonless Sigmund cannot continuously refresh it after natural process exit.
+- Normal `hold list` now shows user-local rows plus redacted root-public rows without prompting for sudo.
+- Root-public rows are displayed with `STATE` as `unknown` because public index state is non-authoritative and daemonless On Hold cannot continuously refresh it after natural process exit.
 - Public index files now write `"state_hint": "unknown"` for new root-managed entries.
 - Action commands (`stop`, `kill`, `prune`, `tail`, and `dump`) route target selection through the shared resolver.
 - Normal non-root plain-ID resolution prefers user-local state and only self-elevates for root-public matches when no user-local target exists.
 - Root/sudo plain-ID resolution prefers root-managed state, then the invoking user's local state when sudo provenance exists.
-- `--system` parsing preserves raw child arguments in raw start form while canonicalizing Sigmund-owned commands.
-- The test build now compiles with `-DSIGMUND_TESTING`; the Makefile also honors `CPPFLAGS` and `EXTRA_CPPFLAGS`.
+- `--system` parsing preserves raw child arguments in raw start form while canonicalizing On Hold-owned commands.
+- The test build now compiles with `-DHOLD_TESTING`; the Makefile also honors `CPPFLAGS` and `EXTRA_CPPFLAGS`.
 - README and `docs/SPEC.md` now describe root-managed state, public redaction, sudo-aware resolution, argv-preserving fork/wait elevation, and the explicit test actor model.
 
 ### Fixed
 
 - Fixed the long-command `list` regression where a valid record could be skipped because the display buffer truncated through `checked_snprintf()` before the intended ellipsis logic ran. Long command displays are now safely truncated with ellipsis.
 - Fixed misleading normal-user root-public list output by treating public state as non-authoritative and displaying `unknown` instead of stale `running`.
-- Fixed root-run test harness failures by preventing the harness EUID from defining Sigmund's tested context.
+- Fixed root-run test harness failures by preventing the harness EUID from defining On Hold's tested context.
 - Fixed the public-index rollback analyzer warning by saving `errno` explicitly and assigning `EIO` when the test failure path injects a public-index write failure.
 - Fixed the test system-store override footgun by limiting environment-driven system-store overrides to test builds.
 
@@ -299,14 +299,14 @@ The following checks passed in the update environment:
 make clean && make test
 ```
 
-Result: 37/37 tests passed when the test runner started as root. The same test harness creates an explicit non-root actor for normal Sigmund behavior.
+Result: 37/37 tests passed when the test runner started as root. The same test harness creates an explicit non-root actor for normal On Hold behavior.
 
 Additional verification performed for the packaged archive includes strict compile, analyzer, UBSan, static build, dynamic build, and fresh patch application checks. See the response accompanying the archive for the exact commands run in that environment.
 
 ### Known limitations
 
 - macOS-specific code paths remain statically reviewed in this Linux container, but still need runtime verification on macOS CI before claiming full macOS runtime coverage.
-- Public root index state is intentionally non-authoritative. Normal-user list output shows root-public state as `unknown`; authoritative root-managed state requires root Sigmund to read private records.
+- Public root index state is intentionally non-authoritative. Normal-user list output shows root-public state as `unknown`; authoritative root-managed state requires root On Hold to read private records.
 
 ## Portability and hardening review update
 
@@ -322,7 +322,7 @@ This changelog records the changes made during the Linux/macOS portability and p
 
 #### `.gitignore`
 
-- Added `/sigmund-dynamic` so the optional dynamic build artifact is ignored like `/sigmund`.
+- Added `/hold-dynamic` so the optional dynamic build artifact is ignored like `/hold`.
 
 #### `README.md`
 
@@ -333,7 +333,7 @@ This changelog records the changes made during the Linux/macOS portability and p
   - Linux validates with `/proc/<pid>/stat` and `/proc/<pid>/exe` where available.
   - macOS validates with kernel process metadata and best-effort executable identity.
   - Remaining process-group members are validated against the recorded session before signaling.
-- Updated `sigmund tail <id>` documentation:
+- Updated `hold tail <id>` documentation:
   - running records are followed from the end;
   - finished, stale, or unknown records are printed from the beginning.
 - Updated documented edge cases:
@@ -366,7 +366,7 @@ This changelog records the changes made during the Linux/macOS portability and p
 - Updated escape diagnostics to be process-table based rather than Linux-only.
 - Updated build compatibility notes for macOS.
 
-#### `src/sigmund.c`
+#### `src/hold.c`
 
 - Added record-size guard `MAX_RECORD_BYTES` to limit JSON record loading to 1 MiB.
 - Added portability fallbacks for `O_CLOEXEC` and `O_DIRECTORY`.
@@ -402,7 +402,7 @@ This changelog records the changes made during the Linux/macOS portability and p
   - empty or zombie-only same-session group is `exited`;
   - process-table validation failure becomes `unknown`;
   - fallback behavior is conservative rather than blindly signaling possibly reused process groups.
-- Improved `sigmund tail <id>`:
+- Improved `hold tail <id>`:
   - starts from the end only for running records;
   - prints finished, stale, or unknown logs from the beginning;
   - non-following tails exit immediately after EOF.
@@ -435,7 +435,7 @@ This changelog records the changes made during the Linux/macOS portability and p
   - use safer boot handling;
   - refuse unknown or unvalidated signaling targets.
 
-#### `tests/test_sigmund.sh`
+#### `tests/test_hold.sh`
 
 - Enabled stricter shell behavior with `set -Eeuo pipefail`.
 - Rewrote `run_test()` so each test runs in a fresh strict Bash process.
@@ -445,7 +445,7 @@ This changelog records the changes made during the Linux/macOS portability and p
 - Strengthened the exec-failure test to verify no orphan files at all, not just no JSON records.
 - Added regression test: missing boot source does not force a running record to become stale.
 - Added regression test: leader zombie with live same-session child group remains `running`.
-- Added regression test: `sigmund tail <id>` prints output from an already-finished run.
+- Added regression test: `hold tail <id>` prints output from an already-finished run.
 
 ### Verification
 
@@ -458,7 +458,7 @@ make clean && make test
 Result: 26/26 tests passed.
 
 ```bash
-make clean && make && make sigmund-dynamic
+make clean && make && make hold-dynamic
 ```
 
 Result: static Linux build and dynamic build both succeeded.
@@ -467,20 +467,20 @@ Result: static Linux build and dynamic build both succeeded.
 clang -std=c11 -Wall -Wextra -Wpedantic -Wconversion -Wshadow \
   -Wformat=2 -Wno-format-nonliteral -Wstrict-prototypes \
   -Wmissing-prototypes -Werror \
-  -DSIGMUND_VERSION='"dev"' \
-  -c src/sigmund.c -o /tmp/sigmund_strict.o
+  -DHOLD_VERSION='"dev"' \
+  -c src/hold.c -o /tmp/hold_strict.o
 ```
 
 Result: strict compile passed with warnings treated as errors.
 
 ```bash
-make clean && make sigmund CC=clang \
+make clean && make hold CC=clang \
   CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=undefined' \
   STATIC_LDFLAGS= \
   LDFLAGS='-fsanitize=undefined' \
-  EXTRA_CPPFLAGS='-DSIGMUND_BOOT_ID_PATH="/tmp/sigmund_test_boot_id"'
+  EXTRA_CPPFLAGS='-DHOLD_BOOT_ID_PATH="/tmp/hold_test_boot_id"'
 
-SIGMUND_BIN=./sigmund bash tests/test_sigmund.sh
+HOLD_BIN=./hold bash tests/test_hold.sh
 ```
 
 Result: UBSan build passed the full test suite.

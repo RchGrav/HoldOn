@@ -11,12 +11,12 @@ sha256_file() {
 
 make_fake_release() {
   local root="$1" artifact="$2" mode="${3:-good}" release_dir stage
-  release_dir="$root/RchGrav/sigmund/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
   stage="$root/stage-$mode"
   mkdir -p "$release_dir" "$stage"
   case "$mode" in
     good)
-      cat >"$stage/sigmund" <<'SH'
+      cat >"$stage/hold" <<'SH'
 #!/bin/sh
 if [ "${1:-}" = "--version" ]; then
   printf '%s\n' 'v1.2.3'
@@ -24,16 +24,15 @@ if [ "${1:-}" = "--version" ]; then
 fi
 exit 0
 SH
-      cp "$stage/sigmund" "$stage/mund"
-      chmod 0755 "$stage/sigmund" "$stage/mund"
+      chmod 0755 "$stage/hold"
       ;;
     missing-root-binary)
       mkdir -p "$stage/bin"
-      cat >"$stage/bin/sigmund" <<'SH'
+      cat >"$stage/bin/hold" <<'SH'
 #!/bin/sh
 printf '%s\n' 'wrong layout'
 SH
-      chmod 0755 "$stage/bin/sigmund"
+      chmod 0755 "$stage/bin/hold"
       ;;
   esac
   tar -C "$stage" -czf "$release_dir/$artifact" .
@@ -42,12 +41,12 @@ SH
 run_installer() {
   local root="$1" install_dir="$2" extra_env="${3:-}"
   env \
-    SIGMUND_GITHUB_BASE="file://$root" \
-    SIGMUND_INSTALL_TEST_OS=linux \
-    SIGMUND_INSTALL_TEST_ARCH=amd64 \
-    SIGMUND_INSTALL_TEST_LIBC=gnu \
-    SIGMUND_INSTALL_DIR="$install_dir" \
-    SIGMUND_UPDATE_PROFILE=0 \
+    HOLD_GITHUB_BASE="file://$root" \
+    HOLD_INSTALL_TEST_OS=linux \
+    HOLD_INSTALL_TEST_ARCH=amd64 \
+    HOLD_INSTALL_TEST_LIBC=gnu \
+    HOLD_INSTALL_DIR="$install_dir" \
+    HOLD_UPDATE_PROFILE=0 \
     $extra_env \
     sh ./install.sh 1.2.3
 }
@@ -63,7 +62,7 @@ expect_fail() {
 
 test_installer_fail_closed() {
   local root release_dir artifact sum install_dir
-  artifact="sigmund-1.2.3-linux-amd64-gnu-static.tar.gz"
+  artifact="hold-1.2.3-linux-amd64-gnu-static.tar.gz"
 
   root="$tmp/missing-sums"
   install_dir="$tmp/install-missing"
@@ -74,7 +73,7 @@ test_installer_fail_closed() {
   root="$tmp/malformed-sums"
   install_dir="$tmp/install-malformed"
   make_fake_release "$root" "$artifact" good
-  release_dir="$root/RchGrav/sigmund/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
   printf 'not-a-sha  %s\n' "$artifact" >"$release_dir/SHA256SUMS"
   expect_fail malformed-sums run_installer "$root" "$install_dir"
   grep -q 'malformed SHA256SUMS' "$tmp/malformed-sums.err"
@@ -82,7 +81,7 @@ test_installer_fail_closed() {
   root="$tmp/mismatch-sums"
   install_dir="$tmp/install-mismatch"
   make_fake_release "$root" "$artifact" good
-  release_dir="$root/RchGrav/sigmund/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
   printf '%064d  %s\n' 0 "$artifact" >"$release_dir/SHA256SUMS"
   expect_fail mismatch-sums run_installer "$root" "$install_dir"
   grep -q 'checksum mismatch' "$tmp/mismatch-sums.err"
@@ -90,24 +89,23 @@ test_installer_fail_closed() {
   root="$tmp/bad-layout"
   install_dir="$tmp/install-layout"
   make_fake_release "$root" "$artifact" missing-root-binary
-  release_dir="$root/RchGrav/sigmund/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
   sum="$(sha256_file "$release_dir/$artifact")"
   printf '%s  %s\n' "$sum" "$artifact" >"$release_dir/SHA256SUMS"
   expect_fail bad-layout run_installer "$root" "$install_dir"
   grep -q 'archive layout is invalid' "$tmp/bad-layout.err"
 
-  expect_fail unsupported-platform env SIGMUND_INSTALL_TEST_OS=SunOS SIGMUND_INSTALL_DRY_RUN=1 sh ./install.sh 1.2.3
+  expect_fail unsupported-platform env HOLD_INSTALL_TEST_OS=SunOS HOLD_INSTALL_DRY_RUN=1 sh ./install.sh 1.2.3
   grep -q 'unsupported operating system' "$tmp/unsupported-platform.err"
 
   root="$tmp/good"
   install_dir="$tmp/install-good"
   make_fake_release "$root" "$artifact" good
-  release_dir="$root/RchGrav/sigmund/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
   sum="$(sha256_file "$release_dir/$artifact")"
   printf '%s  %s\n' "$sum" "$artifact" >"$release_dir/SHA256SUMS"
   run_installer "$root" "$install_dir" >"$tmp/good.out" 2>"$tmp/good.err"
-  [ "$("$install_dir/sigmund" --version)" = "v1.2.3" ]
-  [ "$("$install_dir/mund" --version)" = "v1.2.3" ]
+  [ "$("$install_dir/hold" --version)" = "v1.2.3" ]
 }
 
 test_package_tarball_deterministic_when_gnu_tar() {
@@ -115,7 +113,7 @@ test_package_tarball_deterministic_when_gnu_tar() {
     return 0
   fi
   local bin out1 out2 a1 a2 s1 s2
-  bin="$tmp/fake-sigmund"
+  bin="$tmp/fake-hold"
   cat >"$bin" <<'SH'
 #!/bin/sh
 exit 0
@@ -125,8 +123,7 @@ SH
   out2="$tmp/pkg2"
   a1="$(.github/scripts/package_tarball.sh linux-amd64-gnu-static 1.2.3 "$bin" "$out1")"
   tar -tzf "$a1" | sed 's#^./##' | sort >"$tmp/pkg-files.txt"
-  grep -qx 'sigmund' "$tmp/pkg-files.txt"
-  grep -qx 'mund' "$tmp/pkg-files.txt"
+  grep -qx 'hold' "$tmp/pkg-files.txt"
   sleep 1
   a2="$(.github/scripts/package_tarball.sh linux-amd64-gnu-static 1.2.3 "$bin" "$out2")"
   s1="$(sha256_file "$a1")"

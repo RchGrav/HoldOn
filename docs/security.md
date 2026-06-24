@@ -4,15 +4,15 @@
 
 Outer loop bridge: deep dive for quickstart Step 3, Understand Automatic Choices, and Step 6, Delegate One Root-Managed Tool.
 
-Sigmund's root-aware behavior is built around two user-visible rules: normal runs stay user-local unless root/system authority is requested, and privileged actions are re-validated after crossing sudo. A normal user can see that a root-managed run exists without seeing its private command, log path, or process identity.
+On Hold's root-aware behavior is built around two user-visible rules: normal runs stay user-local unless root/system authority is requested, and privileged actions are re-validated after crossing sudo. A normal user can see that a root-managed run exists without seeing its private command, log path, or process identity.
 
-There is no daemon and no shell command payload. When Sigmund needs sudo, it re-execs itself with a controlled argv shape and then rechecks private root state before acting.
+There is no daemon and no shell command payload. When On Hold needs sudo, it re-execs itself with a controlled argv shape and then rechecks private root state before acting.
 
 ## Invocation context
 
 `detect_invocation` records whether the effective UID is root, whether `--system` was requested, whether the internal `--elevated` flag is present, and whether sudo provenance is available from `SUDO_UID`, `SUDO_GID`, and `SUDO_USER`.
 
-When root was reached through sudo, Sigmund resolves the invoking user's home directory from the user database. In test builds, `SIGMUND_TEST_INVOKING_HOME` can override that path. Root-managed records include `invoked_by_uid`, `invoked_by_gid`, `invoked_by_user`, and `invoked_via_sudo` in the private record only.
+When root was reached through sudo, On Hold resolves the invoking user's home directory from the user database. In test builds, `HOLD_TEST_INVOKING_HOME` can override that path. Root-managed records include `invoked_by_uid`, `invoked_by_gid`, `invoked_by_user`, and `invoked_via_sudo` in the private record only.
 
 `--elevated` is internal. If it appears without root authority, `main` exits with an internal error.
 
@@ -22,12 +22,12 @@ When root was reached through sudo, Sigmund resolves the invoking user's home di
 sequenceDiagram
     autonumber
     box rgb(224, 242, 254) User side
-    participant User as Non-root Sigmund
+    participant User as Non-root On Hold
     participant Resolver as Resolver
     end
     box rgb(237, 233, 254) Privilege boundary
     participant Sudo as sudo
-    participant Root as Root Sigmund
+    participant Root as Root On Hold
     end
     box rgb(254, 243, 199) Private authority
     participant Store as System store
@@ -36,7 +36,7 @@ sequenceDiagram
     User->>Resolver: resolve target
     Resolver-->>User: system target needs elevation
     User->>User: build canonical argv
-    User->>Sudo: exec sudo -- abs_sigmund --system --elevated ...
+    User->>Sudo: exec sudo -- abs_hold --system --elevated ...
     Sudo->>Root: run with root authority
     Root->>Store: load private record or profile
     Root->>Root: verify alias/hash and run label
@@ -44,9 +44,9 @@ sequenceDiagram
     Root-->>User: exit status through waitpid
 ```
 
-Before invoking sudo, `resolve_self_executable_path` finds the current Sigmund executable through `/proc/self/exe` on Linux, `_NSGetExecutablePath` plus `realpath` on macOS, or `realpath(argv[0])` when `argv[0]` includes a slash. If the path cannot be determined, elevation fails before running sudo.
+Before invoking sudo, `resolve_self_executable_path` finds the current On Hold executable through `/proc/self/exe` on Linux, `_NSGetExecutablePath` plus `realpath` on macOS, or `realpath(argv[0])` when `argv[0]` includes a slash. If the path cannot be determined, elevation fails before running sudo.
 
-`elevate_with_sudo_canonical` forks and execs `sudo` with an argv array. It does not use a shell. It waits for sudo/root-Sigmund and returns that exit status. The child inherits stdin, stdout, and stderr, so sudo prompts, diagnostics, streamed logs, and Ctrl-C behavior remain attached to the user's terminal.
+`elevate_with_sudo_canonical` forks and execs `sudo` with an argv array. It does not use a shell. It waits for sudo/root-On Hold and returns that exit status. The child inherits stdin, stdout, and stderr, so sudo prompts, diagnostics, streamed logs, and Ctrl-C behavior remain attached to the user's terminal.
 
 ## Capability argv
 
@@ -90,7 +90,7 @@ sequenceDiagram
     autonumber
     box rgb(237, 233, 254) Root authority
     participant Admin as Root admin
-    participant Sigmund as Sigmund
+    participant On Hold as On Hold
     end
     box rgb(254, 243, 199) Durable policy
     participant Store as System profiles
@@ -100,29 +100,29 @@ sequenceDiagram
     participant Visudo as visudo
     end
 
-    Admin->>Sigmund: grant alias user actions
-    Sigmund->>Sigmund: validate root authority
-    Sigmund->>Sigmund: validate Sigmund executable
-    Sigmund->>Store: resolve alias to profile hash
-    Sigmund->>File: write temp file mode 0440
-    Sigmund->>Visudo: validate candidate
-    Visudo-->>Sigmund: ok
-    Sigmund->>File: rename into place
+    Admin->>On Hold: grant alias user actions
+    On Hold->>On Hold: validate root authority
+    On Hold->>On Hold: validate On Hold executable
+    On Hold->>Store: resolve alias to profile hash
+    On Hold->>File: write temp file mode 0440
+    On Hold->>Visudo: validate candidate
+    Visudo-->>On Hold: ok
+    On Hold->>File: rename into place
 ```
 
-`grant` and `revoke` require root authority. `validate_sigmund_self_for_sudoers` refuses to manage grants unless the resolved Sigmund executable is a regular root-owned file with group/world writes disabled and no whitespace in the path.
+`grant` and `revoke` require root authority. `validate_hold_self_for_sudoers` refuses to manage grants unless the resolved On Hold executable is a regular root-owned file with group/world writes disabled and no whitespace in the path.
 
-Managed files are written under `/etc/sudoers.d` in production, or `SIGMUND_TEST_SUDOERS_DIR` in test builds. `write_sudoers_template_file` writes a temp candidate with mode `0440`, validates it with `visudo -cf`, and renames it into place. The sudoers command grants only canonical root Sigmund invocations with `--system --elevated`, selected verbs, one alias, one profile hash, and one 8-hex run selector slot.
+Managed files are written under `/etc/sudoers.d` in production, or `HOLD_TEST_SUDOERS_DIR` in test builds. `write_sudoers_template_file` writes a temp candidate with mode `0440`, validates it with `visudo -cf`, and renames it into place. The sudoers command grants only canonical root On Hold invocations with `--system --elevated`, selected verbs, one alias, one profile hash, and one 8-hex run selector slot.
 
 ## Why this design works
 
-The sudo boundary is narrow and argv-based. Sigmund never asks sudo to run an interpreted shell string, and root Sigmund never trusts the public pre-sudo selection by itself. That keeps privilege crossing compatible with the validate-before-signal model: root authority is used only after the target has been re-bound to private state and re-validated.
+The sudo boundary is narrow and argv-based. On Hold never asks sudo to run an interpreted shell string, and root On Hold never trusts the public pre-sudo selection by itself. That keeps privilege crossing compatible with the validate-before-signal model: root authority is used only after the target has been re-bound to private state and re-validated.
 
-The single-binary constraint also explains managed sudoers. There is no daemon authorization API to query, so the durable authorization object is a sudoers file whose command pattern points back to the same Sigmund executable and a fixed profile hash.
+The single-binary constraint also explains managed sudoers. There is no daemon authorization API to query, so the durable authorization object is a sudoers file whose command pattern points back to the same On Hold executable and a fixed profile hash.
 
 ## Implementation map
 
-For maintainers, the primary functions are `detect_invocation`, `resolve_self_executable_path`, `elevate_with_sudo_canonical`, `elevate_with_sudo_parsed`, `elevate_with_sudo_targets`, `elevate_start_token`, `verify_system_alias_cap`, `ensure_run_recorded_under_alias`, `cmd_elevated_capability_action`, `validate_sigmund_self_for_sudoers`, `build_sudoers_line`, `write_sudoers_template_file`, `unlink_sudoers_template_file`, and `cmd_grant_revoke_action`.
+For maintainers, the primary functions are `detect_invocation`, `resolve_self_executable_path`, `elevate_with_sudo_canonical`, `elevate_with_sudo_parsed`, `elevate_with_sudo_targets`, `elevate_start_token`, `verify_system_alias_cap`, `ensure_run_recorded_under_alias`, `cmd_elevated_capability_action`, `validate_hold_self_for_sudoers`, `build_sudoers_line`, `write_sudoers_template_file`, `unlink_sudoers_template_file`, and `cmd_grant_revoke_action`.
 
 ## Continue
 

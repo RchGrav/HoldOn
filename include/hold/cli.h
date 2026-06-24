@@ -1,0 +1,15 @@
+#pragma once
+#ifndef HOLD_CLI_H
+#define HOLD_CLI_H
+
+#include "hold/config.h"
+#include "hold/types.h"
+
+int hold_show_help(const char *topic);
+bool hold_is_hold_owned_command(const char *s);
+bool hold_cli_command_allows_all(const char *s);
+const char *hold_cli_command_usage(const char *s);
+int hold_validate_owned_command_arity(const char *command, int argc);
+bool hold_parse_positive_count(const char *s, int *out);
+
+#endif /* HOLD_CLI_H */

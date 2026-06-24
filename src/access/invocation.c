@@ -1,11 +1,11 @@
-#include "sigmund/config.h"
-#include "sigmund/types.h"
-#include "sigmund/access.h"
-#include "sigmund/core.h"
-#include "sigmund/platform.h"
-#include "sigmund/store.h"
+#include "hold/config.h"
+#include "hold/types.h"
+#include "hold/access.h"
+#include "hold/core.h"
+#include "hold/platform.h"
+#include "hold/store.h"
 
-int sigmund_detect_invocation(struct sigmund_invocation *inv, bool requested_system, bool elevated) {
+int hold_detect_invocation(struct hold_invocation *inv, bool requested_system, bool elevated) {
     memset(inv, 0, sizeof(*inv));
     inv->euid_root = (geteuid() == 0);
     inv->requested_system = requested_system;
@@ -24,12 +24,12 @@ int sigmund_detect_invocation(struct sigmund_invocation *inv, bool requested_sys
     const char *sn = getenv("SUDO_USER");
     uid_t uid = 0;
     gid_t gid = 0;
-    if (sigmund_parse_uid_env(su, &uid) == 0 && sigmund_parse_gid_env(sg, &gid) == 0 && sn && *sn) {
+    if (hold_parse_uid_env(su, &uid) == 0 && hold_parse_gid_env(sg, &gid) == 0 && sn && *sn) {
         struct passwd *pw = getpwuid(uid);
         if (pw && pw->pw_dir && *pw->pw_dir) {
             const char *home = pw->pw_dir;
-#ifdef SIGMUND_TESTING
-            const char *home_override = getenv("SIGMUND_TEST_INVOKING_HOME");
+#ifdef HOLD_TESTING
+            const char *home_override = getenv("HOLD_TEST_INVOKING_HOME");
             if (home_override && *home_override) {
                 home = home_override;
             }
@@ -37,8 +37,8 @@ int sigmund_detect_invocation(struct sigmund_invocation *inv, bool requested_sys
             inv->have_sudo_user = true;
             inv->invoking_uid = uid;
             inv->invoking_gid = gid;
-            if (sigmund_checked_snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", sn) != 0 ||
-                sigmund_checked_snprintf(inv->invoking_home, sizeof(inv->invoking_home), "%s", home) != 0) {
+            if (hold_checked_snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", sn) != 0 ||
+                hold_checked_snprintf(inv->invoking_home, sizeof(inv->invoking_home), "%s", home) != 0) {
                 return -1;
             }
             return 0;
@@ -48,16 +48,16 @@ int sigmund_detect_invocation(struct sigmund_invocation *inv, bool requested_sys
     inv->have_sudo_user = false;
     inv->invoking_uid = 0;
     inv->invoking_gid = 0;
-    if (sigmund_checked_snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", "root") != 0) {
+    if (hold_checked_snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", "root") != 0) {
         return -1;
     }
     return 0;
 }
 
-int sigmund_init_invoking_user_store(const struct sigmund_invocation *inv, struct sigmund_store *store) {
+int hold_init_invoking_user_store(const struct hold_invocation *inv, struct hold_store *store) {
     if (!inv || !inv->have_sudo_user || !inv->invoking_home[0]) {
         errno = EINVAL;
         return -1;
     }
-    return sigmund_init_user_store_from_home(inv->invoking_home, store);
+    return hold_init_user_store_from_home(inv->invoking_home, store);
 }

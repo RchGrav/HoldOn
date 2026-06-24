@@ -23,7 +23,7 @@ jobs:
           make clean
           make CC=${{ matrix.cc }} CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
           make clean
-          make sigmund-dynamic CC=${{ matrix.cc }} CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
+          make hold-dynamic CC=${{ matrix.cc }} CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
           make test CC=${{ matrix.cc }} CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
 
   privilege-delegation-test:
@@ -55,7 +55,7 @@ jobs:
         run: test "$(uname -m)" = "${{ matrix.uname_m }}"
       - name: Run macOS-specific build and runtime checks
         env:
-          SIGMUND_EXPECT_UNAME_M: ${{ matrix.uname_m }}
+          HOLD_EXPECT_UNAME_M: ${{ matrix.uname_m }}
         run: bash ./.github/scripts/test_macos_ci.sh
 
   sanitizers:
