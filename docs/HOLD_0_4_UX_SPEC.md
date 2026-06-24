@@ -369,6 +369,133 @@ If a profile target supplied to `logs` resolves to multiple active/recent run
 IDs, refuse the ambiguous stream and show the filtered run-id list unless a
 future explicit multi-log mode is designed.
 
+### 3.1.2 Operator flag reference
+
+This is the user-facing quick reference for Docker-shaped flags. The wording is
+intentionally familiar to Docker users, but Hold runs host processes/profiles;
+`-p`, `-v`, and `--privileged` must not imply container isolation unless a later
+backend actually provides it.
+
+Quick lookup:
+
+| Short | Long | Purpose | Common use |
+| --- | --- | --- | --- |
+| `-d` | `--detach` | Run the process/profile in the background, leaving the terminal free. | Long-running services |
+| `-i` | `--interactive` | Keep stdin open for sending raw data/commands. | Interactive shells, debugging |
+| `-t` | `--tty` | Allocate a pseudo-TTY for visual terminal behavior. | Interactive terminal sessions |
+| `-e` | `--env` | Pass environment variables into the process/profile. | Configuration management |
+| `-n` | `--tail` | Limit log history output. | Log inspection with `hold logs` |
+| `-f` | `--follow` | Keep log streams open and watch live. | Real-time monitoring with `hold logs` |
+| — | `--detach-keys` | Change the escape sequence used to leave a TTY without killing the run. | Custom TTY exit behavior |
+| — | `--rm` | Auto-delete run-id data/logs when the run stops. | Cleanup, tests, ephemeral runs |
+| — | `--restart` | Set crash/reboot/relaunch handling rules. | Reliability, auto-recovery |
+| — | `--privileged` | Request elevated/privileged host access where supported. | Privileged operations; use with caution |
+
+Terminal and interactivity examples:
+
+```sh
+# Start a service/profile and return to the terminal immediately
+hold run -d web
+
+# List running executions
+hold ps
+
+# Keep stdin open without a PTY
+hold run -i pythonshell
+
+# Full interactive terminal mode
+hold run -it shell
+```
+
+Environment examples:
+
+```sh
+# Set one environment variable
+hold run -e DATABASE_URL=postgres://localhost myapp
+
+# Set multiple environment variables
+hold run -e DATABASE_URL=postgres://localhost \
+         -e DEBUG=true \
+         -e LOG_LEVEL=info myapp
+
+# Load environment from a file
+hold run --env-file ./config.env myapp
+```
+
+Logging examples:
+
+```sh
+# View last 50 lines of logs
+hold logs -n 50 <profile-or-runid>
+
+# Stream logs in real time
+hold logs -f web
+
+# Combine recent history plus live follow
+hold logs -f -n 50 web
+```
+
+If the log target is a profile, it must resolve to one relevant run. If the
+profile has multiple active/recent runs, Hold presents the filtered run-id list
+and requires a concrete run ID or an explicitly designed multi-log mode.
+
+Cleanup and restart examples:
+
+```sh
+# Run a profile and delete run-id data/logs when it stops
+hold run --rm test-profile
+
+# Always restart a detached profile
+hold run -d --restart always web
+
+# Restart on failure with max retries and delay
+hold run -d --restart on-failure:5 --restart-delay 5 web
+
+# Options: no | always | unless-stopped | on-failure[:max-retries]
+```
+
+Advanced examples:
+
+```sh
+# Change detach sequence to Ctrl+A
+hold run -it --detach-keys="ctrl-a" shell
+
+# Request privileged/elevated behavior where configured
+hold run --privileged maintenance
+```
+
+`--privileged` is a high-risk host-process capability request, not a container
+capability boundary. It should require clear authorization and must be described
+with security warnings anywhere it appears in help or docs.
+
+Common combinations:
+
+```sh
+# Typical web app setup
+hold run -d -p 8080:3000 -e NODE_ENV=production web
+
+# Interactive debugging session
+hold run -it --rm -v $(pwd):/code debug-shell
+
+# Persistent service with auto-restart
+hold run -d --restart always -v db_data:/data database
+
+# Log monitoring
+hold logs -f -n 100 web
+```
+
+Quick reference by use case:
+
+| Scenario | Flags |
+| --- | --- |
+| Run a service in background | `-d` |
+| Interactive shell | `-it` |
+| Persist path/volume metadata | `-v /host:/name` |
+| Configure runtime | `-e KEY=VALUE` |
+| Temporary test | `--rm` |
+| Auto-restart on crash | `--restart always` |
+| Watch logs live | `-f` with `hold logs` |
+
 Interactive TTY rule:
 
 - `hold -i <cmd> [args...]` starts an ad-hoc command with stdin kept open but no PTY.
