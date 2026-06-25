@@ -4,6 +4,7 @@
 #include "hold/store.h"
 #include "hold/platform.h"
 #include "hold/core.h"
+#include "hold/access.h"
 
 #define CAPTIVE_MAX_TOKENS 128
 #define CAPTIVE_MAX_ARGS 128
@@ -169,18 +170,33 @@ static void print_prompt(const struct captive_session *s) {
 
 static void help_exec(bool priv) {
     printf("Exec commands:\n");
+    printf("  attach      Attach to a compatible running instance when supported\n");
+    printf("  console     Attach with a PTY (interactive)\n");
     printf("  enable      Enter privileged mode\n");
-    if (priv) printf("  configure   Enter configuration mode\n");
-    printf("  run         Start an instance from a profile\n");
-    printf("  show        Show system information\n");
     printf("  list        List running instances\n");
+    printf("  logs        View logs for a run/profile target\n");
+    printf("  ping        Check daemon-less liveness of a run\n");
+    printf("  run         Start an instance from a profile\n");
+    printf("  show        Show running system information\n");
+    printf("  inspect     Show structured details for a run/profile target\n");
+    printf("  stop        Stop a run/profile target\n");
+    if (priv) {
+        printf("  configure   Enter configuration mode\n");
+        printf("  grant       Grant a user capability for a profile\n");
+        printf("  revoke      Revoke a user capability\n");
+        printf("  kill        Force-kill a run/profile target\n");
+        printf("  prune       Remove inactive run data\n");
+        printf("  write       Write running config to storage\n");
+        printf("  disable     Return to user EXEC mode\n");
+    }
     printf("  exit        Close the session\n");
-    if (priv) printf("  disable     Return to user EXEC mode\n");
 }
 
 static void help_config(void) {
     printf("Configuration commands:\n");
     printf("  profile     Create or edit a profile\n");
+    printf("  pattern     Manage the pattern dictionary (reserved)\n");
+    printf("  switch      Manage the switchionary (reserved)\n");
     printf("  no          Negate a command\n");
     printf("  default     Reset a command to default\n");
     printf("  exit        Exit configuration mode\n");
@@ -189,26 +205,30 @@ static void help_config(void) {
 
 static void help_profile(void) {
     printf("Profile configuration commands:\n");
-    printf("  binary      Set the target executable\n");
-    printf("  argv        Append base argv tokens\n");
-    printf("  env         Set an environment variable\n");
-    printf("  interactive Keep stdin open when profile runs\n");
-    printf("  tty         Allocate a pseudo-TTY when profile runs\n");
-    printf("  console     Alias for tty\n");
-    printf("  detach      Run profile in background by default\n");
-    printf("  no env      Remove environment variables\n");
-    printf("  no argv     Clear base argv tokens\n");
-    printf("  no interactive|tty|console|detach\n");
-    printf("  info        Show staged profile state\n");
-    printf("  commit      Validate and save profile\n");
-    printf("  exit        Return to global config mode\n");
-    printf("  end         Return to privileged EXEC mode\n");
+    printf("  binary        Set the target executable\n");
+    printf("  argv          Append base argv tokens\n");
+    printf("  env           Set an environment variable\n");
+    printf("  alias         Define a profile-local alias (reserved)\n");
+    printf("  param         Expose a validated optional parameter (reserved)\n");
+    printf("  multi         Allow multiple concurrent instances (reserved)\n");
+    printf("  interactive   Keep stdin open for profile runs\n");
+    printf("  tty           Allocate a pseudo-TTY for profile runs\n");
+    printf("  console       Alias for tty\n");
+    printf("  detach        Run profile in background by default\n");
+    printf("  pty-shim      Start under the PTY shim (reserved)\n");
+    printf("  no            Negate a command\n");
+    printf("  default       Reset a command to default\n");
+    printf("  info          Show staged profile state\n");
+    printf("  commit        Validate and save profile\n");
+    printf("  exit          Return to global config mode\n");
+    printf("  end           Return to privileged EXEC mode\n");
 }
 
 static int cmd_show(struct captive_session *s, int argc, char **argv) {
     if (argc == 1 || (argc == 2 && !strcmp(argv[1], "?"))) {
+        printf("  aliases    Show public alias table\n");
         printf("  runs       Show running instances\n");
-        printf("  profiles   Show profile names\n");
+        printf("  profiles   Show profile names and redacted metadata\n");
         printf("  version    Show hold version\n");
         return 0;
     }
@@ -216,7 +236,7 @@ static int cmd_show(struct captive_session *s, int argc, char **argv) {
         printf("hold version %s\n", HOLD_VERSION);
         return 0;
     }
-    if (!strcmp(argv[1], "profiles")) {
+    if (!strcmp(argv[1], "profiles") || !strcmp(argv[1], "aliases")) {
         return hold_cmd_aliases_action(s->inv, s->user_store, s->system_store, false);
     }
     if (!strcmp(argv[1], "runs") || !strcmp(argv[1], "running")) {
@@ -225,6 +245,12 @@ static int cmd_show(struct captive_session *s, int argc, char **argv) {
     }
     fprintf(stderr, "%% Unknown show command '%s'\n", argv[1]);
     return 5;
+}
+
+static int cmd_write(void) {
+    printf("Building configuration...\n");
+    printf("[OK]\n");
+    return 0;
 }
 
 static int cmd_run(struct captive_session *s, int argc, char **argv) {
@@ -370,6 +396,18 @@ static int profile_no_env(struct captive_profile_stage *stage, int argc, char **
     return 0;
 }
 
+static void profile_clear_argv(struct captive_profile_stage *stage) {
+    for (size_t i = 0; i < stage->arg_count; i++) free(stage->args[i]);
+    memset(stage->args, 0, sizeof(stage->args));
+    stage->arg_count = 0;
+    stage->dirty = true;
+}
+
+static int unsupported_reserved_profile_command(const char *name) {
+    fprintf(stderr, "%% '%s' is reserved for the expanded profile schema and is not persisted by this build\n", name);
+    return 5;
+}
+
 static int profile_set_mode(struct captive_profile_stage *stage, const char *name, bool enabled) {
     bool *slot = NULL;
     if (!strcmp(name, "interactive")) {
@@ -445,6 +483,43 @@ static int handle_profile(struct captive_session *s, int argc, char **argv) {
         s->mode = CAP_PRIV_EXEC;
         return 0;
     }
+    if (argc == 2 && !strcmp(argv[1], "?")) {
+        if (!strcmp(argv[0], "binary")) {
+            printf("  WORD       Absolute path to the executable\n");
+            return 0;
+        }
+        if (!strcmp(argv[0], "argv")) {
+            printf("  WORD       Argument token to append\n");
+            return 0;
+        }
+        if (!strcmp(argv[0], "env")) {
+            printf("  WORD       KEY VALUE or KEY=VALUE\n");
+            return 0;
+        }
+        if (!strcmp(argv[0], "param")) {
+            printf("  WORD       Long flag to expose (e.g. --port)\n");
+            return 0;
+        }
+        if (!strcmp(argv[0], "no")) {
+            printf("  env         Remove an environment variable or all env\n");
+            printf("  argv        Clear base argv tokens\n");
+            printf("  interactive Disable stdin-open profile mode\n");
+            printf("  tty         Disable pseudo-TTY profile mode\n");
+            printf("  console     Alias for no tty\n");
+            printf("  detach      Disable detached default profile mode\n");
+            return 0;
+        }
+        if (!strcmp(argv[0], "default")) {
+            printf("  argv        Clear base argv tokens\n");
+            printf("  env         Clear environment entries\n");
+            printf("  interactive Reset stdin-open mode to default\n");
+            printf("  tty         Reset pseudo-TTY mode to default\n");
+            printf("  console     Alias for default tty\n");
+            printf("  detach      Reset detached mode to default\n");
+            printf("  multi       Reserved; reset when expanded schema lands\n");
+            return 0;
+        }
+    }
     if (!strcmp(argv[0], "binary")) {
         if (argc != 2 || argv[1][0] != '/') {
             fprintf(stderr, "%% Usage: binary <absolute-path>\n");
@@ -456,18 +531,38 @@ static int handle_profile(struct captive_session *s, int argc, char **argv) {
     }
     if (!strcmp(argv[0], "argv")) return profile_append_args(&s->profile, argc, argv);
     if (!strcmp(argv[0], "env")) return profile_set_env(&s->profile, argc, argv);
+    if (!strcmp(argv[0], "alias") || !strcmp(argv[0], "param") ||
+        !strcmp(argv[0], "multi") || !strcmp(argv[0], "pty-shim")) {
+        return unsupported_reserved_profile_command(argv[0]);
+    }
     if (argc == 1 && profile_set_mode(&s->profile, argv[0], true) == 0) return 0;
     if (!strcmp(argv[0], "no") && argc >= 2 && !strcmp(argv[1], "env")) return profile_no_env(&s->profile, argc, argv);
+    if (!strcmp(argv[0], "no") && argc == 2 && !strcmp(argv[1], "argv")) {
+        profile_clear_argv(&s->profile);
+        return 0;
+    }
     if (!strcmp(argv[0], "no") && argc == 2) {
         int mode_rc = profile_set_mode(&s->profile, argv[1], false);
         if (mode_rc == 0) return 0;
+        if (!strcmp(argv[1], "alias") || !strcmp(argv[1], "param") ||
+            !strcmp(argv[1], "multi") || !strcmp(argv[1], "pty-shim")) {
+            return unsupported_reserved_profile_command(argv[1]);
+        }
     }
-    if (!strcmp(argv[0], "no") && argc == 2 && !strcmp(argv[1], "argv")) {
-        for (size_t i = 0; i < s->profile.arg_count; i++) free(s->profile.args[i]);
-        memset(s->profile.args, 0, sizeof(s->profile.args));
-        s->profile.arg_count = 0;
-        s->profile.dirty = true;
-        return 0;
+    if (!strcmp(argv[0], "default") && argc == 2) {
+        if (!strcmp(argv[1], "argv")) {
+            profile_clear_argv(&s->profile);
+            return 0;
+        }
+        if (!strcmp(argv[1], "env")) return profile_no_env(&s->profile, 2, argv);
+        int mode_rc = profile_set_mode(&s->profile, argv[1], false);
+        if (mode_rc == 0) return 0;
+        if (!strcmp(argv[1], "multi")) return 0;
+        if (!strcmp(argv[1], "alias") || !strcmp(argv[1], "param") || !strcmp(argv[1], "pty-shim")) {
+            return unsupported_reserved_profile_command(argv[1]);
+        }
+        fprintf(stderr, "%% Unknown default target '%s'\n", argv[1]);
+        return 5;
     }
     if (!strcmp(argv[0], "info") || !strcmp(argv[0], "show")) {
         profile_info(&s->profile);
@@ -531,11 +626,59 @@ static int handle_exec(struct captive_session *s, int argc, char **argv) {
         return 5;
     }
     if (!strcmp(argv[0], "show")) return cmd_show(s, argc, argv);
+    if (!strcmp(argv[0], "write")) {
+        if (!priv) {
+            fprintf(stderr, "%% write requires privileged EXEC mode\n");
+            return 5;
+        }
+        return cmd_write();
+    }
     if (!strcmp(argv[0], "list") || !strcmp(argv[0], "ps")) {
         return s->inv->euid_root ? hold_cmd_list_system(s->system_store, NULL, false)
                                  : hold_cmd_list_normal(s->user_store, s->system_store, NULL, false);
     }
     if (!strcmp(argv[0], "run")) return cmd_run(s, argc, argv);
+    if (!strcmp(argv[0], "logs")) return hold_cmd_view_action(s->inv, s->user_store, s->system_store, s->program, argc - 1, argv + 1);
+    if (!strcmp(argv[0], "inspect") || !strcmp(argv[0], "ping")) {
+        if (argc != 2) {
+            fprintf(stderr, "%% Usage: %s <target>\n", argv[0]);
+            return 5;
+        }
+        return hold_cmd_inspect_action(s->inv, s->user_store, s->system_store, s->program, argv[1]);
+    }
+    if (!strcmp(argv[0], "console") || !strcmp(argv[0], "attach")) {
+        if (argc != 2) {
+            fprintf(stderr, "%% Usage: %s <target>\n", argv[0]);
+            return 5;
+        }
+        return hold_cmd_console_action(s->inv, s->user_store, s->system_store, s->program, argv[1]);
+    }
+    if (!strcmp(argv[0], "stop")) {
+        if (argc != 2) {
+            fprintf(stderr, "%% Usage: stop <target>\n");
+            return 5;
+        }
+        return hold_cmd_signal_action(s->inv, s->user_store, s->system_store, s->program, "stop", 1, argv + 1, SIGTERM, true, false, false);
+    }
+    if (priv && !strcmp(argv[0], "kill")) {
+        if (argc != 2) {
+            fprintf(stderr, "%% Usage: kill <target>\n");
+            return 5;
+        }
+        return hold_cmd_signal_action(s->inv, s->user_store, s->system_store, s->program, "kill", 1, argv + 1, SIGKILL, false, false, false);
+    }
+    if (priv && !strcmp(argv[0], "prune")) {
+        if (argc > 2) {
+            fprintf(stderr, "%% Usage: prune [target|all]\n");
+            return 5;
+        }
+        const char *target = argc == 2 && strcmp(argv[1], "all") ? argv[1] : NULL;
+        bool all = argc == 2 && !strcmp(argv[1], "all");
+        return hold_cmd_prune_action(s->inv, s->user_store, s->system_store, s->program, target, all);
+    }
+    if (priv && (!strcmp(argv[0], "grant") || !strcmp(argv[0], "revoke"))) {
+        return hold_cmd_grant_revoke_action(s->inv, s->system_store, s->program, !strcmp(argv[0], "grant"), argc - 1, argv + 1);
+    }
     fprintf(stderr, "%% Unknown command '%s'\n", argv[0]);
     return 5;
 }

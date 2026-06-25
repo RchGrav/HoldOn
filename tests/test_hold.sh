@@ -3650,6 +3650,81 @@ if 'mode' in profile:
 PY
 }
 
+
+test_captive_cli_ios_contextual_help_and_reserved_words() {
+  local rc
+  set +e
+  printf '?
+show ?
+enable
+?
+configure ?
+configure terminal
+?
+profile ?
+profile ioshelp
+?
+binary ?
+argv ?
+env ?
+param ?
+no ?
+default ?
+default multi
+end
+write
+disable
+exit
+' |
+    "$HOLD_BIN" >"$TEST_ROOT/captive-ios-help.out" 2>"$TEST_ROOT/captive-ios-help.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-ios-help.out" "$TEST_ROOT/captive-ios-help.err" >&2; return 1; }
+  grep -q 'attach      Attach to a compatible running instance' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'console     Attach with a PTY' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'grant       Grant a user capability' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'revoke      Revoke a user capability' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'write       Write running config to storage' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'aliases    Show public alias table' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'pattern     Manage the pattern dictionary' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'alias         Define a profile-local alias (reserved)' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'param         Expose a validated optional parameter (reserved)' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'multi         Allow multiple concurrent instances (reserved)' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'pty-shim      Start under the PTY shim (reserved)' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'WORD       Absolute path to the executable' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'WORD       Long flag to expose' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q 'Building configuration...' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  grep -q '\[OK\]' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  ! grep -q 'Unknown' "$TEST_ROOT/captive-ios-help.err" || { cat "$TEST_ROOT/captive-ios-help.err" >&2; return 1; }
+}
+
+test_captive_cli_ios_operational_commands() {
+  local rc
+  set +e
+  printf 'enable
+configure terminal
+profile ops
+binary /bin/sh
+argv -c
+argv "echo captive-op"
+commit
+end
+run ops
+logs ops --plain
+inspect ops
+prune ops
+exit
+' |
+    "$HOLD_BIN" >"$TEST_ROOT/captive-ios-ops.out" 2>"$TEST_ROOT/captive-ios-ops.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-ios-ops.out" "$TEST_ROOT/captive-ios-ops.err" >&2; return 1; }
+  grep -q 'Profile committed.' "$TEST_ROOT/captive-ios-ops.out" || { cat "$TEST_ROOT/captive-ios-ops.out" >&2; return 1; }
+  grep -q 'captive-op' "$TEST_ROOT/captive-ios-ops.out" || { cat "$TEST_ROOT/captive-ios-ops.out" >&2; return 1; }
+  grep -q '"alias": "ops"' "$TEST_ROOT/captive-ios-ops.out" || { cat "$TEST_ROOT/captive-ios-ops.out" >&2; return 1; }
+  grep -q 'hold: pruned 1 past run for' "$TEST_ROOT/captive-ios-ops.err" || { cat "$TEST_ROOT/captive-ios-ops.err" >&2; return 1; }
+}
+
 test_build_artifact_coexistence() {
   make clean >/dev/null || return 1
   make hold hold STATIC_LDFLAGS= EXTRA_CPPFLAGS=-DHOLD_TESTING >/dev/null || return 1
@@ -4393,6 +4468,8 @@ run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hol
 run_test "captive CLI shows Cisco prompts and commits a profile" test_captive_cli_cisco_prompts_and_profile_commit
 run_test "captive CLI noninteractive transcript is script-safe" test_captive_cli_noninteractive_transcript_is_script_safe
 run_test "captive CLI profile mode flags commit and clear" test_captive_cli_profile_mode_flags_commit_and_clear
+run_test "captive CLI IOS contextual help and reserved words" test_captive_cli_ios_contextual_help_and_reserved_words
+run_test "captive CLI IOS operational commands" test_captive_cli_ios_operational_commands
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "internal viewer harness seeds literal and similarity filters" test_log_view_internal_seed_filters
