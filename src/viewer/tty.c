@@ -657,7 +657,7 @@ static void page_down(struct viewer_state *state) {
 }
 
 static void page_up(struct viewer_state *state) {
-    if (state->follow) {
+    if (state->follow || state->scan_mode == VIEWER_SCAN_BACKWARD) {
         state->scan_mode = VIEWER_SCAN_BACKWARD;
         state->at_live_edge = false;
         if (state->visible_count > 0 && state->prev_offset > 0 && state->prev_offset < state->start_offset) {
