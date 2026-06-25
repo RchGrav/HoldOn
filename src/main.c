@@ -655,6 +655,9 @@ int main(int argc, char **argv) {
         hold_die_errno("hold: failed to resolve invocation context");
     }
     inv.quiet = quiet;
+    if (owned && !strcmp(command, "run") && !docker_detach && !console_mode) {
+        tail = true;
+    }
     if (docker_detach) {
         tail = false;
     }

@@ -821,7 +821,7 @@ test_log_view_internal_seed_filters() {
 
 test_log_view_follow_filters_live_output() {
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'sleep 0.2; echo ignore-before; sleep 0.2; echo "live-needle one"; sleep 0.2; echo ignore-after; sleep 0.2; echo "live-needle two"' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'sleep 0.2; echo ignore-before; sleep 0.2; echo "live-needle one"; sleep 0.2; echo ignore-after; sleep 0.2; echo "live-needle two"' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   set +e
@@ -839,7 +839,7 @@ test_hold_logs_follow_opens_dynamic_tty_filter() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'sleep 0.3; echo logs-ignore; sleep 0.3; echo "logs-live-hit"; sleep 0.2' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'sleep 0.3; echo logs-ignore; sleep 0.3; echo "logs-live-hit"; sleep 0.2' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   set +e
@@ -857,7 +857,7 @@ test_log_view_follow_dynamic_tty_filter() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'sleep 0.3; echo boring-ignore; sleep 0.3; echo "needle-live"; sleep 0.2' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'sleep 0.3; echo boring-ignore; sleep 0.3; echo "needle-live"; sleep 0.2' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   set +e
@@ -875,7 +875,7 @@ test_log_viewer_integrated_chrome_help_and_info() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'echo "chrome one"; echo "chrome two"; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo "chrome one"; echo "chrome two"; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
@@ -896,7 +896,7 @@ test_log_viewer_space_excludes_and_ctrl_r_resets_filters() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'echo "example database timeout"; echo "unrelated payment ok"; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo "example database timeout"; echo "unrelated payment ok"; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
@@ -915,7 +915,7 @@ test_log_view_selection_uses_cached_rows() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc max_gen
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'printf "needle 1\nneedle 2\nneedle 3\nneedle 4\n"; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'printf "needle 1\nneedle 2\nneedle 3\nneedle 4\n"; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
@@ -935,7 +935,7 @@ test_log_view_follow_pages_filtered_windows() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9; do echo "page-hit-$i"; done; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9; do echo "page-hit-$i"; done; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
@@ -955,7 +955,7 @@ test_log_view_follow_page_up_stays_at_start() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in $(seq 1 40); do echo "topjump-line-$i"; done; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in $(seq 1 40); do echo "topjump-line-$i"; done; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
@@ -992,7 +992,7 @@ test_log_view_follow_top_refills_as_live_log_grows() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in $(seq 1 12); do echo "growtop-line-$i"; sleep 0.02; done; sleep 0.5' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in $(seq 1 12); do echo "growtop-line-$i"; sleep 0.02; done; sleep 0.5' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   set +e
@@ -1024,7 +1024,7 @@ test_log_view_follow_page_up_stops_at_first_filtered_match() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in $(seq 1 20); do echo "filtered-noise-$i"; done; for i in $(seq 1 40); do echo "filtered-target-line-$i"; done; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in $(seq 1 20); do echo "filtered-noise-$i"; done; for i in $(seq 1 40); do echo "filtered-target-line-$i"; done; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
@@ -1058,7 +1058,7 @@ test_log_view_printable_f_starts_dynamic_filter() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'echo "aaa unrelated"; echo "f-only-visible"; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo "aaa unrelated"; echo "f-only-visible"; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
@@ -1076,7 +1076,7 @@ test_log_view_follow_exited_page_up_keeps_backward_navigation() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in $(seq 1 40); do echo "exitpage-line-$i"; done; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in $(seq 1 40); do echo "exitpage-line-$i"; done; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   set +e
@@ -1108,7 +1108,7 @@ test_log_view_follow_browsed_away_marks_newer_without_yank() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in 1 2 3 4 5 6; do echo "away-hit-old-$i"; done; sleep 0.8; echo "away-hit-new-tail"; sleep 0.2' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in 1 2 3 4 5 6; do echo "away-hit-old-$i"; done; sleep 0.8; echo "away-hit-new-tail"; sleep 0.2' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.2
@@ -1127,7 +1127,7 @@ test_log_view_follow_ignores_nonmatching_newer_data() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in 1 2 3 4 5 6; do echo "nomatch-hit-old-$i"; done; sleep 0.8; echo "unrelated-new-tail"; sleep 0.2' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in 1 2 3 4 5 6; do echo "nomatch-hit-old-$i"; done; sleep 0.8; echo "unrelated-new-tail"; sleep 0.2' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.2
@@ -1146,7 +1146,7 @@ test_log_view_follow_finds_sparse_newer_match_after_large_burst() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in 1 2 3 4 5 6; do echo "burst-hit-old-$i"; done; sleep 0.8; python3 -c '"'"'import sys; sys.stdout.write("unrelated\\n" * 40000); sys.stdout.write("burst-hit-new-tail\\n"); sys.stdout.flush()'"'"'; sleep 0.2' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in 1 2 3 4 5 6; do echo "burst-hit-old-$i"; done; sleep 0.8; python3 -c '"'"'import sys; sys.stdout.write("unrelated\\n" * 40000); sys.stdout.write("burst-hit-new-tail\\n"); sys.stdout.flush()'"'"'; sleep 0.2' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.2
@@ -1845,7 +1845,7 @@ EOF
 test_docker_rm_removes_run_artifacts_after_exit() {
   local out id store json log
   store="$HOME/.local/state/hold"
-  out=$("$HOLD_BIN" run --rm -- /bin/sh -c 'echo rm-gone; sleep 0.3' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  out=$("$HOLD_BIN" run -d --rm -- /bin/sh -c 'echo rm-gone; sleep 0.3' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   json="$store/$id.json"
@@ -1866,7 +1866,7 @@ test_docker_rm_removes_profile_run_artifacts_after_exit() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   sleep 0.4
-  out=$("$HOLD_BIN" run --rm rmprofile 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  out=$("$HOLD_BIN" run -d --rm rmprofile 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   json="$store/$id.json"
@@ -2551,7 +2551,7 @@ test_system_switch_canonicalizes_owned_command() {
   tail -n 2 "$TEST_ROOT/one.argv" | grep -qx 'abc12345'
 
   set +e
-  "$HOLD_BIN" --system run -- /bin/true --child-flag >/dev/null 2>"$TEST_ROOT/run-system.err"
+  "$HOLD_BIN" --system run -d -- /bin/true --child-flag >/dev/null 2>"$TEST_ROOT/run-system.err"
   rc=$?
   set -e
   [ "$rc" -eq 77 ] || return 1
@@ -2767,7 +2767,7 @@ test_sudo_context_can_stop_unique_user_local_run() {
 
 test_hold_unified_cli_surface() {
   local out id id2
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'echo hold-run-line' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo hold-run-line' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   "$HOLD_BIN" logs "$id" >"$TEST_ROOT/hold-logs.out" 2>"$TEST_ROOT/hold-logs.err" || {
@@ -2784,7 +2784,7 @@ test_hold_unified_cli_surface() {
   "$HOLD_BIN" doctor >"$TEST_ROOT/hold-doctor.out" || return 1
   grep -q 'version:' "$TEST_ROOT/hold-doctor.out" || return 1
 
-  out=$("$HOLD_BIN" run -- /usr/bin/sleep 60 2>&1) || return 1
+  out=$("$HOLD_BIN" run -d -- /usr/bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   "$HOLD_BIN" profile save "$id" as hold-web >/dev/null || return 1
@@ -2849,6 +2849,28 @@ PY
   "$HOLD_BIN" rm docker-direct >/dev/null || return 1
   "$HOLD_BIN" profiles >"$TEST_ROOT/docker-profiles-after-rm.out" || return 1
   ! grep -q 'docker-direct' "$TEST_ROOT/docker-profiles-after-rm.out" || { cat "$TEST_ROOT/docker-profiles-after-rm.out" >&2; return 1; }
+}
+
+test_docker_run_foreground_follows_output_by_default() {
+  local out id
+  out=$("$HOLD_BIN" run -- /bin/sh -c 'echo docker-foreground-ok' 2>"$TEST_ROOT/docker-foreground.err") || {
+    cat "$TEST_ROOT/docker-foreground.err" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  grep -q '^docker-foreground-ok$' <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
+
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo docker-detached-hidden; sleep 0.1' 2>"$TEST_ROOT/docker-detached.err") || {
+    cat "$TEST_ROOT/docker-detached.err" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  if grep -q '^docker-detached-hidden$' <<<"$out"; then
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
 }
 
 test_docker_unsupported_options_fail_loudly() {
@@ -3610,14 +3632,14 @@ test_multi_n_exact_count_and_invalid() {
   running=$("$HOLD_BIN" list 2>/dev/null | grep -c running || true)
   [ "$running" -ge 3 ] || { echo "expected >=3 running, got $running" >&2; return 1; }
   "$HOLD_BIN" stop web-n --all >/dev/null 2>&1 || true
-  id=$("$HOLD_BIN" run web-n 2>&1 | extract_id); [ -n "$id" ] || return 1
-  set +e; "$HOLD_BIN" run web-n >/dev/null 2>"$TEST_ROOT/run-force.err"; rc=$?; set -e
+  id=$("$HOLD_BIN" run -d web-n 2>&1 | extract_id); [ -n "$id" ] || return 1
+  set +e; "$HOLD_BIN" run -d web-n >/dev/null 2>"$TEST_ROOT/run-force.err"; rc=$?; set -e
   [ "$rc" -eq 6 ] || { echo "run duplicate without --force: rc=$rc (want 6)" >&2; return 1; }
   grep -q -- '--force' "$TEST_ROOT/run-force.err" || { cat "$TEST_ROOT/run-force.err" >&2; return 1; }
-  id2=$("$HOLD_BIN" run --force web-n 2>&1 | extract_id); [ -n "$id2" ] || return 1
+  id2=$("$HOLD_BIN" run -d --force web-n 2>&1 | extract_id); [ -n "$id2" ] || return 1
   [ "$id2" != "$id" ] || { echo "run --force reused the original id" >&2; return 1; }
   "$HOLD_BIN" stop web-n --all >/dev/null 2>&1 || true
-  ids=$("$HOLD_BIN" run --multi 2 web-n 2>/dev/null | sed -n '/^[0-9a-f]\{8\}$/p')
+  ids=$("$HOLD_BIN" run -d --multi 2 web-n 2>/dev/null | sed -n '/^[0-9a-f]\{8\}$/p')
   [ "$(printf '%s\n' "$ids" | grep -c .)" -eq 2 ] || { echo "run --multi 2 did not print 2 ids" >&2; return 1; }
   "$HOLD_BIN" stop web-n --all >/dev/null 2>&1 || true
   set +e; "$HOLD_BIN" start web-n --multi >/dev/null 2>"$TEST_ROOT/mm.err"; rc=$?; set -e
@@ -3706,6 +3728,7 @@ run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
 run_test "hold unified CLI surface" test_hold_unified_cli_surface
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
+run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit
