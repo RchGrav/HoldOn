@@ -147,7 +147,7 @@ static int help_scripting(void) {
     printf("hold help scripting\n\n"
            "stdout is for machine data. Human banners, confirmations, warnings, and\n"
            "errors go to stderr; --quiet suppresses normal human status.\n\n"
-           "  id=$(hold <cmd...>)          capture the bare 8-hex run id\n"
+           "  id=$(hold -d <cmd...>)       capture the bare 8-hex run id\n"
            "  hold stop --print <id>       print kill -TERM -- -<pgid>\n"
            "  hold kill --print <id>       print kill -KILL -- -<pgid>\n\n"
            "Exit codes:\n"

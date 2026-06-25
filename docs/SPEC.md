@@ -632,7 +632,7 @@ fsync containing directory when possible
 
 On Hold launches the child in a new session / process group. Child `stdin` is redirected from `/dev/null`; child `stdout` and `stderr` are redirected to the per-run log.
 
-Start writes only the bare 8-character run ID to stdout. Human banners and confirmations, including `profile`, `grant`, `revoke`, `stop`, `kill`, and `prune` status lines, go to stderr and are suppressed by `--quiet` where applicable. `hold -f <cmd...>` starts and follows the log immediately; `--tail` remains accepted as a compatibility spelling.
+Docker-shaped launches (`hold <cmd...>` and `hold run <cmd|profile>`) run in the foreground and stream logs by default. Detached launches (`hold -d <cmd...>` or `hold run -d ...`) print the bare 8-character run ID to stdout. Human banners and confirmations, including `profile`, `grant`, `revoke`, `stop`, `kill`, and `prune` status lines, go to stderr and are suppressed by `--quiet` where applicable. `hold -f <cmd...>` remains accepted as a compatibility spelling for explicit follow mode.
 
 An exec-success handshake distinguishes successful `execvp()` from immediate exec failure:
 

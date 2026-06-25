@@ -8,8 +8,8 @@ On Hold is useful in CI when one step needs to start a long-running helper and l
 
 The important CI contract is simple:
 
-- `hold <cmd...>` starts the helper detached from the shell's process group.
-- stdout is only the run ID, so scripts can capture it directly.
+- `hold -d <cmd...>` starts the helper detached from the shell's process group.
+- detached stdout is only the run ID, so scripts can capture it directly.
 - stderr contains human status such as the log path and stop command.
 - `hold dump <id>` prints the saved log and exits.
 - `hold stop <id>` validates the recorded process group, sends `SIGTERM`, then escalates to `SIGKILL` if needed.
@@ -51,7 +51,7 @@ This is the basic CI problem: a shell step exits, but the helper should keep run
   shell: bash
   run: |
     set -Eeuo pipefail
-    api_id="$("$HOLD_BIN" npm run start:api)"
+    api_id="$("$HOLD_BIN" -d npm run start:api)"
     echo "API_RUN_ID=$api_id" >> "$GITHUB_ENV"
 
 - name: Test against API

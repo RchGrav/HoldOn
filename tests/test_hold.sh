@@ -508,7 +508,7 @@ path_absent_soon() {
 test_lifecycle() {
   local out id lines sleep_bin
   sleep_bin="$(resolve_path "$(command -v sleep)")" || return 1
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   printf '%s\n' "$out" | grep -Fqx "hold  started  $id   $sleep_bin 300"
@@ -525,14 +525,14 @@ test_lifecycle() {
 
 test_start_output_stop_hint() {
   local out id
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   printf '%s\n' "$out" | grep -Eq "^         stop     hold stop $id$"
 }
 test_kill_subcommand() {
   local out id pgid
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   pgid=$(record_pgid "$id")
@@ -543,7 +543,7 @@ test_kill_subcommand() {
 
 test_group_kill_children() {
   local out id pgid children
-  out=$("$HOLD_BIN" bash -c 'sleep 600 & sleep 601 & wait' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d bash -c 'sleep 600 & sleep 601 & wait' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
@@ -577,7 +577,7 @@ test_exec_failure_no_record() {
 
 test_fast_exit_record_exited() {
   local out id
-  out=$("$HOLD_BIN" true 2>&1) || return 1
+  out=$("$HOLD_BIN" -d true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.1
@@ -586,7 +586,7 @@ test_fast_exit_record_exited() {
 
 test_exec_replacement_remains_controllable() {
   local out id pgid
-  out=$("$HOLD_BIN" bash -c 'exec sleep 300' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d bash -c 'exec sleep 300' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
@@ -633,7 +633,7 @@ JSON
 
 test_symlinked_log_rejected() {
   local out id log rc
-  out=$("$HOLD_BIN" /bin/echo original-log-line 2>&1) || return 1
+  out=$("$HOLD_BIN" -d /bin/echo original-log-line 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   log="$HOME/.local/state/hold/$id.log"
@@ -681,7 +681,7 @@ test_id_sanitization() {
 
 test_print_signal_output() {
   local out id pgid got
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
@@ -693,7 +693,7 @@ test_print_signal_output() {
 
 test_signal_refuses_tampered_live_group_identity() {
   local out id rec real_pgid real_sid shell_pgid shell_sid rc
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   real_pgid=$(record_pgid "$id")
   real_sid=$(record_sid "$id")
@@ -724,8 +724,8 @@ test_signal_refuses_tampered_live_group_identity() {
 
 test_stop_multiple_ids() {
   local out1 out2 id1 id2 pgid1 pgid2 rc
-  out1=$("$HOLD_BIN" sleep 300 2>&1) || return 1
-  out2=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out1=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
+  out2=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id1=$(printf '%s\n' "$out1" | extract_id)
   id2=$(printf '%s\n' "$out2" | extract_id)
   pgid1=$(record_pgid "$id1")
@@ -776,7 +776,7 @@ test_argument_edges() {
 
 test_special_chars_args() {
   local out id json
-  out=$("$HOLD_BIN" echo "hello world" "it's" 2>&1) || return 1
+  out=$("$HOLD_BIN" -d echo "hello world" "it's" 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   json="$HOME/.local/state/hold/$id.json"
@@ -787,7 +787,7 @@ test_special_chars_args() {
 
 test_log_capture() {
   local out id log
-  out=$("$HOLD_BIN" bash -c 'echo out; echo err >&2; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d bash -c 'echo out; echo err >&2; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   log="$HOME/.local/state/hold/$id.log"
@@ -800,7 +800,7 @@ test_log_capture() {
 
 test_log_view_internal_seed_filters() {
   local out id viewed stats similar plain
-  out=$("$HOLD_BIN" bash -c 'echo alpha; echo "needle one"; echo "warn database connection timeout retrying"; echo omega; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d bash -c 'echo alpha; echo "needle one"; echo "warn database connection timeout retrying"; echo omega; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.4
@@ -1241,7 +1241,7 @@ test_start_follow_short_form() {
 
 test_tail_verb_existing_id() {
   local out id tailed
-  out=$("$HOLD_BIN" bash -c 'sleep 0.3; echo from_tail_id; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d bash -c 'sleep 0.3; echo from_tail_id; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   tailed=$("$HOLD_BIN" tail "$id" 2>&1) || return 1
@@ -1252,7 +1252,7 @@ test_persistent_stale_records() {
   local out id store bootfile oldboot list_out stale_id stale_log
   bootfile="$TEST_ROOT/fake_boot_id"
   printf 'boot-a\n' >"$bootfile" || return 1
-  out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" bash -c 'echo stale-line; sleep 0.2' 2>&1) || return 1
+  out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" -d bash -c 'echo stale-line; sleep 0.2' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   store="$HOME/.local/state/hold"
@@ -1285,7 +1285,7 @@ test_boot_unavailable_does_not_force_stale() {
   local out id bootfile list_out rc pgid got
   bootfile="$TEST_ROOT/fake_boot_id"
   printf 'boot-a\n' >"$bootfile" || return 1
-  out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" sleep 60 2>&1) || return 1
+  out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" -d sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   pgid=$(record_pgid "$id")
@@ -1323,7 +1323,7 @@ test_leader_zombie_group_still_running() {
 
 test_tail_finished_log_prints_existing_output() {
   local out id tailed
-  out=$("$HOLD_BIN" bash -c 'echo finished-tail-line' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d bash -c 'echo finished-tail-line' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.2
@@ -1359,7 +1359,7 @@ test_console_does_not_require_external_attach_tool() {
 
 test_console_reports_non_console_run() {
   local out id rc
-  out=$("$HOLD_BIN" sleep 30 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 30 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   "$HOLD_BIN" console "$id" >"$TEST_ROOT/console-none.out" 2>"$TEST_ROOT/console-none.err"
@@ -1675,8 +1675,8 @@ test_console_can_reattach_after_detach() {
 
 test_prune_by_id() {
   local out1 out2 id1 id2 store
-  out1=$("$HOLD_BIN" true 2>&1) || return 1
-  out2=$("$HOLD_BIN" true 2>&1) || return 1
+  out1=$("$HOLD_BIN" -d true 2>&1) || return 1
+  out2=$("$HOLD_BIN" -d true 2>&1) || return 1
   id1=$(printf '%s\n' "$out1" | extract_id)
   id2=$(printf '%s\n' "$out2" | extract_id)
   [ -n "$id1" ] && [ -n "$id2" ] || return 1
@@ -1688,8 +1688,8 @@ test_prune_by_id() {
 
 test_prune_all_keeps_running() {
   local out1 out2 id1 id2 store
-  out1=$("$HOLD_BIN" sleep 300 2>&1) || return 1
-  out2=$("$HOLD_BIN" true 2>&1) || return 1
+  out1=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
+  out2=$("$HOLD_BIN" -d true 2>&1) || return 1
   id1=$(printf '%s\n' "$out1" | extract_id)
   id2=$(printf '%s\n' "$out2" | extract_id)
   [ -n "$id1" ] && [ -n "$id2" ] || return 1
@@ -1703,7 +1703,7 @@ test_prune_all_keeps_running() {
 test_transactional_record_write_failure() {
   local rc pids
   set +e
-  HOLD_TEST_FAIL_RECORD_WRITE=1 "$HOLD_BIN" bash -c 'exec -a hold_txn_test_sleep sleep 60' >/dev/null 2>&1
+  HOLD_TEST_FAIL_RECORD_WRITE=1 "$HOLD_BIN" -d bash -c 'exec -a hold_txn_test_sleep sleep 60' >/dev/null 2>&1
   rc=$?
   set -e
   [ "$rc" -eq 1 ] || return 1
@@ -1765,7 +1765,7 @@ test_alias_profile_map_start_and_stop() {
   local out id out2 id2 pgid2 store sh_bin
   store="$HOME/.local/state/hold"
   sh_bin="$(resolve_path /bin/sh)" || return 1
-  out=$("$HOLD_BIN" /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   "$HOLD_BIN" profile save "$id" as web-test >"$TEST_ROOT/alias.out" 2>"$TEST_ROOT/alias.err" || return 1
@@ -1808,7 +1808,7 @@ test_alias_from_relative_executable_uses_recorded_absolute_argv0() {
   chmod +x "$app/bin/daemon" || return 1
   expected="$(resolve_path "$app/bin/daemon")" || return 1
 
-  out=$(cd "$work" && "$HOLD_BIN" ../bin/daemon 2>&1) || return 1
+  out=$(cd "$work" && "$HOLD_BIN" -d ../bin/daemon 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   grep -Fq "\"argv\": [\"$expected\"]" "$store/$id.json" || return 1
@@ -1820,7 +1820,7 @@ test_alias_from_relative_executable_uses_recorded_absolute_argv0() {
 
 test_alias_multi_gate_and_all_stop() {
   local out id id1 id2 out1 out2 rc pgid1 pgid2
-  out=$("$HOLD_BIN" sleep 60 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   "$HOLD_BIN" profile save "$id" as web-multi >/dev/null || return 1
@@ -2176,7 +2176,7 @@ JSON
 
 test_invalid_alias_names_rejected() {
   local out id rc
-  out=$("$HOLD_BIN" true 2>&1) || return 1
+  out=$("$HOLD_BIN" -d true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   set +e
@@ -2190,7 +2190,7 @@ test_invalid_alias_names_rejected() {
 test_short_hex_alias_name_allowed() {
   local out id sh_bin
   sh_bin="$(resolve_path /bin/sh)" || return 1
-  out=$("$HOLD_BIN" /bin/sh -c ':' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d /bin/sh -c ':' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   "$HOLD_BIN" profile save "$id" as db >"$TEST_ROOT/alias-db.out" 2>"$TEST_ROOT/alias-db.err" || return 1
@@ -2273,7 +2273,7 @@ EOF
   chmod 755 "$visudo_ok" || return 1
   export HOLD_TEST_VISUDO_PROG="$visudo_ok"
 
-  out=$(as_root "$safe" /bin/sh -c ':' 2>&1) || return 1
+  out=$(as_root "$safe" -d /bin/sh -c ':' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   as_root "$safe" profile save "$id" as web-sys >"$TEST_ROOT/root-alias.out" 2>"$TEST_ROOT/root-alias.err" || return 1
@@ -2464,7 +2464,7 @@ test_elevated_capability_start_and_stop_validate_alias_hash() {
   as_root chown 0:0 "$safe" || return 1
   as_root chmod 755 "$safe" || return 1
 
-  out=$(as_root "$safe" /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
+  out=$(as_root "$safe" -d /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   as_root "$safe" profile save "$id" as web-cap >"$TEST_ROOT/cap-alias.out" 2>"$TEST_ROOT/cap-alias.err" || return 1
@@ -2492,7 +2492,7 @@ test_elevated_capability_start_and_stop_validate_alias_hash() {
 
 test_raw_start_does_not_steal_trailing_system() {
   local out id log
-  out=$("$HOLD_BIN" sh -c 'printf "arg:%s\n" "$1"' sh --system 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sh -c 'printf "arg:%s\n" "$1"' sh --system 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   log="$HOME/.local/state/hold/$id.log"
@@ -2509,7 +2509,7 @@ test_public_root_index_list_is_redacted() {
 
 test_user_local_wins_over_public_root_collision() {
   local out id pgid
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
@@ -2523,7 +2523,7 @@ test_user_local_wins_over_public_root_collision() {
 
 test_explicit_user_target() {
   local out id pgid
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
@@ -2581,7 +2581,7 @@ test_sudo_exec_failure_returns_clean_error() {
 test_tail_ctrl_c_detaches_from_tail_and_keeps_run() {
   command -v setsid >/dev/null 2>&1 || skip "setsid not available"
   local out id pgid tail_pid rc
-  out=$("$HOLD_BIN" bash -c 'while :; do echo tail-still-running; sleep 1; done' 2>&1) || return 1
+  out=$("$HOLD_BIN" -d bash -c 'while :; do echo tail-still-running; sleep 1; done' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
@@ -2671,7 +2671,7 @@ test_system_raw_self_elevation_preserves_child_switches_and_delimiter() {
   local rc
   make_fake_sudo || return 1
   set +e
-  "$HOLD_BIN" --system child-command --system >/dev/null 2>"$TEST_ROOT/raw.err"
+  "$HOLD_BIN" --system -d child-command --system >/dev/null 2>"$TEST_ROOT/raw.err"
   rc=$?
   set -e
   [ "$rc" -eq 77 ] || return 1
@@ -2681,7 +2681,7 @@ test_system_raw_self_elevation_preserves_child_switches_and_delimiter() {
   [ "${args[5]}" = "--system" ] || return 1
 
   set +e
-  "$HOLD_BIN" --system -- list --system >/dev/null 2>"$TEST_ROOT/delim.err"
+  "$HOLD_BIN" --system -d -- list --system >/dev/null 2>"$TEST_ROOT/delim.err"
   rc=$?
   set -e
   [ "$rc" -eq 77 ] || return 1
@@ -2706,7 +2706,7 @@ test_elevated_requires_root() {
 test_long_command_list_truncates_instead_of_skips() {
   local out id long_arg list_out
   long_arg=$(printf 'x%.0s' $(seq 1 140))
-  out=$("$HOLD_BIN" /bin/echo "$long_arg" 2>&1) || return 1
+  out=$("$HOLD_BIN" -d /bin/echo "$long_arg" 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.2
@@ -2717,7 +2717,7 @@ test_long_command_list_truncates_instead_of_skips() {
 
 test_normal_start_writes_user_local_state() {
   local out id mode
-  out=$("$HOLD_BIN" true 2>&1) || return 1
+  out=$("$HOLD_BIN" -d true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   [ -f "$HOME/.local/state/hold/$id.json" ] || return 1
@@ -2804,7 +2804,7 @@ test_sudo_system_start_of_home_executable_uses_user_store() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local app out
   app=$(make_home_executable) || return 1
-  out=$(as_sudo_from_user "$HOLD_REAL_BIN" --system "$app" 2>&1) || return 1
+  out=$(as_sudo_from_user "$HOLD_REAL_BIN" --system -d "$app" 2>&1) || return 1
   assert_home_system_start_is_user_local "$out"
 }
 
@@ -2812,7 +2812,7 @@ test_home_elevated_run_alias_stays_user_local() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local app out id aliases
   app=$(make_home_executable) || return 1
-  out=$(as_sudo_from_user "$HOLD_REAL_BIN" --system "$app" 2>&1) || return 1
+  out=$(as_sudo_from_user "$HOLD_REAL_BIN" --system -d "$app" 2>&1) || return 1
   assert_home_system_start_is_user_local "$out" || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   as_user "$HOLD_REAL_BIN" profile save "$id" as home-elevated >/dev/null || return 1
@@ -2825,7 +2825,7 @@ test_home_elevated_run_alias_stays_user_local() {
 test_sudo_context_can_stop_unique_user_local_run() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local out id pgid
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
@@ -2918,6 +2918,29 @@ PY
   "$HOLD_BIN" profiles >"$TEST_ROOT/docker-profiles-after-rm.out" || return 1
   ! grep -q 'docker-direct' "$TEST_ROOT/docker-profiles-after-rm.out" || { cat "$TEST_ROOT/docker-profiles-after-rm.out" >&2; return 1; }
 }
+
+test_docker_bare_launch_foreground_follows_output_by_default() {
+  local out id
+  out=$("$HOLD_BIN" -- /bin/sh -c 'echo bare-foreground-ok' 2>"$TEST_ROOT/docker-bare-foreground.err") || {
+    cat "$TEST_ROOT/docker-bare-foreground.err" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  grep -q '^bare-foreground-ok$' <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
+
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo bare-detached-hidden; sleep 0.1' 2>"$TEST_ROOT/docker-bare-detached.err") || {
+    cat "$TEST_ROOT/docker-bare-detached.err" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  if grep -q '^bare-detached-hidden$' <<<"$out"; then
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+}
+
 
 test_docker_run_foreground_follows_output_by_default() {
   local out id
@@ -3163,7 +3186,7 @@ test_concurrent_unique_ids() {
   local i id ids uniq
   ids=""
   for i in $(seq 1 20); do
-    "$HOLD_BIN" sleep 60 >"$TEST_ROOT/start.$i.out" 2>"$TEST_ROOT/start.$i.err" &
+    "$HOLD_BIN" -d sleep 60 >"$TEST_ROOT/start.$i.out" 2>"$TEST_ROOT/start.$i.err" &
   done
   wait
   for i in $(seq 1 20); do
@@ -3316,7 +3339,7 @@ test_nonroot_ignores_spoofed_sudo_provenance() {
 
 test_aliases_json_symlink_not_followed() {
   local out id aliases attacker
-  out=$("$HOLD_BIN" /bin/sleep 60 2>&1) || return 1
+  out=$("$HOLD_BIN" -d /bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   "$HOLD_BIN" profile save "$id" as myweb >/dev/null 2>&1 || return 1
@@ -3347,7 +3370,7 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
   printf 'do-not-touch-alias-symlink\n' >"$attacker" || return 1
   fixed="$store/.aliases.tmp"
   ln -s "$attacker" "$fixed" || return 1
-  out=$("$HOLD_BIN" /bin/sleep 60 2>&1) || return 1
+  out=$("$HOLD_BIN" -d /bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   "$HOLD_BIN" profile save "$id" as fixedlink >/dev/null 2>&1 || return 1
@@ -3356,7 +3379,7 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
   [ -L "$fixed" ] || { echo "alias writer replaced fixed symlink temp" >&2; return 1; }
   rm -f "$fixed" || return 1
   printf 'do-not-touch-alias-file\n' >"$fixed" || return 1
-  out=$("$HOLD_BIN" /bin/sleep 60 2>&1) || return 1
+  out=$("$HOLD_BIN" -d /bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   "$HOLD_BIN" profile save "$id" as fixedfile >/dev/null 2>&1 || return 1
@@ -3367,7 +3390,7 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
 
   # System aliases write both profiles.json in the private base and aliases.json
   # in public; cover fixed symlink and fixed regular temp names for both writers.
-  out=$(as_root "$HOLD_REAL_BIN" /bin/sleep 60 2>&1) || return 1
+  out=$(as_root "$HOLD_REAL_BIN" -d /bin/sleep 60 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   printf 'do-not-touch-profile-symlink\n' >"$TEST_ROOT/profile-attacker" || return 1
@@ -3381,7 +3404,7 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
   root_file_exists "$HOLD_TEST_SYSTEM_STATE_DIR/public/aliases.json" || return 1
   as_root rm -f "$HOLD_TEST_SYSTEM_STATE_DIR/.profiles.tmp" "$HOLD_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
 
-  out=$(as_root "$HOLD_REAL_BIN" /bin/sleep 61 2>&1) || return 1
+  out=$(as_root "$HOLD_REAL_BIN" -d /bin/sleep 61 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   as_root sh -c 'printf "%s\n" "do-not-touch-profile-file" >"$1"; printf "%s\n" "do-not-touch-public-alias-file" >"$2"' sh \
@@ -3495,7 +3518,7 @@ test_grant_refuses_unsafe_self_binary() {
 
 test_signal_refuses_tampered_pgid() {
   local out id rec rc
-  out=$("$HOLD_BIN" /bin/sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d /bin/sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   rec="$HOME/.local/state/hold/$id.json"
@@ -3525,7 +3548,7 @@ test_public_index_write_rollback() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local rc pids leftover
   set +e
-  HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE=1 as_root "$HOLD_REAL_BIN" bash -c 'exec -a hold_pubidx_test sleep 60' >/dev/null 2>&1
+  HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE=1 as_root "$HOLD_REAL_BIN" -d bash -c 'exec -a hold_pubidx_test sleep 60' >/dev/null 2>&1
   rc=$?
   set -e
   [ "$rc" -eq 1 ] || { echo "public-index rollback start: rc=$rc (want 1)" >&2; return 1; }
@@ -3537,7 +3560,7 @@ test_public_index_write_rollback() {
 
 test_quiet_suppresses_banner_keeps_id() {
   local out id
-  out=$("$HOLD_BIN" --quiet /bin/sleep 300 2>"$TEST_ROOT/q.err") || return 1
+  out=$("$HOLD_BIN" --quiet -d /bin/sleep 300 2>"$TEST_ROOT/q.err") || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { echo "no id from --quiet start" >&2; return 1; }
   [ "$out" = "$id" ] || { echo "--quiet stdout is not the bare id: [$out]" >&2; return 1; }
@@ -3548,7 +3571,7 @@ test_quiet_suppresses_banner_keeps_id() {
 
 test_run_id_prefix_resolution() {
   local out id pgid pfx got
-  out=$("$HOLD_BIN" sleep 300 2>&1) || return 1
+  out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
@@ -3561,7 +3584,7 @@ test_run_id_prefix_resolution() {
 test_ambiguous_tail_resolvable_by_run_id() {
   local id1 id2 rc tpid
   # An alias whose runs emit output, so tailing one by id has something to follow.
-  id1=$("$HOLD_BIN" sh -c 'while :; do echo tick; sleep 0.2; done' 2>&1 | extract_id) || return 1
+  id1=$("$HOLD_BIN" -d sh -c 'while :; do echo tick; sleep 0.2; done' 2>&1 | extract_id) || return 1
   "$HOLD_BIN" profile save "$id1" as web-amb >/dev/null || return 1
   "$HOLD_BIN" stop "$id1" >/dev/null; "$HOLD_BIN" prune "$id1" >/dev/null
   id1=$("$HOLD_BIN" start web-amb 2>&1 | extract_id); [ -n "$id1" ] || return 1
@@ -3772,7 +3795,7 @@ test_grant_revoke_argument_refusals() {
 
 test_multi_n_exact_count_and_invalid() {
   local id id2 ids running rc
-  id=$("$HOLD_BIN" sleep 60 2>&1 | extract_id) || return 1
+  id=$("$HOLD_BIN" -d sleep 60 2>&1 | extract_id) || return 1
   "$HOLD_BIN" profile save "$id" as web-n >/dev/null || return 1
   "$HOLD_BIN" stop "$id" >/dev/null; "$HOLD_BIN" prune "$id" >/dev/null
   ids=$("$HOLD_BIN" start web-n --multi 3 2>/dev/null | sed -n '/^[0-9a-f]\{8\}$/p')
@@ -3807,7 +3830,7 @@ test_multi_n_exact_count_and_invalid() {
 
 test_tail_cannot_follow_multiple_starts() {
   local id rc running
-  id=$("$HOLD_BIN" sleep 60 2>&1 | extract_id) || return 1
+  id=$("$HOLD_BIN" -d sleep 60 2>&1 | extract_id) || return 1
   "$HOLD_BIN" profile save "$id" as web-t >/dev/null || return 1
   "$HOLD_BIN" stop "$id" >/dev/null; "$HOLD_BIN" prune "$id" >/dev/null
   set +e; "$HOLD_BIN" start web-t --multi 2 --tail >/dev/null 2>"$TEST_ROOT/t.err"; rc=$?; set -e
@@ -3819,7 +3842,7 @@ test_tail_cannot_follow_multiple_starts() {
 
 test_print_over_all_and_multiple() {
   local id1 id2 pgid1 pgid2 out
-  id1=$("$HOLD_BIN" sleep 60 2>&1 | extract_id) || return 1
+  id1=$("$HOLD_BIN" -d sleep 60 2>&1 | extract_id) || return 1
   "$HOLD_BIN" profile save "$id1" as web-pr >/dev/null || return 1
   "$HOLD_BIN" stop "$id1" >/dev/null; "$HOLD_BIN" prune "$id1" >/dev/null
   id1=$("$HOLD_BIN" start web-pr 2>&1 | extract_id); pgid1=$(record_pgid "$id1")
@@ -3876,6 +3899,7 @@ run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
 run_test "hold unified CLI surface" test_hold_unified_cli_surface
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
+run_test "Docker bare launch foreground follows output by default" test_docker_bare_launch_foreground_follows_output_by_default
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child

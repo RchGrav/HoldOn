@@ -4,15 +4,15 @@
 
 Outer loop bridge: deep dive for quickstart Step 1, Start One Thing.
 
-When you run `hold <cmd...>`, the launcher turns that command into a detached run with a short ID and a log. This is the piece that lets a helper survive after the CI step or shell that started it exits.
+When you run `hold <cmd...>`, the launcher creates a durable run ID and streams the log in the foreground by default. Add `-d`/`--detach` when the run should survive after the CI step or shell that started it exits.
 
-The end result of a successful start is a bare 8-hex run ID on stdout, a private JSON record, a log file, and optionally a console socket. Human status goes through `sig_note`, which writes to stderr unless `--quiet` is set.
+The end result of a successful detached start is a bare 8-hex run ID on stdout, a private JSON record, a log file, and optionally a console socket. Foreground Docker-shaped starts still create the same run ID and records, then stream the log to the terminal. Human status goes through `sig_note`, which writes to stderr unless `--quiet` is set.
 
 ## Start forms
 
 On Hold supports two start styles:
 
-- Raw form: `hold <cmd> [args...]`.
+- Raw form: `hold [run-options] <cmd> [args...]` (foreground unless `-d`).
 - Owned form: `hold start <profile>` or `hold start <cmd> [args...]`.
 
 If `start` receives exactly one argument and that token resolves to a profile, `cmd_start_action` starts the stored recipe. Otherwise it starts the provided command. `perform_explicit_start` treats a single explicit command string as `sh -c <string>` and treats multiple arguments as direct argv for `execvp`.
