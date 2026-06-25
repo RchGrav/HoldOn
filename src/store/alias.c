@@ -45,6 +45,24 @@ static int parse_alias_recipe_object(const char *j, struct hold_alias *entry) {
         entry->volumes = NULL;
         entry->volumec = 0;
     }
+    (void)hold_json_get_bool(j, "interactive", &entry->mode_interactive);
+    (void)hold_json_get_bool(j, "tty", &entry->mode_tty);
+    (void)hold_json_get_bool(j, "detach", &entry->mode_detach);
+    const char *mode = NULL;
+    if (hold_json_find_key(j, "mode", &mode) == 0 && *mode == '{') {
+        const char *end = mode;
+        if (hold_skip_json_value(&end) == 0 && end > mode) {
+            size_t len = (size_t)(end - mode);
+            char *copy = malloc(len + 1);
+            if (!copy) return -1;
+            memcpy(copy, mode, len);
+            copy[len] = '\0';
+            (void)hold_json_get_bool(copy, "interactive", &entry->mode_interactive);
+            (void)hold_json_get_bool(copy, "tty", &entry->mode_tty);
+            (void)hold_json_get_bool(copy, "detach", &entry->mode_detach);
+            free(copy);
+        }
+    }
     entry->has_recipe = true;
     return 0;
 }
@@ -210,6 +228,22 @@ static int write_aliases_atomic(const struct hold_store *store, const struct hol
                 fprintf(f, ", \"volumes\": ");
                 hold_write_json_argv(f, entries[i].volumec, entries[i].volumes);
             }
+            if (entries[i].mode_interactive || entries[i].mode_tty || entries[i].mode_detach) {
+                fprintf(f, ", \"mode\": {");
+                bool wrote_mode = false;
+                if (entries[i].mode_interactive) {
+                    fprintf(f, "\"interactive\": true");
+                    wrote_mode = true;
+                }
+                if (entries[i].mode_tty) {
+                    fprintf(f, "%s\"tty\": true", wrote_mode ? ", " : "");
+                    wrote_mode = true;
+                }
+                if (entries[i].mode_detach) {
+                    fprintf(f, "%s\"detach\": true", wrote_mode ? ", " : "");
+                }
+                fprintf(f, "}");
+            }
             fprintf(f, "}%s\n", i + 1 == count ? "" : ",");
         }
     }
@@ -315,6 +349,9 @@ int hold_alias_lookup_recipe(const struct hold_store *store, const char *alias, 
                 recipe->envc = entries[i].envc;
                 recipe->portc = entries[i].portc;
                 recipe->volumec = entries[i].volumec;
+                recipe->mode_interactive = entries[i].mode_interactive;
+                recipe->mode_tty = entries[i].mode_tty;
+                recipe->mode_detach = entries[i].mode_detach;
                 rc = 0;
             }
             break;
@@ -343,7 +380,7 @@ int hold_alias_upsert_recipe_env(const struct hold_store *store,
                                    char **argv,
                                    int envc,
                                    char **env) {
-    return hold_alias_upsert_recipe_full(store, alias, binary_path, argc, argv, envc, env, 0, NULL, 0, NULL);
+    return hold_alias_upsert_recipe_full(store, alias, binary_path, argc, argv, envc, env, 0, NULL, 0, NULL, false, false, false);
 }
 
 int hold_alias_upsert_recipe_full(const struct hold_store *store,
@@ -356,7 +393,10 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
                                    int portc,
                                    char **ports,
                                    int volumec,
-                                   char **volumes) {
+                                   char **volumes,
+                                   bool mode_interactive,
+                                   bool mode_tty,
+                                   bool mode_detach) {
     if (!hold_valid_alias(alias) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv ||
         envc < 0 || (envc > 0 && !env) ||
         portc < 0 || (portc > 0 && !ports) ||
@@ -395,6 +435,9 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
             entries[i].envc = envc;
             entries[i].portc = portc;
             entries[i].volumec = volumec;
+            entries[i].mode_interactive = mode_interactive;
+            entries[i].mode_tty = mode_tty;
+            entries[i].mode_detach = mode_detach;
             entries[i].has_recipe = true;
             entries[i].has_hash = false;
             entries[i].hash[0] = '\0';
@@ -423,6 +466,9 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
     entries[count].envc = envc;
     entries[count].portc = portc;
     entries[count].volumec = volumec;
+    entries[count].mode_interactive = mode_interactive;
+    entries[count].mode_tty = mode_tty;
+    entries[count].mode_detach = mode_detach;
     entries[count].has_recipe = true;
     count++;
     int rc = write_aliases_atomic(store, entries, count);

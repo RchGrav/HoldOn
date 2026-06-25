@@ -3068,6 +3068,49 @@ PY
   }
 }
 
+test_docker_named_profile_persists_mode_flags() {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id replay_id
+  out=$("$HOLD_BIN" run -d -it --name modeprof /bin/sleep 5 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  "$HOLD_BIN" profile export modeprof --json >"$TEST_ROOT/modeprof.json" || return 1
+  "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/modeprof-run.json" || return 1
+  "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
+  "$HOLD_BIN" prune "$id" >/dev/null 2>&1 || true
+
+  out=$("$HOLD_BIN" run modeprof 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  replay_id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$replay_id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  "$HOLD_BIN" inspect "$replay_id" >"$TEST_ROOT/modeprof-replay.json" || return 1
+  "$HOLD_BIN" stop "$replay_id" >/dev/null 2>&1 || true
+  python3 - "$TEST_ROOT/modeprof.json" "$TEST_ROOT/modeprof-run.json" "$TEST_ROOT/modeprof-replay.json" <<'PY' || {
+import json, sys
+profile = json.load(open(sys.argv[1], encoding='utf-8'))
+first = json.load(open(sys.argv[2], encoding='utf-8'))[0]
+replay = json.load(open(sys.argv[3], encoding='utf-8'))[0]
+mode = profile.get('mode') or {}
+for key in ('interactive', 'tty', 'detach'):
+    if mode.get(key) is not True:
+        raise SystemExit(f'profile mode {key} was not persisted: {mode!r}')
+if 'console_sock' not in first:
+    raise SystemExit('initial -it run did not allocate a console socket')
+if 'console_sock' not in replay:
+    raise SystemExit('profile replay did not preserve tty/console behavior')
+if replay.get('alias') != 'modeprof':
+    raise SystemExit(f'profile replay lost alias: {replay.get("alias")!r}')
+PY
+    cat "$TEST_ROOT/modeprof.json" "$TEST_ROOT/modeprof-run.json" "$TEST_ROOT/modeprof-replay.json" >&2
+    return 1
+  }
+}
+
 test_docker_interactive_stdin_pipes_to_child() {
   local out id
   out=$(printf 'stdin-i-ok\n' | "$HOLD_BIN" run -i -f -- /bin/cat 2>"$TEST_ROOT/docker-i.err") || {
@@ -3283,6 +3326,47 @@ test_captive_cli_noninteractive_transcript_is_script_safe() {
   id=$(extract_id <"$TEST_ROOT/captive-batch.out")
   [ -n "$id" ] || { cat "$TEST_ROOT/captive-batch.out" "$TEST_ROOT/captive-batch.err" >&2; return 1; }
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
+}
+
+test_captive_cli_profile_mode_flags_commit_and_clear() {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local rc
+  set +e
+  printf 'enable\nconfigure terminal\nprofile iosmode\nbinary /usr/bin/sleep\nargv 30\ninteractive\ntty\ndetach\ninfo\ncommit\nend\nexit\n' |
+    "$HOLD_BIN" >"$TEST_ROOT/captive-mode-set.out" 2>"$TEST_ROOT/captive-mode-set.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-mode-set.out" "$TEST_ROOT/captive-mode-set.err" >&2; return 1; }
+  grep -q 'modes     : interactive tty detach' "$TEST_ROOT/captive-mode-set.out" || {
+    cat "$TEST_ROOT/captive-mode-set.out" >&2
+    return 1
+  }
+  "$HOLD_BIN" profile export iosmode --json >"$TEST_ROOT/iosmode-set.json" || return 1
+  python3 - "$TEST_ROOT/iosmode-set.json" <<'PY' || { cat "$TEST_ROOT/iosmode-set.json" >&2; return 1; }
+import json, sys
+mode = (json.load(open(sys.argv[1], encoding='utf-8')).get('mode') or {})
+for key in ('interactive', 'tty', 'detach'):
+    if mode.get(key) is not True:
+        raise SystemExit(f'missing committed mode {key}: {mode!r}')
+PY
+
+  set +e
+  printf 'enable\nconfigure terminal\nprofile iosmode\nno interactive\nno console\nno detach\ninfo\ncommit\nend\nexit\n' |
+    "$HOLD_BIN" >"$TEST_ROOT/captive-mode-clear.out" 2>"$TEST_ROOT/captive-mode-clear.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-mode-clear.out" "$TEST_ROOT/captive-mode-clear.err" >&2; return 1; }
+  grep -q 'modes     : -' "$TEST_ROOT/captive-mode-clear.out" || {
+    cat "$TEST_ROOT/captive-mode-clear.out" >&2
+    return 1
+  }
+  "$HOLD_BIN" profile export iosmode --json >"$TEST_ROOT/iosmode-clear.json" || return 1
+  python3 - "$TEST_ROOT/iosmode-clear.json" <<'PY' || { cat "$TEST_ROOT/iosmode-clear.json" >&2; return 1; }
+import json, sys
+profile = json.load(open(sys.argv[1], encoding='utf-8'))
+if 'mode' in profile:
+    raise SystemExit(f'mode object should be omitted after no interactive/no console/no detach: {profile!r}')
+PY
 }
 
 test_build_artifact_coexistence() {
@@ -4015,6 +4099,7 @@ run_test "Docker bare launch foreground follows output by default" test_docker_b
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker publish and volume flags record metadata" test_docker_publish_and_volume_record_metadata
+run_test "Docker named profiles persist -d -i -t mode flags" test_docker_named_profile_persists_mode_flags
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
 run_test "Docker -it foreground attaches and detaches" test_docker_tty_foreground_attaches_and_detaches
 run_test "run IDs and named profiles normalize relative file args" test_runid_and_named_profile_normalize_relative_file_args
@@ -4023,6 +4108,7 @@ run_test "hold shell adopt normalizes relative foreground argv paths" test_hold_
 run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hold_shell_detach_adopts_foreground_process_group
 run_test "captive CLI shows Cisco prompts and commits a profile" test_captive_cli_cisco_prompts_and_profile_commit
 run_test "captive CLI noninteractive transcript is script-safe" test_captive_cli_noninteractive_transcript_is_script_safe
+run_test "captive CLI profile mode flags commit and clear" test_captive_cli_profile_mode_flags_commit_and_clear
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "internal viewer harness seeds literal and similarity filters" test_log_view_internal_seed_filters

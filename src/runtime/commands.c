@@ -295,6 +295,22 @@ static int profile_export_json(const char *name, const struct hold_profile *reci
         fputs(",\n  \"volumes\": ", stdout);
         hold_write_json_argv(stdout, recipe->volumec, recipe->volumes);
     }
+    if (recipe->mode_interactive || recipe->mode_tty || recipe->mode_detach) {
+        bool wrote = false;
+        fputs(",\n  \"mode\": {", stdout);
+        if (recipe->mode_interactive) {
+            fputs("\"interactive\": true", stdout);
+            wrote = true;
+        }
+        if (recipe->mode_tty) {
+            fprintf(stdout, "%s\"tty\": true", wrote ? ", " : "");
+            wrote = true;
+        }
+        if (recipe->mode_detach) {
+            fprintf(stdout, "%s\"detach\": true", wrote ? ", " : "");
+        }
+        fputs("}", stdout);
+    }
     fputs("\n}\n", stdout);
     return ferror(stdout) ? 3 : 0;
 }
@@ -417,7 +433,16 @@ static int profile_import_json(const struct hold_store *store, const char *j) {
     char name[ALIAS_MAX_LEN + 1];
     char binary_path[HOLD_PATH_MAX];
     char **argv = NULL;
+    char **env = NULL;
+    char **ports = NULL;
+    char **volumes = NULL;
     int argc = 0;
+    int envc = 0;
+    int portc = 0;
+    int volumec = 0;
+    bool mode_interactive = false;
+    bool mode_tty = false;
+    bool mode_detach = false;
     int rc = 5;
     if (hold_json_get_str(j, "name", name, sizeof(name)) != 0 || !hold_valid_alias(name) ||
         hold_json_get_args_alloc(j, &argv, &argc) != 0 || argc <= 0) {
@@ -437,12 +462,52 @@ static int profile_import_json(const struct hold_store *store, const char *j) {
     if (hold_normalize_existing_argv_paths_from_cwd(argv, argc, 1, NULL) != 0) {
         hold_die_errno("hold: failed to normalize profile argv paths");
     }
-    if (hold_alias_upsert_recipe(store, name, binary_path, argc, argv) != 0) {
+    (void)hold_json_get_env_alloc(j, &env, &envc);
+    (void)hold_json_get_ports_alloc(j, &ports, &portc);
+    (void)hold_json_get_volumes_alloc(j, &volumes, &volumec);
+    (void)hold_json_get_bool(j, "interactive", &mode_interactive);
+    (void)hold_json_get_bool(j, "tty", &mode_tty);
+    (void)hold_json_get_bool(j, "detach", &mode_detach);
+    const char *mode = NULL;
+    if (hold_json_find_key(j, "mode", &mode) == 0 && *mode == '{') {
+        const char *end = mode;
+        if (hold_skip_json_value(&end) == 0 && end > mode) {
+            size_t len = (size_t)(end - mode);
+            char *copy = malloc(len + 1);
+            if (!copy) {
+                rc = 3;
+                goto out;
+            }
+            memcpy(copy, mode, len);
+            copy[len] = '\0';
+            (void)hold_json_get_bool(copy, "interactive", &mode_interactive);
+            (void)hold_json_get_bool(copy, "tty", &mode_tty);
+            (void)hold_json_get_bool(copy, "detach", &mode_detach);
+            free(copy);
+        }
+    }
+    if (hold_alias_upsert_recipe_full(store,
+                                      name,
+                                      binary_path,
+                                      argc,
+                                      argv,
+                                      envc,
+                                      env,
+                                      portc,
+                                      ports,
+                                      volumec,
+                                      volumes,
+                                      mode_interactive,
+                                      mode_tty,
+                                      mode_detach) != 0) {
         hold_die_errno("hold: failed to import profile");
     }
     rc = 0;
 out:
     hold_free_argv_alloc(argv, argc);
+    hold_free_argv_alloc(env, envc);
+    hold_free_argv_alloc(ports, portc);
+    hold_free_argv_alloc(volumes, volumec);
     return rc;
 }
 

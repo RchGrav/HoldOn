@@ -42,7 +42,10 @@ int hold_write_profile_atomic_full(const struct hold_store *store,
                                     int portc,
                                     char **ports,
                                     int volumec,
-                                    char **volumes);
+                                    char **volumes,
+                                    bool mode_interactive,
+                                    bool mode_tty,
+                                    bool mode_detach);
 int hold_load_profile_by_hash(const struct hold_store *store, const char *hash, struct hold_profile *profile);
 void hold_free_aliases(struct hold_alias *entries, size_t count);
 int hold_load_aliases(const struct hold_store *store, struct hold_alias **entries_out, size_t *count_out);
@@ -71,7 +74,10 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
                                    int portc,
                                    char **ports,
                                    int volumec,
-                                   char **volumes);
+                                   char **volumes,
+                                   bool mode_interactive,
+                                   bool mode_tty,
+                                   bool mode_detach);
 int hold_alias_delete(const struct hold_store *store, const char *alias, bool *deleted);
 int hold_alias_rename(const struct hold_store *store, const char *old_alias, const char *new_alias);
 int hold_load_record(const char *path, struct hold_run_record *r);

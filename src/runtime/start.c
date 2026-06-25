@@ -888,7 +888,13 @@ static int hold_perform_profile_start_options(const struct hold_invocation *inv,
         fprintf(stderr, "hold: error: profile %s is unavailable\n", hash);
         return 5;
     }
-    int rc = hold_perform_start_with_metadata_options(inv, store, tail, console_mode, auto_remove, interactive_stdin,
+    bool eff_console = console_mode || p.mode_tty;
+    bool eff_interactive = interactive_stdin || p.mode_interactive;
+    bool eff_tail = tail;
+    if (p.mode_detach && !console_mode && !interactive_stdin) {
+        eff_tail = false;
+    }
+    int rc = hold_perform_start_with_metadata_options(inv, store, eff_tail, eff_console, auto_remove, eff_interactive,
                                                       p.argc, p.argv, p.binary_path, alias,
                                                       p.envc, p.env,
                                                       p.portc, p.ports,
@@ -981,12 +987,18 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                 start_rc = 0;
                 for (int i = 0; i < starts; i++) {
                     if (target.has_recipe) {
+                        bool eff_console = console_mode || target.recipe.mode_tty;
+                        bool eff_interactive = interactive_stdin || target.recipe.mode_interactive;
+                        bool eff_tail = tail;
+                        if (target.recipe.mode_detach && !console_mode && !interactive_stdin) {
+                            eff_tail = false;
+                        }
                         start_rc = hold_perform_start_with_metadata_options(inv,
                                                  &target.store,
-                                                 tail,
-                                                 console_mode,
+                                                 eff_tail,
+                                                 eff_console,
                                                  auto_remove,
-                                                 interactive_stdin,
+                                                 eff_interactive,
                                                  target.recipe.argc,
                                                  target.recipe.argv,
                                                  target.recipe.binary_path,

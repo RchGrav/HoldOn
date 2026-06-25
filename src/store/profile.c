@@ -14,7 +14,10 @@ static bool profile_equal_recipe(const struct hold_profile *p,
                                  int portc,
                                  char **ports,
                                  int volumec,
-                                 char **volumes);
+                                 char **volumes,
+                                 bool mode_interactive,
+                                 bool mode_tty,
+                                 bool mode_detach);
 static int parse_profile_object(const char *j, const char *hash, struct hold_profile *profile);
 static int load_profiles(const struct hold_store *store, struct hold_profile **profiles_out, size_t *count_out);
 static int write_profiles_atomic(const struct hold_store *store, const struct hold_profile *profiles, size_t count);
@@ -83,11 +86,17 @@ static bool profile_equal_recipe(const struct hold_profile *p,
                                  int portc,
                                  char **ports,
                                  int volumec,
-                                 char **volumes) {
+                                 char **volumes,
+                                 bool mode_interactive,
+                                 bool mode_tty,
+                                 bool mode_detach) {
     if (strcmp(p->binary_path, binary_path) != 0 || !string_array_equal(p->argc, p->argv, argc, argv)) {
         return false;
     }
-    return string_array_equal(p->envc, p->env, envc, env) &&
+    return p->mode_interactive == mode_interactive &&
+           p->mode_tty == mode_tty &&
+           p->mode_detach == mode_detach &&
+           string_array_equal(p->envc, p->env, envc, env) &&
            string_array_equal(p->portc, p->ports, portc, ports) &&
            string_array_equal(p->volumec, p->volumes, volumec, volumes);
 }
@@ -122,6 +131,27 @@ static int parse_profile_object(const char *j, const char *hash, struct hold_pro
     if (hold_json_get_volumes_alloc(j, &profile->volumes, &profile->volumec) != 0) {
         profile->volumes = NULL;
         profile->volumec = 0;
+    }
+    (void)hold_json_get_bool(j, "interactive", &profile->mode_interactive);
+    (void)hold_json_get_bool(j, "tty", &profile->mode_tty);
+    (void)hold_json_get_bool(j, "detach", &profile->mode_detach);
+    const char *mode = NULL;
+    if (hold_json_find_key(j, "mode", &mode) == 0 && *mode == '{') {
+        const char *end = mode;
+        if (hold_skip_json_value(&end) == 0 && end > mode) {
+            size_t len = (size_t)(end - mode);
+            char *copy = malloc(len + 1);
+            if (!copy) {
+                hold_free_profile(profile);
+                return -1;
+            }
+            memcpy(copy, mode, len);
+            copy[len] = '\0';
+            (void)hold_json_get_bool(copy, "interactive", &profile->mode_interactive);
+            (void)hold_json_get_bool(copy, "tty", &profile->mode_tty);
+            (void)hold_json_get_bool(copy, "detach", &profile->mode_detach);
+            free(copy);
+        }
     }
     hold_profile_hash_for_argv(profile->binary_path, profile->argc, profile->argv, profile->hash);
     if (strcmp(profile->hash, hash) != 0) {
@@ -263,6 +293,22 @@ static int write_profiles_atomic(const struct hold_store *store, const struct ho
             fprintf(f, ", \"volumes\": ");
             hold_write_json_argv(f, profiles[i].volumec, profiles[i].volumes);
         }
+        if (profiles[i].mode_interactive || profiles[i].mode_tty || profiles[i].mode_detach) {
+            fprintf(f, ", \"mode\": {");
+            bool wrote_mode = false;
+            if (profiles[i].mode_interactive) {
+                fprintf(f, "\"interactive\": true");
+                wrote_mode = true;
+            }
+            if (profiles[i].mode_tty) {
+                fprintf(f, "%s\"tty\": true", wrote_mode ? ", " : "");
+                wrote_mode = true;
+            }
+            if (profiles[i].mode_detach) {
+                fprintf(f, "%s\"detach\": true", wrote_mode ? ", " : "");
+            }
+            fprintf(f, "}");
+        }
         fprintf(f, "}%s\n", i + 1 == count ? "" : ",");
     }
     fprintf(f, "}\n");
@@ -300,7 +346,7 @@ int hold_write_profile_atomic_env(const struct hold_store *store,
                                     char **argv,
                                     int envc,
                                     char **env) {
-    return hold_write_profile_atomic_full(store, hash, binary_path, argc, argv, envc, env, 0, NULL, 0, NULL);
+    return hold_write_profile_atomic_full(store, hash, binary_path, argc, argv, envc, env, 0, NULL, 0, NULL, false, false, false);
 }
 
 int hold_write_profile_atomic_full(const struct hold_store *store,
@@ -313,7 +359,10 @@ int hold_write_profile_atomic_full(const struct hold_store *store,
                                     int portc,
                                     char **ports,
                                     int volumec,
-                                    char **volumes) {
+                                    char **volumes,
+                                    bool mode_interactive,
+                                    bool mode_tty,
+                                    bool mode_detach) {
     if (!hold_valid_profile_hash(hash) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv ||
         envc < 0 || (envc > 0 && !env) ||
         portc < 0 || (portc > 0 && !ports) ||
@@ -335,7 +384,7 @@ int hold_write_profile_atomic_full(const struct hold_store *store,
     for (size_t i = 0; i < count; i++) {
         if (strcmp(profiles[i].hash, hash) == 0) {
             int rc = 0;
-            if (!profile_equal_recipe(&profiles[i], binary_path, argc, argv, envc, env, portc, ports, volumec, volumes)) {
+            if (!profile_equal_recipe(&profiles[i], binary_path, argc, argv, envc, env, portc, ports, volumec, volumes, mode_interactive, mode_tty, mode_detach)) {
                 errno = EEXIST;
                 rc = -1;
             }
@@ -363,6 +412,9 @@ int hold_write_profile_atomic_full(const struct hold_store *store,
     profiles[count].envc = envc;
     profiles[count].portc = portc;
     profiles[count].volumec = volumec;
+    profiles[count].mode_interactive = mode_interactive;
+    profiles[count].mode_tty = mode_tty;
+    profiles[count].mode_detach = mode_detach;
     count++;
     int rc = write_profiles_atomic(store, profiles, count);
     free_profiles(profiles, count);

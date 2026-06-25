@@ -29,6 +29,9 @@ static int run_recipe_matches_profile(const struct hold_store *store,
                                       char **ports,
                                       int volumec,
                                       char **volumes,
+                                      bool mode_interactive,
+                                      bool mode_tty,
+                                      bool mode_detach,
                                       bool *matched);
 static int ensure_named_run_profile(const struct hold_invocation *inv,
                                     const struct hold_store *store,
@@ -40,7 +43,10 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
                                     int portc,
                                     char **ports,
                                     int volumec,
-                                    char **volumes);
+                                    char **volumes,
+                                    bool mode_interactive,
+                                    bool mode_tty,
+                                    bool mode_detach);
 static bool token_names_existing_profile(const struct hold_store *user_store,
                                          const struct hold_store *system_store,
                                          const char *token);
@@ -209,6 +215,9 @@ static int run_recipe_matches_profile(const struct hold_store *store,
                                       char **ports,
                                       int volumec,
                                       char **volumes,
+                                      bool mode_interactive,
+                                      bool mode_tty,
+                                      bool mode_detach,
                                       bool *matched) {
     *matched = false;
     struct hold_profile recipe;
@@ -234,6 +243,9 @@ static int run_recipe_matches_profile(const struct hold_store *store,
                 recipe.envc == envc &&
                 recipe.portc == portc &&
                 recipe.volumec == volumec &&
+                recipe.mode_interactive == mode_interactive &&
+                recipe.mode_tty == mode_tty &&
+                recipe.mode_detach == mode_detach &&
                 !strcmp(recipe.binary_path, binary_path);
     for (int i = 0; same && i < argc; i++) {
         same = !strcmp(recipe.argv[i], normalized_argv[i]);
@@ -263,7 +275,10 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
                                     int portc,
                                     char **ports,
                                     int volumec,
-                                    char **volumes) {
+                                    char **volumes,
+                                    bool mode_interactive,
+                                    bool mode_tty,
+                                    bool mode_detach) {
     if (!name) return 0;
     if (!hold_valid_alias(name)) {
         fprintf(stderr, "hold: error: invalid profile name '%s'\n", name);
@@ -279,7 +294,7 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
     }
     if (hold_alias_exists_in_store(store, name)) {
         bool matched = false;
-        int rc = run_recipe_matches_profile(store, name, argc, argv, envc, env, portc, ports, volumec, volumes, &matched);
+        int rc = run_recipe_matches_profile(store, name, argc, argv, envc, env, portc, ports, volumec, volumes, mode_interactive, mode_tty, mode_detach, &matched);
         if (rc < 0) return 5;
         if (!matched) {
             fprintf(stderr,
@@ -305,7 +320,7 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
         hold_free_argv_alloc(profile_argv, argc);
         return 3;
     }
-    if (hold_alias_upsert_recipe_full(store, name, binary_path, argc, profile_argv, envc, env, portc, ports, volumec, volumes) != 0) {
+    if (hold_alias_upsert_recipe_full(store, name, binary_path, argc, profile_argv, envc, env, portc, ports, volumec, volumes, mode_interactive, mode_tty, mode_detach) != 0) {
         hold_free_argv_alloc(profile_argv, argc);
         hold_die_errno("hold: failed to write profile");
     }
@@ -971,7 +986,8 @@ int main(int argc, char **argv) {
             rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv,
                                           docker_envc, docker_env,
                                           docker_portc, docker_ports,
-                                          docker_volumec, docker_volumes);
+                                          docker_volumec, docker_volumes,
+                                          docker_interactive, docker_tty, docker_detach);
             if (rc == 0) {
                 rc = hold_perform_start_with_metadata_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin,
                                                               cmd_argc, cmd_argv, NULL, docker_name,
@@ -1034,7 +1050,8 @@ int main(int argc, char **argv) {
             int rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv,
                                               docker_envc, docker_env,
                                               docker_portc, docker_ports,
-                                              docker_volumec, docker_volumes);
+                                              docker_volumec, docker_volumes,
+                                              docker_interactive, docker_tty, docker_detach);
             if (rc != 0) {
                 hold_free_argv_alloc(docker_env, docker_envc);
                 hold_free_argv_alloc(docker_ports, docker_portc);

@@ -23,6 +23,9 @@ struct captive_profile_stage {
     size_t arg_count;
     char *env[CAPTIVE_MAX_ENV];
     size_t env_count;
+    bool mode_interactive;
+    bool mode_tty;
+    bool mode_detach;
     bool dirty;
 };
 
@@ -81,6 +84,9 @@ static int stage_load_recipe(struct captive_profile_stage *stage, const struct h
             stage->env_count++;
         }
     }
+    stage->mode_interactive = recipe.mode_interactive;
+    stage->mode_tty = recipe.mode_tty;
+    stage->mode_detach = recipe.mode_detach;
     stage->dirty = false;
 done:
     hold_free_profile(&recipe);
@@ -186,8 +192,13 @@ static void help_profile(void) {
     printf("  binary      Set the target executable\n");
     printf("  argv        Append base argv tokens\n");
     printf("  env         Set an environment variable\n");
+    printf("  interactive Keep stdin open when profile runs\n");
+    printf("  tty         Allocate a pseudo-TTY when profile runs\n");
+    printf("  console     Alias for tty\n");
+    printf("  detach      Run profile in background by default\n");
     printf("  no env      Remove environment variables\n");
     printf("  no argv     Clear base argv tokens\n");
+    printf("  no interactive|tty|console|detach\n");
     printf("  info        Show staged profile state\n");
     printf("  commit      Validate and save profile\n");
     printf("  exit        Return to global config mode\n");
@@ -251,6 +262,11 @@ static void profile_info(const struct captive_profile_stage *stage) {
         for (size_t i = 0; i < stage->env_count; i++) printf(" %s", stage->env[i]);
     }
     printf("\n");
+    printf("  modes     :%s%s%s%s\n",
+           stage->mode_interactive ? " interactive" : "",
+           stage->mode_tty ? " tty" : "",
+           stage->mode_detach ? " detach" : "",
+           (!stage->mode_interactive && !stage->mode_tty && !stage->mode_detach) ? " -" : "");
     printf("  staged    : %s\n", stage->dirty ? "uncommitted changes present" : "clean");
 }
 
@@ -354,6 +370,24 @@ static int profile_no_env(struct captive_profile_stage *stage, int argc, char **
     return 0;
 }
 
+static int profile_set_mode(struct captive_profile_stage *stage, const char *name, bool enabled) {
+    bool *slot = NULL;
+    if (!strcmp(name, "interactive")) {
+        slot = &stage->mode_interactive;
+    } else if (!strcmp(name, "tty") || !strcmp(name, "console")) {
+        slot = &stage->mode_tty;
+    } else if (!strcmp(name, "detach")) {
+        slot = &stage->mode_detach;
+    } else {
+        return 1;
+    }
+    if (*slot != enabled) {
+        *slot = enabled;
+        stage->dirty = true;
+    }
+    return 0;
+}
+
 static int profile_commit(struct captive_session *s) {
     struct captive_profile_stage *stage = &s->profile;
     if (!stage->binary[0]) {
@@ -370,7 +404,20 @@ static int profile_commit(struct captive_session *s) {
     if (!argv) return 3;
     argv[0] = binary_path;
     for (size_t i = 0; i < stage->arg_count; i++) argv[i + 1] = stage->args[i];
-    if (hold_alias_upsert_recipe_env(s->user_store, stage->name, binary_path, argc, argv, (int)stage->env_count, stage->env) != 0) {
+    if (hold_alias_upsert_recipe_full(s->user_store,
+                                      stage->name,
+                                      binary_path,
+                                      argc,
+                                      argv,
+                                      (int)stage->env_count,
+                                      stage->env,
+                                      0,
+                                      NULL,
+                                      0,
+                                      NULL,
+                                      stage->mode_interactive,
+                                      stage->mode_tty,
+                                      stage->mode_detach) != 0) {
         free(argv);
         hold_die_errno("hold: failed to commit profile");
     }
@@ -407,7 +454,12 @@ static int handle_profile(struct captive_session *s, int argc, char **argv) {
     }
     if (!strcmp(argv[0], "argv")) return profile_append_args(&s->profile, argc, argv);
     if (!strcmp(argv[0], "env")) return profile_set_env(&s->profile, argc, argv);
+    if (argc == 1 && profile_set_mode(&s->profile, argv[0], true) == 0) return 0;
     if (!strcmp(argv[0], "no") && argc >= 2 && !strcmp(argv[1], "env")) return profile_no_env(&s->profile, argc, argv);
+    if (!strcmp(argv[0], "no") && argc == 2) {
+        int mode_rc = profile_set_mode(&s->profile, argv[1], false);
+        if (mode_rc == 0) return 0;
+    }
     if (!strcmp(argv[0], "no") && argc == 2 && !strcmp(argv[1], "argv")) {
         for (size_t i = 0; i < s->profile.arg_count; i++) free(s->profile.args[i]);
         memset(s->profile.args, 0, sizeof(s->profile.args));

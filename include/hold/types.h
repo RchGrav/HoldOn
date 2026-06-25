@@ -112,6 +112,9 @@ struct hold_profile {
     char **ports;
     int volumec;
     char **volumes;
+    bool mode_interactive;
+    bool mode_tty;
+    bool mode_detach;
 };
 
 struct hold_alias {
@@ -126,6 +129,9 @@ struct hold_alias {
     char **ports;
     int volumec;
     char **volumes;
+    bool mode_interactive;
+    bool mode_tty;
+    bool mode_detach;
     bool has_hash;
     bool has_recipe;
 };
