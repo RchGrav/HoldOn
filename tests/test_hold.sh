@@ -1760,6 +1760,39 @@ EOF
   printf '%s\n' "$got" | grep -qx 'HOLD_CISCO_ENV=cisco-value'
 }
 
+test_captive_profile_loads_existing_recipe_for_edit() {
+  local out id edit_id got store
+  store="$HOME/.local/state/hold"
+  out=$("$HOLD_BIN" run --name iosedit -e HOLD_OLD_ENV=old /usr/bin/env 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  sleep 0.2
+
+  cat <<'EOF' | "$HOLD_BIN" >"$TEST_ROOT/captive-edit-existing.out" 2>"$TEST_ROOT/captive-edit-existing.err" || { cat "$TEST_ROOT/captive-edit-existing.out" "$TEST_ROOT/captive-edit-existing.err" >&2; return 1; }
+enable
+configure terminal
+profile iosedit
+info
+no env HOLD_OLD_ENV
+env HOLD_NEW_ENV new
+commit
+end
+run iosedit
+exit
+EOF
+  grep -q 'binary    : /usr/bin/env' "$TEST_ROOT/captive-edit-existing.out" || { cat "$TEST_ROOT/captive-edit-existing.out" >&2; return 1; }
+  grep -q 'HOLD_OLD_ENV=old' "$TEST_ROOT/captive-edit-existing.out" || { cat "$TEST_ROOT/captive-edit-existing.out" >&2; return 1; }
+  grep -q 'Profile committed' "$TEST_ROOT/captive-edit-existing.out" || { cat "$TEST_ROOT/captive-edit-existing.out" >&2; return 1; }
+  grep -Fq '"env": ["HOLD_NEW_ENV=new"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
+  ! grep -q 'HOLD_OLD_ENV=old' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
+  edit_id=$(extract_id <"$TEST_ROOT/captive-edit-existing.out" | tail -n1)
+  [ -n "$edit_id" ] || { cat "$TEST_ROOT/captive-edit-existing.out" "$TEST_ROOT/captive-edit-existing.err" >&2; return 1; }
+  sleep 0.2
+  got=$("$HOLD_BIN" logs --plain -n 500 "$edit_id") || return 1
+  printf '%s\n' "$got" | grep -q 'HOLD_NEW_ENV=new' || { printf '%s\n' "$got" >&2; return 1; }
+  ! printf '%s\n' "$got" | grep -q 'HOLD_OLD_ENV=old' || { printf '%s\n' "$got" >&2; return 1; }
+}
+
 test_profile_transcript_import_export_roundtrip() {
   local transcript export out id got store
   store="$HOME/.local/state/hold"
@@ -3469,6 +3502,7 @@ run_test "profile start requires --force when already running and --all stops al
 run_test "profile start inherits current environment" test_profile_start_inherits_current_environment
 run_test "Docker --env persists with a named profile" test_docker_env_persists_with_named_profile
 run_test "captive profile env persists and runs" test_captive_profile_env_persists_and_runs
+run_test "captive profile mode loads and edits an existing recipe" test_captive_profile_loads_existing_recipe_for_edit
 run_test "profile transcript import/export round-trips a user-local recipe" test_profile_transcript_import_export_roundtrip
 run_test "profile name-first set command edits a user-local recipe" test_profile_name_first_set_command
 run_test "profile name-first create rename and delete manage a user-local recipe" test_profile_name_first_crud

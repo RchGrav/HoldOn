@@ -41,14 +41,61 @@ static void stage_clear(struct captive_profile_stage *stage) {
     memset(stage, 0, sizeof(*stage));
 }
 
-static int stage_set_name(struct captive_profile_stage *stage, const char *name) {
+static int stage_load_recipe(struct captive_profile_stage *stage, const struct hold_store *store) {
+    struct hold_profile recipe;
+    if (hold_alias_lookup_recipe(store, stage->name, &recipe) != 0) {
+        return 0;
+    }
+    int rc = 0;
+    if (hold_checked_snprintf(stage->binary, sizeof(stage->binary), "%s", recipe.binary_path) != 0) {
+        rc = 5;
+        goto done;
+    }
+    if (recipe.argc > 1) {
+        if ((size_t)(recipe.argc - 1) > CAPTIVE_MAX_ARGS) {
+            fprintf(stderr, "%% Existing profile has too many argv tokens for captive editing\n");
+            rc = 5;
+            goto done;
+        }
+        for (int i = 1; i < recipe.argc; i++) {
+            stage->args[stage->arg_count] = strdup(recipe.argv[i]);
+            if (!stage->args[stage->arg_count]) {
+                rc = 3;
+                goto done;
+            }
+            stage->arg_count++;
+        }
+    }
+    if (recipe.envc > 0) {
+        if ((size_t)recipe.envc > CAPTIVE_MAX_ENV) {
+            fprintf(stderr, "%% Existing profile has too many env entries for captive editing\n");
+            rc = 5;
+            goto done;
+        }
+        for (int i = 0; i < recipe.envc; i++) {
+            stage->env[stage->env_count] = strdup(recipe.env[i]);
+            if (!stage->env[stage->env_count]) {
+                rc = 3;
+                goto done;
+            }
+            stage->env_count++;
+        }
+    }
+    stage->dirty = false;
+done:
+    hold_free_profile(&recipe);
+    if (rc != 0) stage_clear(stage);
+    return rc;
+}
+
+static int stage_set_name(struct captive_profile_stage *stage, const struct hold_store *store, const char *name) {
     stage_clear(stage);
     if (!hold_valid_alias(name)) {
         fprintf(stderr, "%% Invalid profile name '%s'\n", name ? name : "");
         return 5;
     }
     snprintf(stage->name, sizeof(stage->name), "%s", name);
-    return 0;
+    return stage_load_recipe(stage, store);
 }
 
 static int split_line(char *line, char **tokens, int *count) {
@@ -388,7 +435,7 @@ static int handle_config(struct captive_session *s, int argc, char **argv) {
             printf("  WORD       Name of the profile to create or edit\n");
             return 0;
         }
-        int rc = stage_set_name(&s->profile, argv[1]);
+        int rc = stage_set_name(&s->profile, s->user_store, argv[1]);
         if (rc == 0) s->mode = CAP_PROFILE;
         return rc;
     }
