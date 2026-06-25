@@ -29,7 +29,7 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"list", 0, 1, 0, "usage: hold list [profile]", "list"},
     {"ps", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold ps [-a|--all]", "ps"},
     {"run", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold run [run-options] <cmd|profile> [args...]", "run"},
-    {"start", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold start <profile> [--force|--multi [N]] [--console]\n       hold start <cmd> [args...]", "start"},
+    {"start", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold start <profile> [--force|--multi N] [--console]\n       hold start <cmd> [args...]", "start"},
     {"stop", 1, -1, HOLD_CLI_ALLOW_ALL, "usage: hold stop [--print] [--all] <target>...", "stop"},
     {"kill", 1, -1, HOLD_CLI_ALLOW_ALL, "usage: hold kill [--print] [--all] <target>...", "kill"},
     {"tail", 1, 1, 0, "usage: hold tail <target>", "tail"},
@@ -182,7 +182,7 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "ps")) {
         printf("usage: hold ps [-a|--all]\n\nDocker-shaped run listing. Shows Hold run IDs; profile-backed runs include their profile label where available.\n");
     } else if (!strcmp(action, "start")) {
-        printf("usage: hold start <profile> [--force|--multi [N]] [--console]\n       hold start <cmd> [args...]\n\nStart a saved profile recipe, or use explicit start form for a raw command.\n");
+        printf("usage: hold start <profile> [--force|--multi N] [--console]\n       hold start <cmd> [args...]\n\nStart a saved profile recipe, or use explicit start form for a raw command.\n");
     } else if (!strcmp(action, "stop")) {
         printf("usage: hold stop [--print] [--all] <target>...\n\nGracefully stop matching runs with TERM, then KILL if needed.\n");
     } else if (!strcmp(action, "kill")) {

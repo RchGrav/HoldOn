@@ -143,7 +143,7 @@ int hold_elevate_with_sudo_parsed(const char *program,
         if (!strcmp(command, "run")) {
             extra += 1;
         }
-        if (!strcmp(command, "start") && multi) {
+        if ((!strcmp(command, "start") || !strcmp(command, "run")) && multi) {
             extra += multi_count == 1 ? 1 : 2;
         }
     } else {
@@ -184,9 +184,11 @@ int hold_elevate_with_sudo_parsed(const char *program,
         if (print_cmd) {
             canon[n++] = "--print";
         }
-        if (!strcmp(command, "start") && multi) {
-            canon[n++] = "--multi";
-            if (multi_count != 1) {
+        if ((!strcmp(command, "start") || !strcmp(command, "run")) && multi) {
+            if (multi_count == 1) {
+                canon[n++] = "--force";
+            } else {
+                canon[n++] = "--multi";
                 snprintf(count_buf, sizeof(count_buf), "%d", multi_count);
                 canon[n++] = count_buf;
             }

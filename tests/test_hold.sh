@@ -2574,6 +2574,29 @@ test_system_switch_canonicalizes_owned_command() {
   [ "${args[6]}" = "--console" ] || return 1
   [ "${args[7]}" = "--" ] || return 1
   [ "${args[8]}" = "/bin/true" ] || return 1
+
+  set +e
+  "$HOLD_BIN" --system start web-prof --force >/dev/null 2>"$TEST_ROOT/start-force.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 77 ] || return 1
+  args=()
+  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
+  [ "${args[4]}" = "start" ] || return 1
+  [ "${args[5]}" = "--force" ] || return 1
+  [ "${args[6]}" = "web-prof" ] || return 1
+
+  set +e
+  "$HOLD_BIN" --system start web-prof --multi 2 >/dev/null 2>"$TEST_ROOT/start-multi.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 77 ] || return 1
+  args=()
+  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
+  [ "${args[4]}" = "start" ] || return 1
+  [ "${args[5]}" = "--multi" ] || return 1
+  [ "${args[6]}" = "2" ] || return 1
+  [ "${args[7]}" = "web-prof" ] || return 1
 }
 
 test_system_raw_self_elevation_preserves_child_switches_and_delimiter() {
@@ -3325,7 +3348,7 @@ test_ambiguous_tail_resolvable_by_run_id() {
   "$HOLD_BIN" profile save "$id1" as web-amb >/dev/null || return 1
   "$HOLD_BIN" stop "$id1" >/dev/null; "$HOLD_BIN" prune "$id1" >/dev/null
   id1=$("$HOLD_BIN" start web-amb 2>&1 | extract_id); [ -n "$id1" ] || return 1
-  id2=$("$HOLD_BIN" start web-amb --multi 2>&1 | extract_id); [ -n "$id2" ] || return 1
+  id2=$("$HOLD_BIN" start web-amb --force 2>&1 | extract_id); [ -n "$id2" ] || return 1
   # tail by ALIAS with several running is ambiguous: exit 6, the candidate run ids
   # are listed, and (since tail is not an --all command) --all must NOT be suggested.
   set +e; "$HOLD_BIN" tail web-amb >/dev/null 2>"$TEST_ROOT/amb.err"; rc=$?; set -e
@@ -3550,6 +3573,9 @@ test_multi_n_exact_count_and_invalid() {
   ids=$("$HOLD_BIN" run --multi 2 web-n 2>/dev/null | sed -n '/^[0-9a-f]\{8\}$/p')
   [ "$(printf '%s\n' "$ids" | grep -c .)" -eq 2 ] || { echo "run --multi 2 did not print 2 ids" >&2; return 1; }
   "$HOLD_BIN" stop web-n --all >/dev/null 2>&1 || true
+  set +e; "$HOLD_BIN" start web-n --multi >/dev/null 2>"$TEST_ROOT/mm.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "--multi missing: rc=$rc (want 5)" >&2; return 1; }
+  grep -q -- "--multi requires a positive count" "$TEST_ROOT/mm.err" || { cat "$TEST_ROOT/mm.err" >&2; return 1; }
   set +e; "$HOLD_BIN" start web-n --multi=abc >/dev/null 2>"$TEST_ROOT/m.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "--multi=abc: rc=$rc (want 5)" >&2; return 1; }
   grep -q "invalid --multi count" "$TEST_ROOT/m.err" || { cat "$TEST_ROOT/m.err" >&2; return 1; }
@@ -3580,7 +3606,7 @@ test_print_over_all_and_multiple() {
   "$HOLD_BIN" profile save "$id1" as web-pr >/dev/null || return 1
   "$HOLD_BIN" stop "$id1" >/dev/null; "$HOLD_BIN" prune "$id1" >/dev/null
   id1=$("$HOLD_BIN" start web-pr 2>&1 | extract_id); pgid1=$(record_pgid "$id1")
-  id2=$("$HOLD_BIN" start web-pr --multi 2>&1 | extract_id); pgid2=$(record_pgid "$id2")
+  id2=$("$HOLD_BIN" start web-pr --force 2>&1 | extract_id); pgid2=$(record_pgid "$id2")
   [ -n "$pgid1" ] && [ -n "$pgid2" ] || return 1
   out=$("$HOLD_BIN" stop --print --all web-pr) || return 1
   printf '%s\n' "$out" | grep -qF "kill -TERM -- -$pgid1" || { echo "--print --all missing pgid1" >&2; return 1; }

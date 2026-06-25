@@ -32,6 +32,7 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
                                     int envc,
                                     char **env);
 static bool is_legacy_run_namespace_verb(const char *arg);
+static bool command_supports_multiplicity(const char *command);
 
 static int build_cap_request_token(const char *op, bool force, char *out, size_t n) {
     if (!op || !*op) {
@@ -52,6 +53,10 @@ static void print_command_usage_stderr(const char *command) {
     if (usage) {
         fprintf(stderr, "%s\n", usage);
     }
+}
+
+static bool command_supports_multiplicity(const char *command) {
+    return command && (!strcmp(command, "start") || !strcmp(command, "run"));
 }
 
 static bool parse_docker_run_flag(const char *arg,
@@ -555,28 +560,29 @@ int main(int argc, char **argv) {
                 list_iso = true;
                 continue;
             }
-            if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) && !strcmp(argv[i], "--force")) {
+            if (!literal_owned_arg && command_supports_multiplicity(command) && !strcmp(argv[i], "--force")) {
                 multi = true;
                 multi_count = 1;
                 continue;
             }
-            if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) && !strcmp(argv[i], "--multi")) {
-                multi = true;
-                multi_count = 1;
-                if (i + 1 < argc) {
-                    int parsed = 0;
-                    if (hold_parse_positive_count(argv[i + 1], &parsed)) {
-                        multi_count = parsed;
-                        i++;
-                    } else if (argv[i + 1][0] != '-') {
-                        fprintf(stderr, "hold: error: invalid --multi count '%s'\n", argv[i + 1]);
-                        free(cmd_argv);
-                        return 5;
-                    }
+            if (!literal_owned_arg && command_supports_multiplicity(command) && !strcmp(argv[i], "--multi")) {
+                if (i + 1 >= argc) {
+                    fprintf(stderr, "hold: error: --multi requires a positive count\n");
+                    free(cmd_argv);
+                    return 5;
                 }
+                int parsed = 0;
+                if (!hold_parse_positive_count(argv[i + 1], &parsed)) {
+                    fprintf(stderr, "hold: error: invalid --multi count '%s'\n", argv[i + 1]);
+                    free(cmd_argv);
+                    return 5;
+                }
+                multi = true;
+                multi_count = parsed;
+                i++;
                 continue;
             }
-            if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) && strncmp(argv[i], "--multi=", 8) == 0) {
+            if (!literal_owned_arg && command_supports_multiplicity(command) && strncmp(argv[i], "--multi=", 8) == 0) {
                 multi = true;
                 if (!hold_parse_positive_count(argv[i] + 8, &multi_count)) {
                     fprintf(stderr, "hold: error: invalid --multi count '%s'\n", argv[i] + 8);
@@ -677,7 +683,7 @@ int main(int argc, char **argv) {
     if (owned && !strcmp(command, "clean")) command = "prune";
 
     bool is_list = owned && !strcmp(command, "list");
-    if (requested_system && !inv.euid_root && owned && !strcmp(command, "start") && cmd_argc == 1) {
+    if (requested_system && !inv.euid_root && owned && command_supports_multiplicity(command) && cmd_argc == 1) {
         struct hold_store pre_system_store;
         if (hold_init_system_store(&pre_system_store) == 0) {
             const char *atom = NULL;
@@ -998,7 +1004,7 @@ int main(int argc, char **argv) {
         }
         if (!strcmp(sub, "run") || !strcmp(sub, "start")) {
             if (cmd_argc < 2) {
-                fprintf(stderr, "usage: hold profile run <name> [--multi [N]] [--tail|-f] [--console]\n");
+                fprintf(stderr, "usage: hold profile run <name> [--multi N] [--tail|-f] [--console]\n");
                 free(cmd_argv);
                 return 5;
             }
@@ -1016,19 +1022,20 @@ int main(int argc, char **argv) {
                 } else if (!strcmp(cmd_argv[i], "--console")) {
                     p_console = true;
                 } else if (!strcmp(cmd_argv[i], "--multi")) {
-                    p_multi = true;
-                    p_multi_count = 1;
-                    if (i + 1 < cmd_argc) {
-                        int parsed = 0;
-                        if (hold_parse_positive_count(cmd_argv[i + 1], &parsed)) {
-                            p_multi_count = parsed;
-                            i++;
-                        } else if (cmd_argv[i + 1][0] != '-') {
-                            fprintf(stderr, "hold: error: invalid --multi count '%s'\n", cmd_argv[i + 1]);
-                            free(cmd_argv);
-                            return 5;
-                        }
+                    if (i + 1 >= cmd_argc) {
+                        fprintf(stderr, "hold: error: --multi requires a positive count\n");
+                        free(cmd_argv);
+                        return 5;
                     }
+                    int parsed = 0;
+                    if (!hold_parse_positive_count(cmd_argv[i + 1], &parsed)) {
+                        fprintf(stderr, "hold: error: invalid --multi count '%s'\n", cmd_argv[i + 1]);
+                        free(cmd_argv);
+                        return 5;
+                    }
+                    p_multi = true;
+                    p_multi_count = parsed;
+                    i++;
                 } else if (strncmp(cmd_argv[i], "--multi=", 8) == 0) {
                     p_multi = true;
                     if (!hold_parse_positive_count(cmd_argv[i] + 8, &p_multi_count)) {
@@ -1037,7 +1044,7 @@ int main(int argc, char **argv) {
                         return 5;
                     }
                 } else {
-                    fprintf(stderr, "usage: hold profile run <name> [--multi [N]] [--tail|-f] [--console]\n");
+                    fprintf(stderr, "usage: hold profile run <name> [--multi N] [--tail|-f] [--console]\n");
                     free(cmd_argv);
                     return 5;
                 }
