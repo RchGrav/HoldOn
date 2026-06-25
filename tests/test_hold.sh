@@ -1089,6 +1089,74 @@ PY
 }
 
 
+
+test_log_view_follow_filter_change_preserves_browsed_page() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo "target-top-one"; echo "target-top-two"; for i in $(seq 1 60); do echo "noise-middle-$i"; done; echo "target-tail-one"; echo "target-tail-two"; sleep 0.3' 2>&1) || return 1
+  id=$(printf '%s
+' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.3
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[5~" * 25); out.flush(); time.sleep(0.1); out.write(b"target"); out.flush(); time.sleep(0.1); out.write(b"q"); out.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 6 cols 120; $HOLD_BIN logs $id --interactive --follow --debug-stats" /dev/null >"$TEST_ROOT/view-follow-filter-preserve.out" 2>"$TEST_ROOT/view-follow-filter-preserve.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow-filter-preserve.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-follow-filter-preserve.out" <<'PYCHECK' || { cat "$TEST_ROOT/view-follow-filter-preserve.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+frames = plain.split('filter: target')
+if len(frames) < 2:
+    raise SystemExit('filter prompt never rendered')
+final = frames[-1]
+if 'target-top-one' not in final or 'target-top-two' not in final:
+    raise SystemExit('typing a filter while browsed away did not preserve the top page')
+if 'target-tail-one' in final or 'target-tail-two' in final:
+    raise SystemExit('typing a filter while browsed away looped back to the bottom')
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+) prev=(\d+) next=(\d+).*?follow=(tail|browsing|exited)', plain)
+if not stats or stats[-1][4] != 'browsing':
+    raise SystemExit(f'expected browsed-away filter state, got {stats[-1] if stats else "missing stats"}')
+PYCHECK
+}
+
+
+test_log_view_follow_exclude_preserves_browsed_page() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo "exclude-alpha-root"; for i in $(seq 1 40); do echo "keep-near-top-$i"; done; for i in $(seq 1 20); do echo "tail-after-exclude-$i"; done; sleep 0.3' 2>&1) || return 1
+  id=$(printf '%s
+' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.3
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[5~" * 25); out.flush(); time.sleep(0.1); out.write(b" "); out.flush(); time.sleep(0.1); out.write(b"q"); out.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 6 cols 120; $HOLD_BIN logs $id --interactive --follow --debug-stats" /dev/null >"$TEST_ROOT/view-follow-exclude-preserve.out" 2>"$TEST_ROOT/view-follow-exclude-preserve.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow-exclude-preserve.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-follow-exclude-preserve.out" <<'PYCHECK' || { cat "$TEST_ROOT/view-follow-exclude-preserve.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+final = plain[-1600:]
+if 'excluding similar' not in final:
+    raise SystemExit('exclude mode was not activated')
+if not any(f'keep-near-top-{i}' in final for i in range(1, 8)):
+    raise SystemExit('excluding a line while browsed away did not keep nearby top lines visible')
+if any(f'tail-after-exclude-{i}' in final for i in range(10, 21)):
+    raise SystemExit('excluding a line while browsed away looped back to the bottom')
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+) prev=(\d+) next=(\d+).*?follow=(tail|browsing|exited)', plain)
+if not stats or stats[-1][4] != 'browsing':
+    raise SystemExit(f'expected browsed-away exclude state, got {stats[-1] if stats else "missing stats"}')
+PYCHECK
+}
+
+
 test_log_view_follow_top_refills_as_live_log_grows() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
@@ -4317,6 +4385,8 @@ run_test "internal viewer follow page-up stays at the first log page" test_log_v
 run_test "internal viewer follow oldest page does not wrap back to tail" test_log_view_follow_oldest_page_does_not_wrap_to_tail
 run_test "internal viewer follow page-down from top does not wrap to tail" test_log_view_follow_page_down_from_top_does_not_wrap_to_tail
 run_test "internal viewer follow page-up returns to top after paging down" test_log_view_follow_page_up_after_top_page_down_returns_to_top
+run_test "internal viewer filter changes preserve browsed-away page" test_log_view_follow_filter_change_preserves_browsed_page
+run_test "internal viewer exclude changes preserve browsed-away page" test_log_view_follow_exclude_preserves_browsed_page
 run_test "internal viewer follow keeps top pinned while live log grows" test_log_view_follow_top_refills_as_live_log_grows
 run_test "internal viewer cursor navigation disables live tail yank" test_log_view_follow_cursor_navigation_disables_tail_yank
 run_test "internal viewer cursor browsing keeps a short top page pinned" test_log_view_follow_cursor_browse_keeps_short_top_page_pinned

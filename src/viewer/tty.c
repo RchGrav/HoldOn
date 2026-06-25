@@ -67,6 +67,8 @@ struct viewer_state {
     off_t next_offset;
     off_t tail_anchor;
     off_t newer_scan_offset;
+    bool local_scan_limit_active;
+    off_t local_scan_limit_end;
     size_t cache_bytes_read;
     size_t cache_lines_scanned;
     size_t cache_match_count;
@@ -289,14 +291,35 @@ static bool refresh_terminal_size(struct viewer_state *state) {
     return false;
 }
 
+static off_t current_page_anchor(const struct viewer_state *state) {
+    if (state->visible_count > 0) return state->visible[0].offset;
+    return state->start_offset;
+}
+
 static void reset_filter_navigation(struct viewer_state *state) {
+    bool preserve_browsed_page = state->follow && !state->at_live_edge;
+    off_t browsed_anchor = preserve_browsed_page ? current_page_anchor(state) : 0;
     if (state->follow) {
         off_t end = lseek(state->fd, 0, SEEK_END);
-        if (end >= 0) state->start_offset = end;
-        state->tail_anchor = state->start_offset;
-        state->newer_scan_offset = state->tail_anchor;
-        state->scan_mode = VIEWER_SCAN_BACKWARD;
-        state->at_live_edge = true;
+        if (end >= 0) state->tail_anchor = end;
+        if (preserve_browsed_page) {
+            if (browsed_anchor < 0) browsed_anchor = 0;
+            state->start_offset = browsed_anchor;
+            state->newer_scan_offset = state->tail_anchor;
+            state->scan_mode = VIEWER_SCAN_FORWARD;
+            state->at_live_edge = false;
+            if (state->next_offset > browsed_anchor) {
+                state->local_scan_limit_active = true;
+                state->local_scan_limit_end = state->next_offset;
+            }
+        } else {
+            if (end >= 0) state->start_offset = end;
+            state->newer_scan_offset = state->tail_anchor;
+            state->scan_mode = VIEWER_SCAN_BACKWARD;
+            state->at_live_edge = true;
+            state->local_scan_limit_active = false;
+            state->local_scan_limit_end = 0;
+        }
         state->newer_available = false;
     } else {
         state->start_offset = 0;
@@ -305,6 +328,8 @@ static void reset_filter_navigation(struct viewer_state *state) {
         state->scan_mode = VIEWER_SCAN_FORWARD;
         state->at_live_edge = false;
         state->newer_available = false;
+        state->local_scan_limit_active = false;
+        state->local_scan_limit_end = 0;
     }
     state->history_count = 0;
     state->selected = 0;
@@ -460,9 +485,17 @@ static int refill_cache(struct viewer_state *state) {
         }
     } else {
         opts.scan_byte_budget = scan_budget;
+        if (state->local_scan_limit_active && state->local_scan_limit_end > state->start_offset) {
+            off_t local_budget = state->local_scan_limit_end - state->start_offset;
+            if (local_budget > 0 && (uintmax_t)local_budget < (uintmax_t)opts.scan_byte_budget) {
+                opts.scan_byte_budget = (size_t)local_budget;
+            }
+        }
         if (lseek(state->fd, state->start_offset, SEEK_SET) < 0) return -1;
         if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
     }
+    state->local_scan_limit_active = false;
+    state->local_scan_limit_end = 0;
     int rc = cache_load_result(state, &result, visible_rows);
     hold_log_filter_result_free(&result);
     return rc;
@@ -657,6 +690,8 @@ static void push_history(struct viewer_state *state, off_t off) {
 }
 
 static void page_down(struct viewer_state *state) {
+    state->local_scan_limit_active = false;
+    state->local_scan_limit_end = 0;
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         if (state->history_count > 0) {
             state->start_offset = state->history[--state->history_count];
@@ -714,6 +749,8 @@ static void enter_browsing_mode(struct viewer_state *state, bool stabilize_visib
 }
 
 static void page_up(struct viewer_state *state) {
+    state->local_scan_limit_active = false;
+    state->local_scan_limit_end = 0;
     enter_browsing_mode(state, false);
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         state->at_live_edge = false;

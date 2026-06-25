@@ -227,7 +227,16 @@ int hold_log_filter_fd(int fd,
     bool done = false;
 
     while (!done) {
-        ssize_t nr = read(fd, read_buf, sizeof(read_buf));
+        size_t read_cap = sizeof(read_buf);
+        if (opts.scan_byte_budget > 0) {
+            if (result->bytes_read >= opts.scan_byte_budget) {
+                result->scan_limited = true;
+                break;
+            }
+            size_t remaining_budget = opts.scan_byte_budget - result->bytes_read;
+            if (remaining_budget < read_cap) read_cap = remaining_budget;
+        }
+        ssize_t nr = read(fd, read_buf, read_cap);
         if (nr == 0) {
             result->reached_eof = true;
             if (line_len > 0) {
@@ -250,10 +259,6 @@ int hold_log_filter_fd(int fd,
             return -1;
         }
         result->bytes_read += (size_t)nr;
-        if (opts.scan_byte_budget > 0 && result->bytes_read > opts.scan_byte_budget) {
-            result->scan_limited = true;
-            break;
-        }
         for (ssize_t i = 0; i < nr; i++) {
             char c = read_buf[i];
             if (line_len + 2 > line_cap) {
@@ -274,6 +279,10 @@ int hold_log_filter_fd(int fd,
                 result->next_offset = next_offset;
                 if (done) break;
             }
+        }
+        if (opts.scan_byte_budget > 0 && result->bytes_read >= opts.scan_byte_budget && !done) {
+            result->scan_limited = true;
+            break;
         }
     }
     if (result->next_offset == 0) result->next_offset = next_offset;
