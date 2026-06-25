@@ -71,3 +71,6 @@ dkms.conf
 
 # Viewer filter test binary
 /viewer-filter-test
+
+# Local demo run IDs
+/.review-demo-runs.env
