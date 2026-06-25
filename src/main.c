@@ -190,8 +190,19 @@ static bool is_legacy_run_namespace_verb(const char *arg) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        hold_usage();
-        return 1;
+        struct hold_invocation inv;
+        if (hold_detect_invocation(&inv, false, false) != 0) {
+            hold_die_errno("hold: failed to resolve invocation context");
+        }
+        struct hold_store user_store, system_store;
+        memset(&user_store, 0, sizeof(user_store));
+        if (hold_init_system_store(&system_store) != 0) {
+            hold_die_errno("hold: failed to resolve system storage");
+        }
+        if (!inv.euid_root && hold_ensure_user_store_for_current_user(&user_store) != 0) {
+            hold_die_errno("hold: failed to init user storage");
+        }
+        return hold_cmd_captive_action(&inv, inv.euid_root ? &system_store : &user_store, &system_store, argv[0]);
     }
 
     int argi = 1;

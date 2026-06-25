@@ -743,10 +743,10 @@ test_stop_multiple_ids() {
 test_argument_edges() {
   local rc out
   set +e
-  "$HOLD_BIN" >/dev/null 2>&1
+  printf '' | "$HOLD_BIN" >"$TEST_ROOT/bare-hold.out" 2>"$TEST_ROOT/bare-hold.err"
   rc=$?
   set -e
-  [ "$rc" -eq 1 ] || return 1
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/bare-hold.out" "$TEST_ROOT/bare-hold.err" >&2; return 1; }
   set +e
   "$HOLD_BIN" stop >/dev/null 2>&1
   rc=$?
@@ -2575,6 +2575,42 @@ PY
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
 
+
+test_captive_cli_cisco_prompts_and_profile_commit() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local rc id
+  set +e
+  python3 -c 'import sys,time; sys.stdout.write("?\nenable\nconfigure ?\nconfigure terminal\nprofile web\nbinary /usr/bin/sleep\nargv 30\ninfo\ncommit\nend\nshow profiles\nexit\n"); sys.stdout.flush(); time.sleep(0.1)' |
+    script -qfec "$HOLD_BIN" /dev/null >"$TEST_ROOT/captive-cli.out" 2>"$TEST_ROOT/captive-cli.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-cli.out" "$TEST_ROOT/captive-cli.err" >&2; return 1; }
+  grep -q 'hold> ' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
+  grep -q 'hold# ' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
+  grep -q 'hold(config)# ' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
+  grep -q 'hold(config-profile:web)# ' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
+  grep -q 'Exec commands:' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
+  grep -q 'terminal   Configure from the terminal' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
+  grep -q 'Profile committed.' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
+  grep -Eq '^web[[:space:]]+user[[:space:]]+/usr/bin/sleep 30' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
+}
+
+test_captive_cli_noninteractive_transcript_is_script_safe() {
+  local rc id
+  set +e
+  printf 'enable\nconfigure terminal\nprofile batch\nbinary /usr/bin/sleep\nargv 30\ncommit\nend\nrun batch\nexit\n' |
+    "$HOLD_BIN" >"$TEST_ROOT/captive-batch.out" 2>"$TEST_ROOT/captive-batch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-batch.out" "$TEST_ROOT/captive-batch.err" >&2; return 1; }
+  ! grep -q 'hold> ' "$TEST_ROOT/captive-batch.out" || { cat "$TEST_ROOT/captive-batch.out" >&2; return 1; }
+  grep -q 'Profile committed.' "$TEST_ROOT/captive-batch.out" || { cat "$TEST_ROOT/captive-batch.out" >&2; return 1; }
+  id=$(extract_id <"$TEST_ROOT/captive-batch.out")
+  [ -n "$id" ] || { cat "$TEST_ROOT/captive-batch.out" "$TEST_ROOT/captive-batch.err" >&2; return 1; }
+  "$HOLD_BIN" stop "$id" >/dev/null || return 1
+}
+
 test_build_artifact_coexistence() {
   make clean >/dev/null || return 1
   make hold hold STATIC_LDFLAGS= EXTRA_CPPFLAGS=-DHOLD_TESTING >/dev/null || return 1
@@ -3280,6 +3316,8 @@ run_test "hold unified CLI surface" test_hold_unified_cli_surface
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit
 run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hold_shell_detach_adopts_foreground_process_group
+run_test "captive CLI shows Cisco prompts and commits a profile" test_captive_cli_cisco_prompts_and_profile_commit
+run_test "captive CLI noninteractive transcript is script-safe" test_captive_cli_noninteractive_transcript_is_script_safe
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "internal viewer harness seeds literal and similarity filters" test_log_view_internal_seed_filters
