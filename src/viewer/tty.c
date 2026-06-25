@@ -767,6 +767,13 @@ static void page_down(struct viewer_state *state) {
         return;
     }
     if (state->visible_count == 0 || state->next_offset <= state->start_offset) return;
+    /*
+     * A forward scan that reached EOF is already showing the newest available
+     * browsed page.  EOF itself is not a page.  Advancing to next_offset here
+     * creates the apparent wrap/loop back to the bottom (or an empty tail
+     * page) while the operator is trying to stay in manual navigation.
+     */
+    if (state->cache_reached_eof) return;
     push_history(state, state->start_offset);
     state->start_offset = state->next_offset;
     state->selected = 0;

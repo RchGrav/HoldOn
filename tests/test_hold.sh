@@ -1055,6 +1055,40 @@ PY
 }
 
 
+test_log_view_follow_page_down_stops_on_last_real_page() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in $(seq 1 12); do echo "loopend-line-$i"; done; sleep 0.3' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.3
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[5~" * 12); out.flush(); time.sleep(0.1); out.write(b"\x1b[6~" * 4); out.flush(); time.sleep(0.1); out.write(b"q"); out.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 6 cols 120; $HOLD_BIN logs $id --interactive --follow --debug-stats" /dev/null >"$TEST_ROOT/view-follow-page-down-last-real.out" 2>"$TEST_ROOT/view-follow-page-down-last-real.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow-page-down-last-real.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-follow-page-down-last-real.out" <<'PYCHECK' || { cat "$TEST_ROOT/view-follow-page-down-last-real.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+) prev=(\d+) next=(\d+).*?follow=(tail|browsing|exited)', plain)
+if not stats:
+    raise SystemExit('missing debug stats')
+last = stats[-1]
+if last[4] != 'browsing':
+    raise SystemExit(f'expected manual browsing to remain active, got {last}')
+final = plain[-1400:]
+for wanted in ('loopend-line-9', 'loopend-line-10', 'loopend-line-11', 'loopend-line-12'):
+    if wanted not in final:
+        raise SystemExit(f'PageDown advanced past the last real log page; missing {wanted}')
+if final.count('~') >= 4 and 'loopend-line-12' not in final:
+    raise SystemExit('PageDown rendered an empty EOF page')
+PYCHECK
+}
+
+
 test_log_view_follow_page_up_after_top_page_down_returns_to_top() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
@@ -4555,6 +4589,7 @@ run_test "internal viewer follow pages older and newer filtered windows" test_lo
 run_test "internal viewer follow page-up stays at the first log page" test_log_view_follow_page_up_stays_at_start
 run_test "internal viewer follow oldest page does not wrap back to tail" test_log_view_follow_oldest_page_does_not_wrap_to_tail
 run_test "internal viewer follow page-down from top does not wrap to tail" test_log_view_follow_page_down_from_top_does_not_wrap_to_tail
+run_test "internal viewer follow page-down stops on the last real page" test_log_view_follow_page_down_stops_on_last_real_page
 run_test "internal viewer follow page-up returns to top after paging down" test_log_view_follow_page_up_after_top_page_down_returns_to_top
 run_test "internal viewer filter changes preserve browsed-away page" test_log_view_follow_filter_change_preserves_browsed_page
 run_test "internal viewer exclude changes preserve browsed-away page" test_log_view_follow_exclude_preserves_browsed_page
