@@ -788,11 +788,15 @@ static void pin_to_oldest_visible_page(struct viewer_state *state) {
     state->scan_mode = VIEWER_SCAN_FORWARD;
     state->history_count = 0;
     state->selected = 0;
-    if (state->visible_count > 0) {
-        state->start_offset = state->visible[0].offset;
-    } else {
-        state->start_offset = 0;
-    }
+    /*
+     * The oldest page is a file boundary, not merely the first row currently
+     * visible from the last backward scan.  Re-anchor at byte zero and refill
+     * forward so repeated Up/PageUp at the top is idempotent and cannot reuse
+     * any live-tail/history anchor that would feel like looping back down.
+     * Literal/exclusion filters still start at byte zero; the filter engine
+     * simply skips nonmatching lines until it finds the first visible match.
+     */
+    state->start_offset = 0;
     cache_invalidate(state);
 }
 
