@@ -1611,7 +1611,7 @@ test_persistent_stale_records() {
   HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list >/dev/null || return 1
   printf 'boot-b\n' >"$bootfile" || return 1
   list_out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list) || return 1
-  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+stale[[:space:]]"
+  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+-[[:space:]]+stale[[:space:]]"
   set +e
   HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" stop "$id" >/dev/null 2>"$TEST_ROOT/stop.err"
   [ "$?" -eq 2 ] || return 1
@@ -1642,8 +1642,8 @@ test_boot_unavailable_does_not_force_stale() {
   [ -n "$pgid" ] || return 1
   rm -f "$bootfile"
   list_out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list) || return 1
-  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+running[[:space:]]" || return 1
-  ! printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+stale[[:space:]]" || return 1
+  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+-[[:space:]]+running[[:space:]]" || return 1
+  ! printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+-[[:space:]]+stale[[:space:]]" || return 1
   set +e
   got=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" stop --print "$id" 2>"$TEST_ROOT/missing-boot-print.err")
   rc=$?
@@ -1666,7 +1666,7 @@ test_leader_zombie_group_still_running() {
   [ -n "$id" ] || return 1
   sleep 0.3
   list_out=$("$HOLD_BIN" list) || return 1
-  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+running[[:space:]]" || return 1
+  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+-[[:space:]]+running[[:space:]]" || return 1
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
   wait "$tail_pid" || true
 }
@@ -1733,7 +1733,7 @@ test_console_round_trip_and_log_tee() {
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   [ -n "$sock" ] || { cat "$record" >&2; return 1; }
   "$HOLD_BIN" list >"$TEST_ROOT/console-list.out" || return 1
-  grep -Eq "^$id[[:space:]]+running[[:space:]]+.*[[:space:]]console[[:space:]]" "$TEST_ROOT/console-list.out" || {
+  grep -Eq "^$id[[:space:]]+-[[:space:]]+running[[:space:]]" "$TEST_ROOT/console-list.out" || {
     cat "$TEST_ROOT/console-list.out" >&2
     return 1
   }
@@ -3104,7 +3104,7 @@ test_raw_start_does_not_steal_trailing_system() {
 test_public_root_index_list_is_redacted() {
   write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z || return 1
   "$HOLD_BIN" list --iso >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
-  grep -Eq '^abc12345cafe[[:space:]]+unknown[[:space:]]+2026-06-15T18:42:11Z[[:space:]]+-[[:space:]]+<root-managed>$' "$TEST_ROOT/list.out" || return 1
+  grep -Eq '^abc12345cafe[[:space:]]+-[[:space:]]+unknown[[:space:]]+2026-06-15T18:42:11Z[[:space:]]+<root-managed>$' "$TEST_ROOT/list.out" || return 1
   ! grep -q 'secret' "$TEST_ROOT/list.out"
 }
 
@@ -3350,7 +3350,7 @@ test_root_start_writes_system_store_and_public_unknown() {
   [ "$mode" = 644 ] || return 1
   grep -q '"state_hint": "unknown"' "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
   list_out=$("$HOLD_BIN" list) || return 1
-  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+unknown[[:space:]]"
+  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+-[[:space:]]+unknown[[:space:]]"
 }
 
 test_sudo_start_writes_system_store_with_invoking_metadata() {
@@ -3502,7 +3502,8 @@ if 'ok\n' in json.dumps(record):
     raise SystemExit('inspect returned log text instead of structured record data')
 PY
   "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-ps.out" || return 1
-  grep -q "$id" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
+  grep -Eq "^RUNID[[:space:]]+PROFILE[[:space:]]+STATE" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
+  grep -Eq "^$id[[:space:]]+docker-web[[:space:]]+exited" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
   "$HOLD_BIN" profiles >"$TEST_ROOT/docker-profiles.out" || return 1
   grep -q 'docker-web' "$TEST_ROOT/docker-profiles.out" || { cat "$TEST_ROOT/docker-profiles.out" >&2; return 1; }
 
@@ -3822,7 +3823,7 @@ PY
   [ -n "$id" ] || { cat "$TEST_ROOT/docker-tty.out" >&2; return 1; }
   grep -q '"console_sock": "' "$HOME/.local/state/hold/$id.json" || { cat "$HOME/.local/state/hold/$id.json" >&2; return 1; }
   "$HOLD_BIN" ps >"$TEST_ROOT/docker-tty-ps.out" || return 1
-  grep -Eq "^$id[[:space:]]+running" "$TEST_ROOT/docker-tty-ps.out" || { cat "$TEST_ROOT/docker-tty-ps.out" >&2; return 1; }
+  grep -Eq "^$id[[:space:]]+-[[:space:]]+running" "$TEST_ROOT/docker-tty-ps.out" || { cat "$TEST_ROOT/docker-tty-ps.out" >&2; return 1; }
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
 
@@ -3855,7 +3856,7 @@ PY
   id=$(tr -d '\r' <"$TEST_ROOT/docker-tty-custom.out" | extract_id)
   [ -n "$id" ] || { cat "$TEST_ROOT/docker-tty-custom.out" >&2; return 1; }
   "$HOLD_BIN" ps >"$TEST_ROOT/docker-tty-custom-ps.out" || return 1
-  grep -Eq "^$id[[:space:]]+running" "$TEST_ROOT/docker-tty-custom-ps.out" || { cat "$TEST_ROOT/docker-tty-custom-ps.out" >&2; return 1; }
+  grep -Eq "^$id[[:space:]]+-[[:space:]]+running" "$TEST_ROOT/docker-tty-custom-ps.out" || { cat "$TEST_ROOT/docker-tty-custom-ps.out" >&2; return 1; }
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
 

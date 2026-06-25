@@ -10,9 +10,9 @@
 
 struct list_row {
     char id[16];
+    char profile[ALIAS_MAX_LEN + 1];
     char state[16];
     char started[64];
-    char result[64];
     char cmd[HOLD_PATH_MAX];
     int64_t start_unix_ns;
     bool running;
@@ -23,7 +23,6 @@ struct list_rows {
     size_t count;
 };
 
-static void format_result(const struct hold_run_record *r, enum run_state st, char *out, size_t n);
 static void free_list_rows(struct list_rows *rows);
 static int append_list_row(struct list_rows *rows, const struct list_row *row);
 static int compare_list_rows(const void *a, const void *b);
@@ -40,30 +39,6 @@ static int collect_list_public(const struct hold_store *store,
 static int print_collected_list(struct list_rows *rows, bool iso);
 static void unlink_public_index(const struct hold_store *store, const char *id);
 static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, int *removed_count);
-
-static void format_result(const struct hold_run_record *r, enum run_state st, char *out, size_t n) {
-    if (st == STATE_RUNNING) {
-        snprintf(out, n, "%s", r->has_console ? "console" : "-");
-        return;
-    }
-    if (r->has_launch_error && r->launch_error[0]) {
-        snprintf(out, n, "launch=%.48s", r->launch_error);
-        return;
-    }
-    if (r->has_term_signal) {
-        snprintf(out, n, "signal=%d", r->term_signal);
-        return;
-    }
-    if (r->has_exit_code) {
-        snprintf(out, n, "exit=%d", r->exit_code);
-        return;
-    }
-    if (st == STATE_FAILED) {
-        snprintf(out, n, "launch=unknown");
-    } else {
-        snprintf(out, n, "-");
-    }
-}
 
 static void free_list_rows(struct list_rows *rows) {
     free(rows->items);
@@ -97,14 +72,14 @@ static int compare_list_rows(const void *a, const void *b) {
 }
 
 static void print_list_header(bool iso) {
-    printf("%-10s %-8s %-*s %-10s %s\n", "RUNID", "STATE", iso ? 24 : 8, iso ? "STARTED_AT" : "STARTED", "RESULT", "CMD");
+    printf("%-12s %-16s %-8s %-*s %s\n", "RUNID", "PROFILE", "STATE", iso ? 24 : 8, iso ? "STARTED_AT" : "STARTED", "CMD");
 }
 
 static void print_list_row(const struct list_row *row, bool iso) {
     char cmd[80];
     const char *src = row->cmd[0] ? row->cmd : "?";
     snprintf(cmd, sizeof(cmd), "%.72s%s", src, strlen(src) > 72 ? "..." : "");
-    printf("%-10s %-8s %-*s %-10s %s\n", row->id, row->state, iso ? 24 : 8, row->started, row->result, cmd);
+    printf("%-12s %-16s %-8s %-*s %s\n", row->id, row->profile[0] ? row->profile : "-", row->state, iso ? 24 : 8, row->started, cmd);
 }
 
 static int collect_list_private(const struct hold_store *store,
@@ -143,6 +118,7 @@ static int collect_list_private(const struct hold_store *store,
         struct list_row row;
         memset(&row, 0, sizeof(row));
         snprintf(row.id, sizeof(row.id), "%s", r.id);
+        snprintf(row.profile, sizeof(row.profile), "%s", r.has_alias ? r.alias : "-");
         snprintf(row.state, sizeof(row.state), "%s", hold_state_str(st));
         row.start_unix_ns = r.start_unix_ns;
         row.running = st == STATE_RUNNING;
@@ -155,7 +131,6 @@ static int collect_list_private(const struct hold_store *store,
         } else {
             hold_format_relative_age(r.start_unix_ns, row.started, sizeof(row.started));
         }
-        format_result(&r, st, row.result, sizeof(row.result));
         snprintf(row.cmd, sizeof(row.cmd), "%s", r.cmdline[0] ? r.cmdline : "?");
         if (append_list_row(rows, &row) != 0) {
             closedir(d);
@@ -203,6 +178,7 @@ static int collect_list_public(const struct hold_store *store,
         struct list_row row;
         memset(&row, 0, sizeof(row));
         snprintf(row.id, sizeof(row.id), "%s", pi.id);
+        snprintf(row.profile, sizeof(row.profile), "%s", pi.has_alias ? pi.alias : "-");
         snprintf(row.state, sizeof(row.state), "%s", "unknown");
         row.running = false;
         row.start_unix_ns = 0;
@@ -211,7 +187,6 @@ static int collect_list_public(const struct hold_store *store,
         } else {
             snprintf(row.started, sizeof(row.started), "%s", "-");
         }
-        snprintf(row.result, sizeof(row.result), "%s", "-");
         snprintf(row.cmd, sizeof(row.cmd), "%s", "<root-managed>");
         if (append_list_row(rows, &row) != 0) {
             closedir(d);
