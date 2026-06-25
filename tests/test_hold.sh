@@ -948,7 +948,16 @@ test_log_view_follow_pages_filtered_windows() {
   grep -q 'page-hit-4' "$TEST_ROOT/view-follow-pages.out" || { cat "$TEST_ROOT/view-follow-pages.out" >&2; return 1; }
   grep -q 'page-hit-9' "$TEST_ROOT/view-follow-pages.out" || { cat "$TEST_ROOT/view-follow-pages.out" >&2; return 1; }
   grep -q 'follow=browsing' "$TEST_ROOT/view-follow-pages.out" || { cat "$TEST_ROOT/view-follow-pages.out" >&2; return 1; }
-  grep -q 'follow=tail' "$TEST_ROOT/view-follow-pages.out" || { cat "$TEST_ROOT/view-follow-pages.out" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-follow-pages.out" <<'PY' || { cat "$TEST_ROOT/view-follow-pages.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+) prev=(\d+) next=(\d+).*?follow=(tail|browsing|exited)', plain)
+if not stats:
+    raise SystemExit('missing debug stats')
+if stats[-1][4] != 'browsing':
+    raise SystemExit(f'PageDown after PageUp snapped back to live tail: {stats[-1]}')
+PY
 }
 
 test_log_view_follow_page_up_stays_at_start() {

@@ -742,26 +742,21 @@ static void page_down(struct viewer_state *state) {
     state->local_scan_limit_active = false;
     state->local_scan_limit_end = 0;
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
-        if (state->history_count > 0) {
-            state->start_offset = state->history[--state->history_count];
-            state->at_live_edge = state->history_count == 0 && state->start_offset >= state->tail_anchor;
-        } else {
-            if (!state->at_live_edge && state->visible_count > 0 && state->next_offset > state->start_offset) {
-                state->scan_mode = VIEWER_SCAN_FORWARD;
-                state->start_offset = state->next_offset;
-                state->at_live_edge = false;
-            } else {
-                off_t end = lseek(state->fd, 0, SEEK_END);
-                if (end >= 0) {
-                    state->start_offset = end;
-                    state->tail_anchor = end;
-                    state->newer_scan_offset = end;
-                    state->newer_floor_offset = end;
-                }
-                state->at_live_edge = true;
-                state->newer_available = false;
-            }
+        if (state->at_live_edge) {
+            return;
         }
+        if (state->visible_count == 0 || state->next_offset <= state->start_offset) return;
+        /*
+         * A manual PageDown after browsing older log content should advance to
+         * the next real page, not replay the initial EOF anchor that was saved
+         * when PageUp left the live tail.  Reusing that history entry is the
+         * classic "snap back to bottom" loop: one PageUp followed by PageDown
+         * jumps straight to the live edge instead of the adjacent newer page.
+         */
+        push_history(state, current_page_anchor(state));
+        state->scan_mode = VIEWER_SCAN_FORWARD;
+        state->start_offset = state->next_offset;
+        state->at_live_edge = false;
         state->selected = 0;
         cache_invalidate(state);
         return;
