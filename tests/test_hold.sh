@@ -988,6 +988,40 @@ PY
 }
 
 
+test_log_view_follow_oldest_page_does_not_wrap_to_tail() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in $(seq 1 50); do echo "nowrap-line-$i"; done; sleep 0.5' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.2
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[5~" * 20); out.flush(); time.sleep(0.1); out.write(b"\x1b[A" * 8); out.flush(); time.sleep(0.7); out.write(b"\x1b[A" * 3); out.flush(); time.sleep(0.1); out.write(b"q"); out.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 6 cols 120; $HOLD_BIN logs $id --interactive --follow --debug-stats" /dev/null >"$TEST_ROOT/view-follow-nowrap-tail.out" 2>"$TEST_ROOT/view-follow-nowrap-tail.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow-nowrap-tail.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-follow-nowrap-tail.out" <<'PY' || { cat "$TEST_ROOT/view-follow-nowrap-tail.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+) prev=(\d+) next=(\d+).*?follow=(tail|browsing|exited)', plain)
+if not stats:
+    raise SystemExit('missing debug stats')
+last = stats[-1]
+if last[1] != '0' or last[4] != 'browsing':
+    raise SystemExit(f'oldest page wrapped away from top instead of staying browsing offset 0: {last}')
+final = plain[-1200:]
+for wanted in ('nowrap-line-1', 'nowrap-line-2', 'nowrap-line-3', 'nowrap-line-4'):
+    if wanted not in final:
+        raise SystemExit(f'final page wrapped off the oldest log line {wanted}')
+if 'nowrap-line-47' in final or 'nowrap-line-50' in final:
+    raise SystemExit('final page jumped back to the tail')
+PY
+}
+
+
 test_log_view_follow_page_up_after_top_page_down_returns_to_top() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
@@ -3862,6 +3896,7 @@ run_test "log viewer space excludes similar lines and Ctrl-R resets filters" tes
 run_test "internal viewer selection movement uses cached filter rows" test_log_view_selection_uses_cached_rows
 run_test "internal viewer follow pages older and newer filtered windows" test_log_view_follow_pages_filtered_windows
 run_test "internal viewer follow page-up stays at the first log page" test_log_view_follow_page_up_stays_at_start
+run_test "internal viewer follow oldest page does not wrap back to tail" test_log_view_follow_oldest_page_does_not_wrap_to_tail
 run_test "internal viewer follow page-up returns to top after paging down" test_log_view_follow_page_up_after_top_page_down_returns_to_top
 run_test "internal viewer follow keeps top pinned while live log grows" test_log_view_follow_top_refills_as_live_log_grows
 run_test "internal viewer follow page-up stops at first filtered match" test_log_view_follow_page_up_stops_at_first_filtered_match

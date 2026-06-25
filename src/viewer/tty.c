@@ -685,25 +685,34 @@ static void page_down(struct viewer_state *state) {
     cache_invalidate(state);
 }
 
+static void pin_to_oldest_visible_page(struct viewer_state *state) {
+    state->at_live_edge = false;
+    state->scan_mode = VIEWER_SCAN_FORWARD;
+    state->history_count = 0;
+    state->selected = 0;
+    if (state->visible_count > 0) {
+        state->start_offset = state->visible[0].offset;
+    } else {
+        state->start_offset = 0;
+    }
+    cache_invalidate(state);
+}
+
 static void page_up(struct viewer_state *state) {
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         state->at_live_edge = false;
-        if (state->at_oldest_edge) {
-            if (state->visible_count > 0) {
-                state->start_offset = state->visible[0].offset;
-                state->scan_mode = VIEWER_SCAN_FORWARD;
-                state->history_count = 0;
-            }
-            state->selected = 0;
+        if (state->at_oldest_edge ||
+            state->visible_count == 0 ||
+            state->prev_offset <= 0 ||
+            state->prev_offset >= state->start_offset) {
+            pin_to_oldest_visible_page(state);
             return;
         }
         state->scan_mode = VIEWER_SCAN_BACKWARD;
-        if (state->visible_count > 0 && state->prev_offset > 0 && state->prev_offset < state->start_offset) {
-            push_history(state, state->start_offset);
-            state->start_offset = state->prev_offset;
-            state->selected = 0;
-            cache_invalidate(state);
-        }
+        push_history(state, state->start_offset);
+        state->start_offset = state->prev_offset;
+        state->selected = 0;
+        cache_invalidate(state);
         return;
     }
     if (state->history_count == 0) {
