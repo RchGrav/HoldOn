@@ -2521,6 +2521,8 @@ configure terminal
 profile cli-prof
 binary /bin/echo
 argv 'hello import'
+publish 127.0.0.1:8080:80
+volume cache:/cache
 commit
 end
 write
@@ -2531,6 +2533,8 @@ EOF
   grep -Fq '"cli-prof": {"bin": "/usr/bin/echo"' "$store/aliases.json" ||
     grep -Fq '"cli-prof": {"bin": "/bin/echo"' "$store/aliases.json" || return 1
   grep -Fq '"args": ["/bin/echo", "hello import"]' "$store/aliases.json" || return 1
+  grep -Fq '"ports": ["127.0.0.1:8080:80"]' "$store/aliases.json" || return 1
+  grep -Fq '"volumes": ["cache:/cache"]' "$store/aliases.json" || return 1
 
   "$HOLD_BIN" import "$transcript" as top-prof --dry-run >"$TEST_ROOT/top-import-dry.out" 2>"$TEST_ROOT/top-import-dry.err" || return 1
   grep -Fxq "profile top-prof import dry-run ok" "$TEST_ROOT/top-import-dry.out" || {
@@ -2551,6 +2555,8 @@ EOF
   grep -Fxq "profile cli-prof" "$TEST_ROOT/export.profile" || return 1
   grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "argv 'hello import'" "$TEST_ROOT/export.profile" || return 1
+  grep -Fxq "publish 127.0.0.1:8080:80" "$TEST_ROOT/export.profile" || return 1
+  grep -Fxq "volume cache:/cache" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "commit" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "end" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "write" "$TEST_ROOT/export.profile" || return 1
@@ -2558,10 +2564,16 @@ EOF
   "$HOLD_BIN" export top-prof as "$TEST_ROOT/top-export.profile" || return 1
   grep -Fxq "profile top-prof" "$TEST_ROOT/top-export.profile" || return 1
   grep -Fxq "argv 'hello import'" "$TEST_ROOT/top-export.profile" || return 1
+  grep -Fxq "publish 127.0.0.1:8080:80" "$TEST_ROOT/top-export.profile" || return 1
+  grep -Fxq "volume cache:/cache" "$TEST_ROOT/top-export.profile" || return 1
   "$HOLD_BIN" export top-prof >"$TEST_ROOT/top-export.stdout" || return 1
   grep -Fxq "profile top-prof" "$TEST_ROOT/top-export.stdout" || return 1
+  grep -Fxq "publish 127.0.0.1:8080:80" "$TEST_ROOT/top-export.stdout" || return 1
+  grep -Fxq "volume cache:/cache" "$TEST_ROOT/top-export.stdout" || return 1
   "$HOLD_BIN" export top-prof --format json >"$TEST_ROOT/top-export.json" || return 1
   grep -Fq '"name": "top-prof"' "$TEST_ROOT/top-export.json" || return 1
+  grep -Fq '"ports": ["127.0.0.1:8080:80"]' "$TEST_ROOT/top-export.json" || return 1
+  grep -Fq '"volumes": ["cache:/cache"]' "$TEST_ROOT/top-export.json" || return 1
 
   out=$("$HOLD_BIN" start cli-prof 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)

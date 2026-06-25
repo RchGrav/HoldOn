@@ -292,6 +292,18 @@ static int profile_export_transcript(FILE *out, const char *name, const struct h
         profile_shell_quote(out, eq + 1);
         fputc('\n', out);
     }
+    for (int i = 0; i < recipe->portc; i++) {
+        if (!recipe->ports || !recipe->ports[i] || !recipe->ports[i][0]) continue;
+        fputs("publish ", out);
+        profile_shell_quote(out, recipe->ports[i]);
+        fputc('\n', out);
+    }
+    for (int i = 0; i < recipe->volumec; i++) {
+        if (!recipe->volumes || !recipe->volumes[i] || !recipe->volumes[i][0]) continue;
+        fputs("volume ", out);
+        profile_shell_quote(out, recipe->volumes[i]);
+        fputc('\n', out);
+    }
     if (recipe->mode_interactive) fputs("interactive\n", out);
     if (recipe->mode_tty) fputs("tty\n", out);
     if (recipe->mode_detach) fputs("detach\n", out);
@@ -616,6 +628,10 @@ static int profile_write_full_recipe(const struct hold_store *store,
                                      char **argv,
                                      int envc,
                                      char **env,
+                                     int portc,
+                                     char **ports,
+                                     int volumec,
+                                     char **volumes,
                                      bool mode_interactive,
                                      bool mode_tty,
                                      bool mode_detach,
@@ -626,7 +642,10 @@ static int profile_write_full_recipe(const struct hold_store *store,
         fprintf(stderr, "hold: error: invalid profile name '%s'\n", name ? name : "");
         return 5;
     }
-    if (!binary || binary[0] != '/' || argc <= 0 || !argv || !argv[0]) {
+    if (!binary || binary[0] != '/' || argc <= 0 || !argv || !argv[0] ||
+        envc < 0 || (envc > 0 && !env) ||
+        portc < 0 || (portc > 0 && !ports) ||
+        volumec < 0 || (volumec > 0 && !volumes)) {
         fprintf(stderr, "hold: error: incomplete profile transcript\n");
         return 5;
     }
@@ -645,10 +664,10 @@ static int profile_write_full_recipe(const struct hold_store *store,
                                       argv,
                                       envc,
                                       env,
-                                      0,
-                                      NULL,
-                                      0,
-                                      NULL,
+                                      portc,
+                                      ports,
+                                      volumec,
+                                      volumes,
                                       mode_interactive,
                                       mode_tty,
                                       mode_detach,
@@ -684,6 +703,12 @@ static int profile_import_transcript(const struct hold_store *store,
     char **env = NULL;
     int envc = 0;
     int env_cap = 0;
+    char **ports = NULL;
+    int portc = 0;
+    int port_cap = 0;
+    char **volumes = NULL;
+    int volumec = 0;
+    int volume_cap = 0;
     char **cmd_argv = NULL;
     int cmd_argc = 0;
     bool mode_interactive = false;
@@ -761,6 +786,20 @@ static int profile_import_transcript(const struct hold_store *store,
             }
             char *copy = strdup(assignment);
             if (!copy || profile_push_token(&env, &envc, &env_cap, copy) != 0) {
+                free(copy);
+                profile_free_tokens(tokens, ntokens);
+                goto out;
+            }
+        } else if (!strcmp(tokens[0], "publish") && ntokens == 2) {
+            char *copy = strdup(tokens[1]);
+            if (!copy || profile_push_token(&ports, &portc, &port_cap, copy) != 0) {
+                free(copy);
+                profile_free_tokens(tokens, ntokens);
+                goto out;
+            }
+        } else if (!strcmp(tokens[0], "volume") && ntokens == 2) {
+            char *copy = strdup(tokens[1]);
+            if (!copy || profile_push_token(&volumes, &volumec, &volume_cap, copy) != 0) {
                 free(copy);
                 profile_free_tokens(tokens, ntokens);
                 goto out;
@@ -886,7 +925,7 @@ static int profile_import_transcript(const struct hold_store *store,
             printf("profile %s import dry-run ok\n", name);
             rc = 0;
         } else {
-            rc = profile_write_full_recipe(store, name, binary, argc, argv, envc, env, mode_interactive, mode_tty, mode_detach, allow_multi, restart_policy[0] ? restart_policy : NULL, restart_delay_seconds);
+            rc = profile_write_full_recipe(store, name, binary, argc, argv, envc, env, portc, ports, volumec, volumes, mode_interactive, mode_tty, mode_detach, allow_multi, restart_policy[0] ? restart_policy : NULL, restart_delay_seconds);
         }
         free(argv);
     }
@@ -894,6 +933,8 @@ static int profile_import_transcript(const struct hold_store *store,
 out:
     profile_free_tokens(args, arg_count);
     profile_free_tokens(env, envc);
+    profile_free_tokens(ports, portc);
+    profile_free_tokens(volumes, volumec);
     profile_free_tokens(cmd_argv, cmd_argc);
     free(text);
     return rc;
