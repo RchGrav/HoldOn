@@ -2532,8 +2532,9 @@ test_docker_shaped_cli_flags_and_rm() {
 test_hold_shell_runs_real_shell_without_creating_runid_on_exit() {
   local before after rc
   "$HOLD_BIN" help shell >"$TEST_ROOT/hold-shell-help.out" || return 1
-  grep -q 'system-shell capture mode' "$TEST_ROOT/hold-shell-help.out" || { cat "$TEST_ROOT/hold-shell-help.out" >&2; return 1; }
+  grep -q "PTY/session wrapper" "$TEST_ROOT/hold-shell-help.out" || { cat "$TEST_ROOT/hold-shell-help.out" >&2; return 1; }
   grep -q 'Ctrl-P Ctrl-Q' "$TEST_ROOT/hold-shell-help.out" || { cat "$TEST_ROOT/hold-shell-help.out" >&2; return 1; }
+  ! grep -q 'not implemented' "$TEST_ROOT/hold-shell-help.out" || { cat "$TEST_ROOT/hold-shell-help.out" >&2; return 1; }
   ! grep -q '/profiles' "$TEST_ROOT/hold-shell-help.out" || { cat "$TEST_ROOT/hold-shell-help.out" >&2; return 1; }
 
   before=$( { find "$HOME/.local/state/hold/runs" -name '*.json' 2>/dev/null || true; } | wc -l)
@@ -2545,6 +2546,33 @@ test_hold_shell_runs_real_shell_without_creating_runid_on_exit() {
   [ "$before" = "$after" ] || { echo "hold shell created a runid on normal exit: before=$before after=$after" >&2; return 1; }
   ! grep -q 'hold>' "$TEST_ROOT/hold-shell.out" || { cat "$TEST_ROOT/hold-shell.out" >&2; return 1; }
   ! grep -q 'NAME' "$TEST_ROOT/hold-shell.out" || { cat "$TEST_ROOT/hold-shell.out" >&2; return 1; }
+}
+
+
+test_hold_shell_detach_adopts_foreground_process_group() {
+  [ "$(uname -s)" = "Linux" ] || skip "foreground PGID adoption currently implemented on Linux"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local id rc record
+  set +e
+  python3 - <<'PY' | SHELL=/bin/sh "$HOLD_BIN" shell >"$TEST_ROOT/hold-shell-adopt.out" 2>"$TEST_ROOT/hold-shell-adopt.err"
+import sys, time
+out = sys.stdout.buffer
+out.write(b"sleep 30\n")
+out.flush()
+time.sleep(0.4)
+out.write(b"\x10\x11")
+out.flush()
+PY
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { echo "hold shell detach: rc=$rc (want 0)" >&2; cat "$TEST_ROOT/hold-shell-adopt.out" "$TEST_ROOT/hold-shell-adopt.err" >&2; return 1; }
+  id=$(extract_id <"$TEST_ROOT/hold-shell-adopt.out")
+  [ -n "$id" ] || { cat "$TEST_ROOT/hold-shell-adopt.out" "$TEST_ROOT/hold-shell-adopt.err" >&2; return 1; }
+  record="$HOME/.local/state/hold/$id.json"
+  [ -f "$record" ] || { find "$HOME/.local/state/hold" -maxdepth 1 -type f -print >&2 || true; return 1; }
+  grep -Fq '"argv": ["/usr/bin/sleep", "30"]' "$record" || { cat "$record" >&2; return 1; }
+  grep -Fq 'hold  adopted' "$TEST_ROOT/hold-shell-adopt.err" || { cat "$TEST_ROOT/hold-shell-adopt.err" >&2; return 1; }
+  "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
 
 test_build_artifact_coexistence() {
@@ -3251,6 +3279,7 @@ run_test "argument edge cases" test_argument_edges
 run_test "hold unified CLI surface" test_hold_unified_cli_surface
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit
+run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hold_shell_detach_adopts_foreground_process_group
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "internal viewer harness seeds literal and similarity filters" test_log_view_internal_seed_filters

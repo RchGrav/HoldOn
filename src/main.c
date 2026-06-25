@@ -628,7 +628,8 @@ int main(int argc, char **argv) {
                                                !strcmp(command, "tail") || !strcmp(command, "dump") ||
                                                !strcmp(command, "__view") || !strcmp(command, "prune") ||
                                                !strcmp(command, "console") || !strcmp(command, "profile") ||
-                                               !strcmp(command, "show") || !strcmp(command, "rm")))) {
+                                               !strcmp(command, "show") || !strcmp(command, "rm") ||
+                                               !strcmp(command, "shell")))) {
         if (!inv.euid_root) {
             if (hold_ensure_user_store_for_current_user(&user_store) != 0) {
                 hold_die_errno("hold: failed to init user storage");
@@ -680,7 +681,7 @@ int main(int argc, char **argv) {
     }
 
     if (owned && !strcmp(command, "shell")) {
-        int rc = hold_cmd_shell_action(&inv, &user_store);
+        int rc = hold_cmd_shell_action(&inv, inv.euid_root ? &system_store : &user_store);
         free(cmd_argv);
         return rc;
     }

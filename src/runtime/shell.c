@@ -2,6 +2,8 @@
 #include "hold/types.h"
 #include "hold/runtime.h"
 #include "hold/core.h"
+#include "hold/store.h"
+#include "hold/platform.h"
 
 struct shell_raw_terminal {
     struct termios original;
@@ -85,6 +87,289 @@ static int spawn_shell_child(int master, const char *slave_path, const char *she
     return child;
 }
 
+#if defined(__linux__)
+static int shell_read_proc_ids(pid_t pid, pid_t *pgid_out, pid_t *sid_out, char *state_out) {
+    char path[128], buf[4096];
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid) != 0) return -1;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    ssize_t nr;
+    do {
+        nr = read(fd, buf, sizeof(buf) - 1);
+    } while (nr < 0 && errno == EINTR);
+    int saved = errno;
+    close(fd);
+    if (nr <= 0) {
+        errno = nr < 0 ? saved : EIO;
+        return -1;
+    }
+    buf[nr] = '\0';
+    char *rp = strrchr(buf, ')');
+    if (!rp) {
+        errno = EINVAL;
+        return -1;
+    }
+    char *fields = rp + 2;
+    char *save = NULL;
+    int idx = 0;
+    bool got_pgid = false, got_sid = false, got_state = false;
+    pid_t pgid = 0, sid = 0;
+    char state = 0;
+    for (char *tok = strtok_r(fields, " ", &save); tok; tok = strtok_r(NULL, " ", &save), idx++) {
+        if (idx == 0) {
+            state = tok[0];
+            got_state = true;
+        } else if (idx == 2) {
+            pgid = (pid_t)strtol(tok, NULL, 10);
+            got_pgid = true;
+        } else if (idx == 3) {
+            sid = (pid_t)strtol(tok, NULL, 10);
+            got_sid = true;
+            break;
+        }
+    }
+    if ((pgid_out && !got_pgid) || (sid_out && !got_sid) || (state_out && !got_state)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (pgid_out) *pgid_out = pgid;
+    if (sid_out) *sid_out = sid;
+    if (state_out) *state_out = state;
+    return 0;
+}
+
+static int find_process_in_pgid(pid_t pgid, pid_t *pid_out, pid_t *sid_out) {
+    DIR *d = opendir("/proc");
+    if (!d) return -1;
+    pid_t best = 0, best_sid = 0;
+    const struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!isdigit((unsigned char)e->d_name[0])) continue;
+        char *end = NULL;
+        long pid_long = strtol(e->d_name, &end, 10);
+        if (end == e->d_name || *end != '\0' || pid_long <= 0) continue;
+        pid_t proc_pgid = 0, proc_sid = 0;
+        char state = 0;
+        if (shell_read_proc_ids((pid_t)pid_long, &proc_pgid, &proc_sid, &state) != 0) continue;
+        if (proc_pgid != pgid || state == 'Z') continue;
+        if ((pid_t)pid_long == pgid) {
+            best = (pid_t)pid_long;
+            best_sid = proc_sid;
+            break;
+        }
+        if (best == 0 || pid_long < best) {
+            best = (pid_t)pid_long;
+            best_sid = proc_sid;
+        }
+    }
+    closedir(d);
+    if (best <= 0) {
+        errno = ESRCH;
+        return -1;
+    }
+    *pid_out = best;
+    *sid_out = best_sid;
+    return 0;
+}
+
+static int read_proc_cmdline(pid_t pid, char ***argv_out, int *argc_out) {
+    char path[128], buf[65536];
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/cmdline", (long)pid) != 0) return -1;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    ssize_t nr;
+    do {
+        nr = read(fd, buf, sizeof(buf) - 1);
+    } while (nr < 0 && errno == EINTR);
+    int saved = errno;
+    close(fd);
+    if (nr <= 0) {
+        errno = nr < 0 ? saved : EIO;
+        return -1;
+    }
+    buf[nr] = '\0';
+    int argc = 0;
+    for (ssize_t i = 0; i < nr; i++) {
+        if (buf[i] == '\0') argc++;
+    }
+    if (buf[nr - 1] != '\0') argc++;
+    if (argc <= 0) {
+        errno = EIO;
+        return -1;
+    }
+    char **argv = calloc((size_t)argc + 1, sizeof(*argv));
+    if (!argv) return -1;
+    ssize_t pos = 0;
+    for (int i = 0; i < argc; i++) {
+        ssize_t start = pos;
+        while (pos < nr && buf[pos] != '\0') pos++;
+        argv[i] = strndup(buf + start, (size_t)(pos - start));
+        if (!argv[i]) {
+            hold_free_argv_alloc(argv, i);
+            return -1;
+        }
+        pos++;
+    }
+    *argv_out = argv;
+    *argc_out = argc;
+    return 0;
+}
+
+static int read_proc_exe_path(pid_t pid, char *out, size_t n) {
+    char path[128];
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/exe", (long)pid) != 0) return -1;
+    ssize_t nr = readlink(path, out, n - 1);
+    if (nr < 0 || (size_t)nr >= n) return -1;
+    out[nr] = '\0';
+    return 0;
+}
+#endif
+
+static void shell_background_logger(int master, const char *log_path, pid_t shell_pid, pid_t adopted_pgid, pid_t adopted_sid) {
+    signal(SIGHUP, SIG_IGN);
+    int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    if (fd < 0) _exit(1);
+    while (1) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(master, &rfds);
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 200000;
+        int ready;
+        do {
+            ready = select(master + 1, &rfds, NULL, NULL, &tv);
+        } while (ready < 0 && errno == EINTR);
+        if (ready > 0 && FD_ISSET(master, &rfds)) {
+            char buf[4096];
+            ssize_t n = read(master, buf, sizeof(buf));
+            if (n > 0) {
+                hold_write_all(fd, buf, (size_t)n);
+            } else if (n == 0 || (n < 0 && errno != EINTR)) {
+                break;
+            }
+        }
+        if (adopted_pgid > 1 && adopted_sid > 0 &&
+            hold_group_session_liveness(adopted_pgid, adopted_sid) != GROUP_LIVE) {
+            break;
+        }
+    }
+    kill(shell_pid, SIGHUP);
+    close(fd);
+    close(master);
+    _exit(0);
+}
+
+static int adopt_foreground_group(const struct hold_invocation *inv,
+                                  const struct hold_store *store,
+                                  int master,
+                                  pid_t shell_pid,
+                                  pid_t fg_pgid) {
+#if !defined(__linux__)
+    (void)inv;
+    (void)store;
+    (void)master;
+    (void)shell_pid;
+    (void)fg_pgid;
+    fprintf(stderr, "hold: shell foreground adoption is not implemented on this platform yet\n");
+    return 5;
+#else
+    if (fg_pgid <= 1 || fg_pgid == shell_pid) {
+        kill(shell_pid, SIGHUP);
+        return 0;
+    }
+    pid_t adopted_pid = 0, adopted_sid = 0;
+    if (find_process_in_pgid(fg_pgid, &adopted_pid, &adopted_sid) != 0) {
+        fprintf(stderr, "hold: failed to identify foreground process group %ld\n", (long)fg_pgid);
+        return 5;
+    }
+    char **argv = NULL;
+    int argc = 0;
+    if (read_proc_cmdline(adopted_pid, &argv, &argc) != 0) {
+        fprintf(stderr, "hold: failed to read foreground process arguments\n");
+        return 5;
+    }
+    char exe_path[HOLD_PATH_MAX] = {0};
+    if (read_proc_exe_path(adopted_pid, exe_path, sizeof(exe_path)) == 0 && exe_path[0]) {
+        free(argv[0]);
+        argv[0] = strdup(exe_path);
+        if (!argv[0]) {
+            hold_free_argv_alloc(argv, argc);
+            return 3;
+        }
+    }
+
+    struct hold_store system_hint;
+    const struct hold_store *avoid_public_store = NULL;
+    if (store->kind == STORE_USER_LOCAL && hold_init_system_store(&system_hint) == 0) {
+        avoid_public_store = &system_hint;
+    }
+    char id[16], log_path[HOLD_PATH_MAX];
+    if (hold_gen_id_for_store(store, avoid_public_store, NULL, id, sizeof(id)) != 0 ||
+        hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) != 0) {
+        hold_free_argv_alloc(argv, argc);
+        return 3;
+    }
+
+    pid_t logger = fork();
+    if (logger < 0) {
+        hold_free_argv_alloc(argv, argc);
+        return 3;
+    }
+    if (logger == 0) {
+        shell_background_logger(master, log_path, shell_pid, fg_pgid, adopted_sid);
+    }
+
+    struct hold_run_record r;
+    memset(&r, 0, sizeof(r));
+    r.version = 1;
+    snprintf(r.id, sizeof(r.id), "%s", id);
+    snprintf(r.run_id, sizeof(r.run_id), "%s", id);
+    r.pid = adopted_pid;
+    r.pgid = fg_pgid;
+    r.sid = adopted_sid;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    r.start_unix_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    hold_format_rfc3339_utc_from_ns(r.start_unix_ns, r.started_at, sizeof(r.started_at));
+    r.has_started_at = true;
+    snprintf(r.state, sizeof(r.state), "running");
+    r.has_state = true;
+    r.uid = geteuid();
+    r.gid = getegid();
+    r.has_log = true;
+    snprintf(r.log_path, sizeof(r.log_path), "%s", log_path);
+    r.has_boot = hold_current_boot_id(r.boot_id, sizeof(r.boot_id));
+    hold_read_proc_stat_tokens(adopted_pid, NULL, &r.proc_starttime_ticks);
+    hold_read_proc_exe(adopted_pid, &r.exe_dev, &r.exe_ino);
+    if (hold_format_argv_human(r.cmdline, sizeof(r.cmdline), argc, argv) != 0) {
+        snprintf(r.cmdline, sizeof(r.cmdline), "?");
+    }
+    char record_path[HOLD_PATH_MAX];
+    if (hold_write_record_atomic(store->record_dir, &r, argc, argv, record_path, sizeof(record_path)) != 0) {
+        int saved = errno;
+        kill(logger, SIGTERM);
+        hold_free_argv_alloc(argv, argc);
+        errno = saved;
+        hold_die_errno("hold: failed to write adopted run record");
+    }
+    printf("%s\n", r.id);
+    hold_sig_note(inv,
+                  "hold  adopted  %s   %s\n"
+                  "         log      %s\n"
+                  "         tail     hold tail %s\n"
+                  "         stop     hold stop %s\n",
+                  r.id,
+                  r.cmdline[0] ? r.cmdline : "?",
+                  r.log_path,
+                  r.id,
+                  r.id);
+    fflush(stdout);
+    hold_free_argv_alloc(argv, argc);
+    return 0;
+#endif
+}
+
 static int relay_shell_pty(int master, pid_t child, bool *detached) {
     bool stdin_open = true;
     bool pending_ctrl_p = false;
@@ -164,8 +449,6 @@ static int relay_shell_pty(int master, pid_t child, bool *detached) {
 }
 
 int hold_cmd_shell_action(const struct hold_invocation *inv, const struct hold_store *store) {
-    (void)inv;
-    (void)store;
     char slave_path[HOLD_PATH_MAX];
     const char *shell = resolve_user_shell();
     int master = open_pty_master(slave_path, sizeof(slave_path));
@@ -193,10 +476,21 @@ int hold_cmd_shell_action(const struct hold_invocation *inv, const struct hold_s
     int rc = relay_shell_pty(master, child, &detached);
     leave_raw(&raw);
     if (detached) {
-        fprintf(stderr, "hold: shell detach capture is not complete yet; leaving shell process group is unsafe in this build\n");
-        kill(child, SIGHUP);
+        pid_t fg_pgid = 0;
+        if (ioctl(master, TIOCGPGRP, &fg_pgid) != 0) {
+            int saved = errno;
+            kill(child, SIGHUP);
+            close(master);
+            errno = saved;
+            hold_die_errno("hold: failed to query shell foreground process group");
+        }
+        rc = adopt_foreground_group(inv, store, master, child, fg_pgid);
+        if (rc == 0) {
+            close(master);
+            return 0;
+        }
         close(master);
-        return 5;
+        return rc;
     }
     close(master);
     return rc;

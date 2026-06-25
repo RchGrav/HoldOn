@@ -221,7 +221,7 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "doctor")) {
         printf("usage: hold doctor\n\nCheck local On Hold/Hold paths and build identity.\n");
     } else if (!strcmp(action, "shell")) {
-        printf("usage: hold shell\n\nReserved for system-shell capture mode. The intended behavior is to start an ordinary user shell under Hold's PTY/session wrapper; `exit` returns without creating a runid, while the classic detach sequence Ctrl-P Ctrl-Q captures the foreground process group as a Hold run and returns to the caller. This mode is not implemented yet in this branch.\n");
+        printf("usage: hold shell\n\nStart an ordinary user shell under Hold's PTY/session wrapper. Typing `exit` returns without creating a runid. Pressing the classic detach sequence Ctrl-P Ctrl-Q captures the current foreground process group as a Hold run and returns to the caller.\n");
     } else if (!strcmp(action, "grant") || !strcmp(action, "revoke")) {
         printf("usage: hold %s <profile> <user> [start,stop,kill,tail,dump,prune,console]\n\nManage On Hold-owned sudoers access for a root-managed profile.\n", action);
     } else {
