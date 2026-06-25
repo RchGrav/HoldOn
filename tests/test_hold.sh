@@ -955,12 +955,12 @@ test_log_view_follow_page_up_stays_at_start() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9; do echo "topjump-line-$i"; done; sleep 0.1' 2>&1) || return 1
+  out=$("$HOLD_BIN" run -- /bin/sh -c 'for i in $(seq 1 40); do echo "topjump-line-$i"; done; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
   set +e
-  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[5~"); out.flush(); time.sleep(0.1); out.write(b"\x1b[5~"); out.flush(); time.sleep(0.1); out.write(b"\x1b[5~q"); out.flush(); time.sleep(0.1)' |
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[5~" * 15); out.flush(); time.sleep(0.1); out.write(b"q"); out.flush(); time.sleep(0.1)' |
     script -qfec "stty rows 6 cols 120; $HOLD_BIN logs $id --interactive --follow --debug-stats" /dev/null >"$TEST_ROOT/view-follow-top.out" 2>"$TEST_ROOT/view-follow-top.err"
   rc=$?
   set -e
@@ -969,14 +969,17 @@ test_log_view_follow_page_up_stays_at_start() {
 import re, sys
 raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
 plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw)
-stats = re.findall(r'scan_gen=\d+ offset=(\d+).*?follow=(tail|browsing)', plain)
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+).*?follow=(tail|browsing)', plain)
 if not stats:
     raise SystemExit('missing debug stats')
-offset, follow = stats[-1]
-if follow != 'browsing' or offset != '15':
-    raise SystemExit(f'expected final top page offset=15 follow=browsing, got offset={offset} follow={follow}')
+max_gen = max(int(gen) for gen, _, _ in stats)
+offset, follow = stats[-1][1:]
+if follow != 'browsing':
+    raise SystemExit(f'expected final top page to stay in browsing mode, got follow={follow}')
 if 'topjump-line-1' not in plain:
     raise SystemExit('top line never rendered')
+if max_gen > 11:
+    raise SystemExit(f'page-up at log start kept rescanning/wrapping; max scan_gen={max_gen} final offset={offset}')
 PY
 }
 

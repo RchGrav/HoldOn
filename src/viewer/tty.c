@@ -663,15 +663,17 @@ static void page_up(struct viewer_state *state) {
         if (state->visible_count > 0 && state->prev_offset > 0 && state->prev_offset < state->start_offset) {
             push_history(state, state->start_offset);
             state->start_offset = state->prev_offset;
+            state->selected = 0;
+            cache_invalidate(state);
         }
-        state->selected = 0;
-        cache_invalidate(state);
         return;
     }
     if (state->history_count == 0) {
-        state->start_offset = 0;
-        state->selected = 0;
-        cache_invalidate(state);
+        if (state->start_offset != 0) {
+            state->start_offset = 0;
+            state->selected = 0;
+            cache_invalidate(state);
+        }
         return;
     }
     state->start_offset = state->history[--state->history_count];
