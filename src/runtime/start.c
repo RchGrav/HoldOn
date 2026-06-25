@@ -42,6 +42,13 @@ static int start_target_set_hash(struct start_profile_target *target,
                                  const char *alias,
                                  bool needs_elevation);
 static int count_running_alias(const struct hold_store *store, const char *alias, size_t *count_out);
+static int reconnect_running_console_alias(const struct hold_invocation *inv,
+                                           const struct hold_store *user_store,
+                                           const struct hold_store *system_store,
+                                           const char *program,
+                                           const struct hold_store *store,
+                                           const char *alias,
+                                           bool *handled);
 static int resolve_start_profile_target(const struct hold_invocation *inv,
                                         const struct hold_store *current_user_store,
                                         const struct hold_store *system_store,
@@ -883,6 +890,33 @@ static int count_running_alias(const struct hold_store *store, const char *alias
     return 0;
 }
 
+static int reconnect_running_console_alias(const struct hold_invocation *inv,
+                                           const struct hold_store *user_store,
+                                           const struct hold_store *system_store,
+                                           const char *program,
+                                           const struct hold_store *store,
+                                           const char *alias,
+                                           bool *handled) {
+    *handled = false;
+    struct alias_match_list matches;
+    if (hold_collect_private_alias_matches(store, alias, "console", &matches) != 0) {
+        return -1;
+    }
+    if (matches.count == 0) {
+        hold_free_alias_match_list(&matches);
+        return 0;
+    }
+    *handled = true;
+    if (matches.count == 1) {
+        char id[sizeof(matches.items[0].id)];
+        snprintf(id, sizeof(id), "%s", matches.items[0].id);
+        hold_free_alias_match_list(&matches);
+        return hold_cmd_console_action(inv, user_store, system_store, program, id);
+    }
+    hold_free_alias_match_list(&matches);
+    return hold_cmd_console_action(inv, user_store, system_store, program, alias);
+}
+
 static int resolve_start_profile_target(const struct hold_invocation *inv,
                                         const struct hold_store *current_user_store,
                                         const struct hold_store *system_store,
@@ -1155,6 +1189,20 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                     }
                 }
             } else {
+                if (console_mode && target.has_alias && !multi) {
+                    bool reconnected = false;
+                    int reconnect_rc = reconnect_running_console_alias(inv,
+                                                                        user_store,
+                                                                        system_store,
+                                                                        program,
+                                                                        &target.store,
+                                                                        target.alias,
+                                                                        &reconnected);
+                    if (reconnect_rc != 0 || reconnected) {
+                        free_start_profile_target(&target);
+                        return reconnect_rc < 0 ? 3 : reconnect_rc;
+                    }
+                }
                 bool profile_allows_multi = target.has_recipe && target.recipe.allow_multi;
                 if (target.has_alias && !multi && !profile_allows_multi) {
                     size_t running = 0;

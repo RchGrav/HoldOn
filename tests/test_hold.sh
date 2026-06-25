@@ -3516,6 +3516,60 @@ PY
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
 
+
+test_docker_profile_it_reconnects_singular_tty_run() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc count
+  cat >"$TEST_ROOT/docker-tty-reconnect-child.sh" <<'EOF'
+#!/bin/sh
+printf 'ready-reconnect\n'
+while IFS= read -r line; do
+  printf 'reconnect:%s\n' "$line"
+done
+EOF
+  chmod +x "$TEST_ROOT/docker-tty-reconnect-child.sh"
+  out=$("$HOLD_BIN" run -d -it --name ttyreconnect "$TEST_ROOT/docker-tty-reconnect-child.sh" 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  sleep 0.3
+  set +e
+  python3 - <<'PY' | script -qfec "$HOLD_BIN run -it ttyreconnect" /dev/null >"$TEST_ROOT/docker-tty-reconnect.out" 2>"$TEST_ROOT/docker-tty-reconnect.err"
+import sys, time
+out = sys.stdout.buffer
+time.sleep(0.5)
+out.write(b"hello-reconnect\n")
+out.flush()
+time.sleep(0.5)
+out.write(b"\x10\x11")
+out.flush()
+time.sleep(0.1)
+PY
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { echo "run -it ttyreconnect rc=$rc" >&2; cat "$TEST_ROOT/docker-tty-reconnect.out" "$TEST_ROOT/docker-tty-reconnect.err" >&2; "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; return 1; }
+  grep -q 'reconnect:hello-reconnect' "$TEST_ROOT/docker-tty-reconnect.out" || { cat "$TEST_ROOT/docker-tty-reconnect.out" >&2; "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; return 1; }
+  count=$(python3 - "$HOME/.local/state/hold" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+n = 0
+for path in root.glob('*.json'):
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        continue
+    if data.get('alias') == 'ttyreconnect':
+        n += 1
+print(n)
+PY
+)
+  [ "$count" = "1" ] || { echo "expected one ttyreconnect runid, got $count" >&2; find "$HOME/.local/state/hold" -maxdepth 1 -name '*.json' -print >&2; "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; return 1; }
+  "$HOLD_BIN" stop "$id" >/dev/null || return 1
+}
+
 test_runid_and_named_profile_normalize_relative_file_args() {
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id script profile_json
@@ -4567,6 +4621,7 @@ run_test "Docker publish and volume flags record metadata" test_docker_publish_a
 run_test "Docker named profiles persist -d -i -t mode flags" test_docker_named_profile_persists_mode_flags
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
 run_test "Docker -it foreground attaches and detaches" test_docker_tty_foreground_attaches_and_detaches
+run_test "Docker run -it profile reconnects a singular TTY run" test_docker_profile_it_reconnects_singular_tty_run
 run_test "run IDs and named profiles normalize relative file args" test_runid_and_named_profile_normalize_relative_file_args
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit
 run_test "hold shell adopt normalizes relative foreground argv paths" test_hold_shell_adopt_normalizes_relative_foreground_argv_paths
