@@ -186,13 +186,24 @@ static int run_recipe_matches_profile(const struct hold_store *store,
         hold_free_profile(&recipe);
         return -1;
     }
+    char **normalized_argv = NULL;
+    if (hold_copy_argv(&normalized_argv, argc, argv) != 0) {
+        hold_free_profile(&recipe);
+        return -1;
+    }
+    if (hold_normalize_existing_argv_paths_from_cwd(normalized_argv, argc, 1, NULL) != 0) {
+        hold_free_argv_alloc(normalized_argv, argc);
+        hold_free_profile(&recipe);
+        return -1;
+    }
     bool same = recipe.argc == argc && recipe.envc == envc && !strcmp(recipe.binary_path, binary_path);
     for (int i = 0; same && i < argc; i++) {
-        same = !strcmp(recipe.argv[i], argv[i]);
+        same = !strcmp(recipe.argv[i], normalized_argv[i]);
     }
     for (int i = 0; same && i < envc; i++) {
         same = recipe.env && env && !strcmp(recipe.env[i], env[i]);
     }
+    hold_free_argv_alloc(normalized_argv, argc);
     *matched = same;
     hold_free_profile(&recipe);
     return 1;
@@ -240,9 +251,17 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
         }
         return 1;
     }
-    if (hold_alias_upsert_recipe_env(store, name, binary_path, argc, argv, envc, env) != 0) {
+    char **profile_argv = NULL;
+    if (hold_copy_argv(&profile_argv, argc, argv) != 0 ||
+        hold_normalize_existing_argv_paths_from_cwd(profile_argv, argc, 1, NULL) != 0) {
+        hold_free_argv_alloc(profile_argv, argc);
+        return 3;
+    }
+    if (hold_alias_upsert_recipe_env(store, name, binary_path, argc, profile_argv, envc, env) != 0) {
+        hold_free_argv_alloc(profile_argv, argc);
         hold_die_errno("hold: failed to write profile");
     }
+    hold_free_argv_alloc(profile_argv, argc);
     hold_sig_note(inv, "hold: created profile '%s'\n", name);
     return 0;
 }

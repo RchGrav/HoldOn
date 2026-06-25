@@ -217,6 +217,9 @@ int hold_perform_start_with_env_options(const struct hold_invocation *inv,
     if (!launch_argv[0]) {
         hold_die_errno("hold: failed to prepare argv");
     }
+    if (hold_normalize_existing_argv_paths_from_cwd(launch_argv, argc, 1, NULL) != 0) {
+        hold_die_errno("hold: failed to normalize argv paths");
+    }
 
     char id[16], log_path[HOLD_PATH_MAX], reserve_path[HOLD_PATH_MAX], console_sock[HOLD_PATH_MAX], boot_id[128] = {0};
     console_sock[0] = '\0';

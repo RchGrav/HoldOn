@@ -275,7 +275,7 @@ profile hashes
 
 Private root records are authoritative. Public records are derived discovery data.
 
-Private run records store the resolved executable path in `argv[0]`. If a command is launched through a relative path, that relative token is resolved before the record is written, so profiles created from the run inherit an absolute launch recipe instead of depending on the profile creator's current directory.
+Private run records store the resolved executable path in `argv[0]`. Before a run record is written, On Hold also resolves any existing non-option argv path tokens after `argv[0]` against the launch cwd (or, for `hold shell` adoption, against the adopted foreground process cwd). Profiles created from a run therefore inherit an absolute, replayable launch recipe instead of depending on the profile creator's old current directory.
 
 Because On Hold is daemonless and cannot continuously refresh root-public state after natural process exit, normal `hold list` displays public root rows as `unknown` rather than overselling stale `running` hints. Root/private list and root action commands evaluate authoritative state from private records.
 

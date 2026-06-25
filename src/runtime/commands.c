@@ -422,6 +422,9 @@ static int profile_import_json(const struct hold_store *store, const char *j) {
         fprintf(stderr, "hold: error: invalid profile binary path\n");
         goto out;
     }
+    if (hold_normalize_existing_argv_paths_from_cwd(argv, argc, 1, NULL) != 0) {
+        hold_die_errno("hold: failed to normalize profile argv paths");
+    }
     if (hold_alias_upsert_recipe(store, name, binary_path, argc, argv) != 0) {
         hold_die_errno("hold: failed to import profile");
     }
@@ -447,6 +450,9 @@ static int profile_write_command_recipe(const struct hold_store *store,
     if (hold_resolve_binary_path(argv[0], binary_path, sizeof(binary_path)) != 0) {
         fprintf(stderr, "hold: error: failed to resolve profile command '%s'\n", argv[0]);
         return 5;
+    }
+    if (hold_normalize_existing_argv_paths_from_cwd(argv, argc, 1, NULL) != 0) {
+        hold_die_errno("hold: failed to normalize profile argv paths");
     }
     if (hold_alias_upsert_recipe(store, name, binary_path, argc, argv) != 0) {
         hold_die_errno("hold: failed to update profile");

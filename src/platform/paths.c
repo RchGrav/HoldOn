@@ -58,6 +58,51 @@ int hold_resolve_binary_path(const char *argv0, char *out, size_t n) {
     return -1;
 }
 
+int hold_resolve_existing_path_from_cwd(const char *token, const char *cwd, char *out, size_t n) {
+    if (!token || !*token || !out || n == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (token[0] == '/') {
+        return realpath_copy(token, out, n);
+    }
+    if (cwd && *cwd) {
+        char candidate[HOLD_PATH_MAX];
+        if (hold_checked_snprintf(candidate, sizeof(candidate), "%s/%s", cwd, token) != 0) {
+            return -1;
+        }
+        return realpath_copy(candidate, out, n);
+    }
+    return realpath_copy(token, out, n);
+}
+
+int hold_normalize_existing_argv_paths_from_cwd(char **argv, int argc, int first_arg, const char *cwd) {
+    if (argc < 0 || (argc > 0 && !argv) || first_arg < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (int i = first_arg; i < argc; i++) {
+        const char *arg = argv[i];
+        if (!arg || !*arg || arg[0] == '-') {
+            continue;
+        }
+        char resolved[HOLD_PATH_MAX];
+        if (hold_resolve_existing_path_from_cwd(arg, cwd, resolved, sizeof(resolved)) != 0) {
+            continue;
+        }
+        if (!strcmp(arg, resolved)) {
+            continue;
+        }
+        char *copy = strdup(resolved);
+        if (!copy) {
+            return -1;
+        }
+        free(argv[i]);
+        argv[i] = copy;
+    }
+    return 0;
+}
+
 bool hold_path_is_within_dir(const char *path, const char *dir) {
     if (!path || !*path || !dir || !*dir) {
         return false;

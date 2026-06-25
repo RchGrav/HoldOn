@@ -15,6 +15,8 @@ int hold_read_proc_exe(pid_t pid, uint64_t *dev, uint64_t *ino);
 bool hold_leader_present(pid_t pid);
 int hold_group_exists(pid_t pgid);
 int hold_resolve_binary_path(const char *argv0, char *out, size_t n);
+int hold_resolve_existing_path_from_cwd(const char *token, const char *cwd, char *out, size_t n);
+int hold_normalize_existing_argv_paths_from_cwd(char **argv, int argc, int first_arg, const char *cwd);
 bool hold_path_is_within_dir(const char *path, const char *dir);
 int hold_resolve_self_executable_path(const char *argv0, char *out, size_t n);
 

@@ -2920,6 +2920,43 @@ test_docker_interactive_stdin_pipes_to_child() {
   fi
 }
 
+test_runid_and_named_profile_normalize_relative_file_args() {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id script profile_json
+  script="$TEST_ROOT/rel-normalize.sh"
+  cat >"$script" <<'SH'
+#!/bin/sh
+echo normalize-relative-run
+SH
+  chmod +x "$script"
+
+  out=$(cd "$TEST_ROOT" && "$HOLD_BIN" run -d --name relnorm -- /bin/sh ./rel-normalize.sh 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  sleep 0.2
+  "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/rel-normalize-inspect.json" || return 1
+  "$HOLD_BIN" profile export relnorm --json >"$TEST_ROOT/rel-normalize-profile.json" || return 1
+  if ! python3 - "$TEST_ROOT/rel-normalize-inspect.json" "$TEST_ROOT/rel-normalize-profile.json" "$script" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1], encoding='utf-8'))[0]
+profile = json.load(open(sys.argv[2], encoding='utf-8'))
+want = sys.argv[3]
+argv = record.get('argv') or []
+args = profile.get('args') or []
+if len(argv) < 2 or argv[1] != want:
+    raise SystemExit(f'run record did not normalize relative script arg: {argv!r}')
+if len(args) < 2 or args[1] != want:
+    raise SystemExit(f'named profile did not normalize relative script arg: {args!r}')
+PY
+  then
+    cat "$TEST_ROOT/rel-normalize-inspect.json" "$TEST_ROOT/rel-normalize-profile.json" >&2
+    return 1
+  fi
+}
+
 test_hold_shell_runs_real_shell_without_creating_runid_on_exit() {
   local before after rc
   "$HOLD_BIN" help shell >"$TEST_ROOT/hold-shell-help.out" || return 1
@@ -2939,6 +2976,49 @@ test_hold_shell_runs_real_shell_without_creating_runid_on_exit() {
   ! grep -q 'NAME' "$TEST_ROOT/hold-shell.out" || { cat "$TEST_ROOT/hold-shell.out" >&2; return 1; }
 }
 
+
+test_hold_shell_adopt_normalizes_relative_foreground_argv_paths() {
+  [ "$(uname -s)" = "Linux" ] || skip "foreground PGID adoption currently implemented on Linux"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local id rc record script
+  script="$TEST_ROOT/shell-rel.sh"
+  cat >"$script" <<'SH'
+#!/bin/sh
+echo shell-relative-started
+sleep 30
+SH
+  chmod +x "$script"
+  set +e
+  python3 - "$TEST_ROOT" <<'PY' | SHELL=/bin/sh "$HOLD_BIN" shell >"$TEST_ROOT/hold-shell-rel-adopt.out" 2>"$TEST_ROOT/hold-shell-rel-adopt.err"
+import sys, time
+root = sys.argv[1]
+out = sys.stdout.buffer
+out.write(f"cd {root}\n/bin/sh ./shell-rel.sh\n".encode())
+out.flush()
+time.sleep(0.5)
+out.write(b"\x10\x11")
+out.flush()
+PY
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { echo "hold shell relative detach: rc=$rc (want 0)" >&2; cat "$TEST_ROOT/hold-shell-rel-adopt.out" "$TEST_ROOT/hold-shell-rel-adopt.err" >&2; return 1; }
+  id=$(extract_id <"$TEST_ROOT/hold-shell-rel-adopt.out")
+  [ -n "$id" ] || { cat "$TEST_ROOT/hold-shell-rel-adopt.out" "$TEST_ROOT/hold-shell-rel-adopt.err" >&2; return 1; }
+  record="$HOME/.local/state/hold/$id.json"
+  [ -f "$record" ] || { find "$HOME/.local/state/hold" -maxdepth 1 -type f -print >&2 || true; return 1; }
+  if ! python3 - "$record" "$script" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1], encoding='utf-8'))
+argv = record.get('argv') or []
+if len(argv) < 2 or argv[1] != sys.argv[2]:
+    raise SystemExit(f'adopted shell record did not normalize relative foreground argv path: {argv!r}')
+PY
+  then
+    cat "$record" >&2
+    return 1
+  fi
+  "$HOLD_BIN" stop "$id" >/dev/null || return 1
+}
 
 test_hold_shell_detach_adopts_foreground_process_group() {
   [ "$(uname -s)" = "Linux" ] || skip "foreground PGID adoption currently implemented on Linux"
@@ -3731,7 +3811,9 @@ run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
+run_test "run IDs and named profiles normalize relative file args" test_runid_and_named_profile_normalize_relative_file_args
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit
+run_test "hold shell adopt normalizes relative foreground argv paths" test_hold_shell_adopt_normalizes_relative_foreground_argv_paths
 run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hold_shell_detach_adopts_foreground_process_group
 run_test "captive CLI shows Cisco prompts and commits a profile" test_captive_cli_cisco_prompts_and_profile_commit
 run_test "captive CLI noninteractive transcript is script-safe" test_captive_cli_noninteractive_transcript_is_script_safe

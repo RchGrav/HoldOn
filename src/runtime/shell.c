@@ -223,6 +223,15 @@ static int read_proc_exe_path(pid_t pid, char *out, size_t n) {
     out[nr] = '\0';
     return 0;
 }
+
+static int read_proc_cwd_path(pid_t pid, char *out, size_t n) {
+    char path[128];
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/cwd", (long)pid) != 0) return -1;
+    ssize_t nr = readlink(path, out, n - 1);
+    if (nr < 0 || (size_t)nr >= n) return -1;
+    out[nr] = '\0';
+    return 0;
+}
 #endif
 
 static void shell_background_logger(int master, const char *log_path, pid_t shell_pid, pid_t adopted_pgid, pid_t adopted_sid) {
@@ -297,6 +306,14 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
             hold_free_argv_alloc(argv, argc);
             return 3;
         }
+    }
+    char cwd_path[HOLD_PATH_MAX] = {0};
+    if (read_proc_cwd_path(adopted_pid, cwd_path, sizeof(cwd_path)) != 0) {
+        cwd_path[0] = '\0';
+    }
+    if (hold_normalize_existing_argv_paths_from_cwd(argv, argc, 1, cwd_path[0] ? cwd_path : NULL) != 0) {
+        hold_free_argv_alloc(argv, argc);
+        return 3;
     }
 
     struct hold_store system_hint;
