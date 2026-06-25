@@ -350,9 +350,6 @@ static int handle_follow_tick(struct viewer_state *state) {
             state->newer_available = false;
             cache_invalidate(state);
             changed = true;
-        } else if (state->cache_reached_eof) {
-            cache_invalidate(state);
-            changed = true;
         }
     }
     if (end >= 0 && !state->at_live_edge && !state->newer_available && state->newer_scan_offset < state->tail_anchor) {
@@ -698,14 +695,20 @@ static void pin_to_oldest_visible_page(struct viewer_state *state) {
     cache_invalidate(state);
 }
 
-static void enter_browsing_mode(struct viewer_state *state) {
+static void enter_browsing_mode(struct viewer_state *state, bool stabilize_visible_page) {
     if (!state->follow || !state->at_live_edge) return;
     state->at_live_edge = false;
     state->newer_scan_offset = state->tail_anchor;
+    if (stabilize_visible_page && state->cache_valid && state->visible_count > 0) {
+        state->start_offset = state->visible[0].offset;
+        state->scan_mode = VIEWER_SCAN_FORWARD;
+        state->history_count = 0;
+        cache_invalidate(state);
+    }
 }
 
 static void page_up(struct viewer_state *state) {
-    enter_browsing_mode(state);
+    enter_browsing_mode(state, false);
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         state->at_live_edge = false;
         if (state->at_oldest_edge ||
@@ -805,13 +808,20 @@ int hold_log_viewer_tty_fd(int fd,
             break;
         }
         if (key == VIEWER_KEY_DOWN) {
-            if (state.selected + 1 < state.visible_count) state.selected++;
-            else page_down(&state);
+            if (state.selected + 1 < state.visible_count) {
+                enter_browsing_mode(&state, true);
+                state.selected++;
+            } else {
+                page_down(&state);
+            }
             need_render = true;
         } else if (key == VIEWER_KEY_UP) {
-            enter_browsing_mode(&state);
-            if (state.selected > 0) state.selected--;
-            else page_up(&state);
+            if (state.selected > 0) {
+                enter_browsing_mode(&state, true);
+                state.selected--;
+            } else {
+                page_up(&state);
+            }
             need_render = true;
         } else if (key == VIEWER_KEY_PAGE_DOWN) {
             page_down(&state);
