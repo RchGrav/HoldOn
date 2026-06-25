@@ -21,6 +21,7 @@ static int parse_restart_policy_arg(const char *arg, char out[64]);
 static int parse_restart_delay_arg(const char *arg, int *out);
 static bool restart_policy_arg_enabled(const char *arg);
 static int append_env_file(const char *path, char ***env_out, int *envc_out);
+static int configure_detach_keys_option(const char *value);
 static int run_recipe_matches_profile(const struct hold_store *store,
                                       const char *name,
                                       int argc,
@@ -160,19 +161,63 @@ static int parse_restart_delay_arg(const char *arg, int *out) {
     return 0;
 }
 
-static bool docker_detach_keys_are_default(const char *value) {
-    if (!value) return false;
-    return !strcmp(value, "ctrl-p,ctrl-q") ||
-           !strcmp(value, "ctrl-p ctrl-q") ||
-           !strcmp(value, "^P,^Q") ||
-           !strcmp(value, "^P ^Q");
+static int detach_key_token_value(const char *token, size_t len, unsigned char *out) {
+    if (!token || len == 0 || !out) return -1;
+    if (len == 1) {
+        *out = (unsigned char)token[0];
+        return 0;
+    }
+    if (len == 2 && token[0] == '^' && token[1] >= '@' && token[1] <= '_') {
+        *out = (unsigned char)(token[1] - '@');
+        return 0;
+    }
+    if (len == 6 &&
+        tolower((unsigned char)token[0]) == 'c' &&
+        tolower((unsigned char)token[1]) == 't' &&
+        tolower((unsigned char)token[2]) == 'r' &&
+        tolower((unsigned char)token[3]) == 'l' &&
+        token[4] == '-' &&
+        token[5] >= '@' && token[5] <= '_') {
+        *out = (unsigned char)(token[5] - '@');
+        return 0;
+    }
+    if (len == 6 &&
+        tolower((unsigned char)token[0]) == 'c' &&
+        tolower((unsigned char)token[1]) == 't' &&
+        tolower((unsigned char)token[2]) == 'r' &&
+        tolower((unsigned char)token[3]) == 'l' &&
+        token[4] == '-' &&
+        token[5] >= 'a' && token[5] <= 'z') {
+        *out = (unsigned char)(token[5] - 'a' + 1);
+        return 0;
+    }
+    return -1;
 }
 
-static int validate_detach_keys_option(const char *value) {
-    if (docker_detach_keys_are_default(value)) return 0;
-    fprintf(stderr,
-            "hold: error: custom --detach-keys is not supported yet; the current TTY detach sequence is ctrl-p,ctrl-q\n");
-    return 5;
+static int configure_detach_keys_option(const char *value) {
+    if (!value || !*value) {
+        fprintf(stderr, "hold: error: --detach-keys requires a key sequence\n");
+        return 5;
+    }
+    unsigned char keys[8];
+    size_t nkeys = 0;
+    const char *p = value;
+    while (*p) {
+        while (*p == ',' || isspace((unsigned char)*p)) p++;
+        if (!*p) break;
+        const char *start = p;
+        while (*p && *p != ',' && !isspace((unsigned char)*p)) p++;
+        if (nkeys >= sizeof(keys) || detach_key_token_value(start, (size_t)(p - start), &keys[nkeys]) != 0) {
+            fprintf(stderr, "hold: error: invalid --detach-keys sequence '%s'\n", value);
+            return 5;
+        }
+        nkeys++;
+    }
+    if (nkeys == 0 || hold_console_set_detach_keys(keys, nkeys) != 0) {
+        fprintf(stderr, "hold: error: invalid --detach-keys sequence '%s'\n", value);
+        return 5;
+    }
+    return 0;
 }
 
 static int append_env_assignment(const char *arg, char ***env_out, int *envc_out) {
@@ -562,13 +607,13 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
                 return 5;
             }
-            int detach_rc = validate_detach_keys_option(argv[argi + 1]);
+            int detach_rc = configure_detach_keys_option(argv[argi + 1]);
             if (detach_rc != 0) { hold_free_argv_alloc(docker_env, docker_envc); hold_free_argv_alloc(docker_ports, docker_portc); hold_free_argv_alloc(docker_volumes, docker_volumec); return detach_rc; }
             argi += 2;
             continue;
         }
         if (!strncmp(argv[argi], "--detach-keys=", 14)) {
-            int detach_rc = validate_detach_keys_option(argv[argi] + 14);
+            int detach_rc = configure_detach_keys_option(argv[argi] + 14);
             if (detach_rc != 0) { hold_free_argv_alloc(docker_env, docker_envc); hold_free_argv_alloc(docker_ports, docker_portc); hold_free_argv_alloc(docker_volumes, docker_volumec); return detach_rc; }
             argi++;
             continue;
@@ -847,7 +892,7 @@ int main(int argc, char **argv) {
                     free(cmd_argv);
                     return 5;
                 }
-                int detach_rc = validate_detach_keys_option(argv[++i]);
+                int detach_rc = configure_detach_keys_option(argv[++i]);
                 if (detach_rc != 0) {
                     free(cmd_argv);
                     hold_free_argv_alloc(docker_env, docker_envc);
@@ -859,7 +904,7 @@ int main(int argc, char **argv) {
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
                 !strncmp(argv[i], "--detach-keys=", 14)) {
-                int detach_rc = validate_detach_keys_option(argv[i] + 14);
+                int detach_rc = configure_detach_keys_option(argv[i] + 14);
                 if (detach_rc != 0) {
                     free(cmd_argv);
                     hold_free_argv_alloc(docker_env, docker_envc);

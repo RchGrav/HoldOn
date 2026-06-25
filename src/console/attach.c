@@ -4,6 +4,13 @@
 #include "hold/core.h"
 #include "hold/console_internal.h"
 
+#define HOLD_CONSOLE_MAX_DETACH_KEYS 8
+
+static unsigned char g_detach_keys[HOLD_CONSOLE_MAX_DETACH_KEYS] = {
+    CONSOLE_ATTACH_CTRL_P,
+    CONSOLE_ATTACH_CTRL_Q,
+};
+static size_t g_detach_key_count = 2;
 
 static int64_t hold_console_now_usec(void) {
     struct timespec ts;
@@ -11,12 +18,77 @@ static int64_t hold_console_now_usec(void) {
     return (int64_t)ts.tv_sec * 1000000 + (int64_t)(ts.tv_nsec / 1000);
 }
 
-static int hold_console_forward_pending_ctrl_p(int sock, bool *pending_ctrl_p) {
-    if (!*pending_ctrl_p) return 0;
-    unsigned char c = CONSOLE_ATTACH_CTRL_P;
-    if (hold_write_console_frame(sock, CONSOLE_FRAME_DATA, &c, 1) != 0) return -1;
-    *pending_ctrl_p = false;
+int hold_console_set_detach_keys(const unsigned char *keys, size_t len) {
+    if (!keys || len == 0 || len > HOLD_CONSOLE_MAX_DETACH_KEYS) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(g_detach_keys, keys, len);
+    g_detach_key_count = len;
     return 0;
+}
+
+static bool detach_prefix_matches(const unsigned char *pending, size_t pending_len) {
+    return pending_len <= g_detach_key_count &&
+           memcmp(pending, g_detach_keys, pending_len) == 0;
+}
+
+static bool detach_sequence_matches(const unsigned char *pending, size_t pending_len) {
+    return pending_len == g_detach_key_count &&
+           memcmp(pending, g_detach_keys, pending_len) == 0;
+}
+
+static int hold_console_forward_pending(int sock, unsigned char *pending, size_t *pending_len) {
+    if (*pending_len == 0) return 0;
+    if (hold_write_console_frame(sock, CONSOLE_FRAME_DATA, pending, (uint16_t)*pending_len) != 0) return -1;
+    *pending_len = 0;
+    return 0;
+}
+
+static int hold_console_process_interactive_byte(int sock,
+                                                 unsigned char c,
+                                                 unsigned char *pending,
+                                                 size_t *pending_len,
+                                                 int64_t *pending_deadline,
+                                                 bool *detached) {
+    *detached = false;
+retry_current:
+    if (*pending_len > 0) {
+        if (*pending_len >= HOLD_CONSOLE_MAX_DETACH_KEYS) {
+            if (hold_console_forward_pending(sock, pending, pending_len) != 0) return -1;
+            goto retry_current;
+        }
+        pending[(*pending_len)++] = c;
+        if (detach_sequence_matches(pending, *pending_len)) {
+            if (hold_write_console_frame(sock, CONSOLE_FRAME_DETACH, NULL, 0) != 0) return -1;
+            *pending_len = 0;
+            *detached = true;
+            return 0;
+        }
+        if (detach_prefix_matches(pending, *pending_len)) {
+            *pending_deadline = hold_console_now_usec() + CONSOLE_ATTACH_DETACH_TIMEOUT_USEC;
+            return 0;
+        }
+        unsigned char current = pending[*pending_len - 1];
+        (*pending_len)--;
+        if (hold_console_forward_pending(sock, pending, pending_len) != 0) return -1;
+        c = current;
+        goto retry_current;
+    }
+
+    if (g_detach_key_count > 0 && c == g_detach_keys[0]) {
+        pending[0] = c;
+        *pending_len = 1;
+        if (detach_sequence_matches(pending, *pending_len)) {
+            if (hold_write_console_frame(sock, CONSOLE_FRAME_DETACH, NULL, 0) != 0) return -1;
+            *pending_len = 0;
+            *detached = true;
+            return 0;
+        }
+        *pending_deadline = hold_console_now_usec() + CONSOLE_ATTACH_DETACH_TIMEOUT_USEC;
+        return 0;
+    }
+    return hold_write_console_frame(sock, CONSOLE_FRAME_DATA, &c, 1);
 }
 
 int hold_run_native_console(const char *sock_path) {
@@ -60,8 +132,9 @@ int hold_run_native_console(const char *sock_path) {
 
     int rc = 0;
     bool stdin_open = true;
-    bool pending_ctrl_p = false;
-    int64_t pending_ctrl_p_deadline = 0;
+    unsigned char pending_detach[HOLD_CONSOLE_MAX_DETACH_KEYS];
+    size_t pending_detach_len = 0;
+    int64_t pending_detach_deadline = 0;
     if (hold_write_all(sock, CONSOLE_ATTACH_MAGIC, CONSOLE_ATTACH_MAGIC_LEN) != 0) {
         rc = 3;
         goto out;
@@ -90,9 +163,9 @@ int hold_run_native_console(const char *sock_path) {
 
         struct timeval tv;
         struct timeval *tvp = NULL;
-        if (pending_ctrl_p) {
+        if (pending_detach_len > 0) {
             int64_t now = hold_console_now_usec();
-            int64_t remaining = pending_ctrl_p_deadline > now ? pending_ctrl_p_deadline - now : 0;
+            int64_t remaining = pending_detach_deadline > now ? pending_detach_deadline - now : 0;
             tv.tv_sec = (time_t)(remaining / 1000000);
             tv.tv_usec = (suseconds_t)(remaining % 1000000);
             tvp = &tv;
@@ -105,8 +178,8 @@ int hold_run_native_console(const char *sock_path) {
             rc = 3;
             break;
         }
-        if (pending_ctrl_p && (sr == 0 || hold_console_now_usec() >= pending_ctrl_p_deadline)) {
-            if (hold_console_forward_pending_ctrl_p(sock, &pending_ctrl_p) != 0) {
+        if (pending_detach_len > 0 && (sr == 0 || hold_console_now_usec() >= pending_detach_deadline)) {
+            if (hold_console_forward_pending(sock, pending_detach, &pending_detach_len) != 0) {
                 rc = 3;
                 break;
             }
@@ -119,27 +192,17 @@ int hold_run_native_console(const char *sock_path) {
             if (n > 0) {
                 if (interactive) {
                     for (ssize_t i = 0; i < n; i++) {
-                        if (pending_ctrl_p) {
-                            if (buf[i] == CONSOLE_ATTACH_CTRL_Q) {
-                                if (hold_write_console_frame(sock, CONSOLE_FRAME_DETACH, NULL, 0) != 0) {
-                                    rc = 3;
-                                }
-                                goto out;
-                            }
-                            if (hold_console_forward_pending_ctrl_p(sock, &pending_ctrl_p) != 0) {
-                                rc = 3;
-                                break;
-                            }
-                        }
-                        if (buf[i] == CONSOLE_ATTACH_CTRL_P) {
-                            pending_ctrl_p = true;
-                            pending_ctrl_p_deadline = hold_console_now_usec() + CONSOLE_ATTACH_DETACH_TIMEOUT_USEC;
-                            continue;
-                        }
-                        if (hold_write_console_frame(sock, CONSOLE_FRAME_DATA, buf + i, 1) != 0) {
+                        bool detached = false;
+                        if (hold_console_process_interactive_byte(sock,
+                                                                  buf[i],
+                                                                  pending_detach,
+                                                                  &pending_detach_len,
+                                                                  &pending_detach_deadline,
+                                                                  &detached) != 0) {
                             rc = 3;
                             break;
                         }
+                        if (detached) goto out;
                     }
                     if (rc != 0) {
                         break;
@@ -149,7 +212,7 @@ int hold_run_native_console(const char *sock_path) {
                     break;
                 }
             } else if (n == 0) {
-                if (hold_console_forward_pending_ctrl_p(sock, &pending_ctrl_p) != 0) {
+                if (hold_console_forward_pending(sock, pending_detach, &pending_detach_len) != 0) {
                     rc = 3;
                     break;
                 }

@@ -3277,12 +3277,17 @@ test_docker_unsupported_options_fail_loudly() {
     return 1
   }
 
+  "$HOLD_BIN" start /bin/true --detach-keys ctrl-a >/dev/null 2>"$TEST_ROOT/docker-detach-keys-custom.err" || {
+    cat "$TEST_ROOT/docker-detach-keys-custom.err" >&2
+    return 1
+  }
+
   set +e
-  "$HOLD_BIN" start /bin/true --detach-keys ctrl-a >/dev/null 2>"$TEST_ROOT/docker-detach-keys-custom.err"
+  "$HOLD_BIN" start /bin/true --detach-keys ctrl-not-a-key >/dev/null 2>"$TEST_ROOT/docker-detach-keys-invalid.err"
   rc=$?
   set -e
-  [ "$rc" -eq 5 ] || { echo "custom --detach-keys: rc=$rc (want 5)" >&2; return 1; }
-  grep -q "custom --detach-keys is not supported yet" "$TEST_ROOT/docker-detach-keys-custom.err" || { cat "$TEST_ROOT/docker-detach-keys-custom.err" >&2; return 1; }
+  [ "$rc" -eq 5 ] || { echo "invalid --detach-keys: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "invalid --detach-keys sequence" "$TEST_ROOT/docker-detach-keys-invalid.err" || { cat "$TEST_ROOT/docker-detach-keys-invalid.err" >&2; return 1; }
 
   "$HOLD_BIN" prune all >/dev/null 2>&1 || true
   "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-unsupported-ps.out" || return 1
@@ -3523,6 +3528,39 @@ PY
   grep -q '"console_sock": "' "$HOME/.local/state/hold/$id.json" || { cat "$HOME/.local/state/hold/$id.json" >&2; return 1; }
   "$HOLD_BIN" ps >"$TEST_ROOT/docker-tty-ps.out" || return 1
   grep -Eq "^$id[[:space:]]+running" "$TEST_ROOT/docker-tty-ps.out" || { cat "$TEST_ROOT/docker-tty-ps.out" >&2; return 1; }
+  "$HOLD_BIN" stop "$id" >/dev/null || return 1
+}
+
+test_docker_tty_custom_detach_keys() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local id rc
+  cat >"$TEST_ROOT/docker-tty-custom-child.sh" <<'EOF'
+#!/bin/sh
+printf 'custom-ready\n'
+IFS= read line
+printf 'custom-line:%s\n' "$line"
+sleep 30
+EOF
+  chmod +x "$TEST_ROOT/docker-tty-custom-child.sh"
+  set +e
+  python3 - <<'PY' | script -qfec "$HOLD_BIN run -it --detach-keys ctrl-a $TEST_ROOT/docker-tty-custom-child.sh" /dev/null >"$TEST_ROOT/docker-tty-custom.out" 2>"$TEST_ROOT/docker-tty-custom.err"
+import sys, time
+out = sys.stdout.buffer
+time.sleep(0.5)
+out.write(b"\x01")
+out.flush()
+time.sleep(0.1)
+PY
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { echo "run -it custom detach rc=$rc" >&2; cat "$TEST_ROOT/docker-tty-custom.out" "$TEST_ROOT/docker-tty-custom.err" >&2; return 1; }
+  grep -q 'custom-ready' "$TEST_ROOT/docker-tty-custom.out" || { cat "$TEST_ROOT/docker-tty-custom.out" >&2; return 1; }
+  ! grep -q 'custom-line:' "$TEST_ROOT/docker-tty-custom.out" || { cat "$TEST_ROOT/docker-tty-custom.out" >&2; return 1; }
+  id=$(tr -d '\r' <"$TEST_ROOT/docker-tty-custom.out" | extract_id)
+  [ -n "$id" ] || { cat "$TEST_ROOT/docker-tty-custom.out" >&2; return 1; }
+  "$HOLD_BIN" ps >"$TEST_ROOT/docker-tty-custom-ps.out" || return 1
+  grep -Eq "^$id[[:space:]]+running" "$TEST_ROOT/docker-tty-custom-ps.out" || { cat "$TEST_ROOT/docker-tty-custom-ps.out" >&2; return 1; }
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
 
@@ -4631,6 +4669,7 @@ run_test "Docker publish and volume flags record metadata" test_docker_publish_a
 run_test "Docker named profiles persist -d -i -t mode flags" test_docker_named_profile_persists_mode_flags
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
 run_test "Docker -it foreground attaches and detaches" test_docker_tty_foreground_attaches_and_detaches
+run_test "Docker --detach-keys changes TTY detach sequence" test_docker_tty_custom_detach_keys
 run_test "Docker run -it profile reconnects a singular TTY run" test_docker_profile_it_reconnects_singular_tty_run
 run_test "run IDs and named profiles normalize relative file args" test_runid_and_named_profile_normalize_relative_file_args
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit

@@ -11,6 +11,7 @@ int hold_format_console_sock_path(const struct hold_store *store,
                              const char *id,
                              char *out,
                              size_t n);
+int hold_console_set_detach_keys(const unsigned char *keys, size_t len);
 void hold_run_console_broker(int parent_pipe,
                         const char *log_path,
                         const char *sock_path,
