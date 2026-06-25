@@ -436,11 +436,10 @@ static int render(struct viewer_state *state) {
     if (viewer_puts(header) != 0) return -1;
 
     size_t body_rows = state->rows > 4 ? state->rows - 4 : 1;
-    size_t line_width = state->cols > 4 ? state->cols - 4 : state->cols;
+    size_t line_width = state->cols;
     for (size_t i = 0; i < body_rows; i++) {
         if (i < state->visible_count) {
             if (i == state->selected) viewer_puts("\033[7m");
-            viewer_puts("  ");
             write_sanitized_line(state->visible[i].line, line_width);
             if (i == state->selected) viewer_puts("\033[0m");
         } else {
