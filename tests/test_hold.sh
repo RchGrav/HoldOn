@@ -2590,6 +2590,20 @@ test_docker_shaped_cli_flags_and_rm() {
   sleep 0.2
   "$HOLD_BIN" logs -n 1 --plain "$id" >"$TEST_ROOT/docker-logs-tail.out" || return 1
   grep -q '^ok$' "$TEST_ROOT/docker-logs-tail.out" || { cat "$TEST_ROOT/docker-logs-tail.out" >&2; return 1; }
+  "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/docker-inspect.json" || return 1
+  python3 - "$TEST_ROOT/docker-inspect.json" "$id" <<'PY' || { cat "$TEST_ROOT/docker-inspect.json" >&2; return 1; }
+import json, sys
+obj = json.load(open(sys.argv[1], encoding='utf-8'))
+if not isinstance(obj, list) or len(obj) != 1:
+    raise SystemExit('inspect must return a one-object JSON array')
+record = obj[0]
+if record.get('id') != sys.argv[2]:
+    raise SystemExit('inspect record id mismatch')
+if record.get('alias') != 'docker-web':
+    raise SystemExit('inspect record did not include profile label')
+if 'ok\n' in json.dumps(record):
+    raise SystemExit('inspect returned log text instead of structured record data')
+PY
   "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-ps.out" || return 1
   grep -q "$id" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
   "$HOLD_BIN" profiles >"$TEST_ROOT/docker-profiles.out" || return 1
@@ -3140,14 +3154,23 @@ test_misc_action_guards() {
 test_public_cli_contract_guards() {
   local rc out id
   "$HOLD_BIN" --help >"$TEST_ROOT/help-dash.out" || return 1
+  grep -q 'hold run \[run-options\] <cmd|profile>' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
+  grep -q 'hold logs <target> --plain' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
+  grep -q 'hold inspect <target>' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
   grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
   grep -q 'hold profiles' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
+  ! grep -q 'hold dump' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
+  ! grep -q 'hold --console' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
   ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
 
   "$HOLD_BIN" help >"$TEST_ROOT/help.out" || return 1
+  grep -q 'hold run \[run-options\] <cmd|profile>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
+  grep -q 'hold logs <target> --plain' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
+  grep -q 'hold inspect <target>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
   grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
   grep -q 'hold profiles' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  grep -q 'hold profile export <name>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
+  ! grep -q 'hold dump' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
+  ! grep -q 'hold --console' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
   ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
 
   "$HOLD_BIN" help profiles >"$TEST_ROOT/help-profiles.out" || return 1

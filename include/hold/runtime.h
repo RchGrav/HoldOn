@@ -61,6 +61,11 @@ int hold_cmd_dump_action(const struct hold_invocation *inv,
                            const struct hold_store *system_store,
                            const char *program,
                            const char *id_token);
+int hold_cmd_inspect_action(const struct hold_invocation *inv,
+                              const struct hold_store *user_store,
+                              const struct hold_store *system_store,
+                              const char *program,
+                              const char *id_token);
 int hold_cmd_view_action(const struct hold_invocation *inv,
                            const struct hold_store *user_store,
                            const struct hold_store *system_store,

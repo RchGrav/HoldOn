@@ -582,7 +582,6 @@ int main(int argc, char **argv) {
         command = "__view";
     }
     if (owned && !strcmp(command, "ps")) command = "list";
-    if (owned && !strcmp(command, "inspect")) command = "dump";
     if (owned && !strcmp(command, "status")) command = "list";
     if (owned && !strcmp(command, "clean")) command = "prune";
 
@@ -1025,6 +1024,16 @@ int main(int argc, char **argv) {
             return 5;
         }
         int rc = hold_cmd_tail_action(&inv, &user_store, &system_store, argv[0], cmd_argv[0]);
+        free(cmd_argv);
+        return rc;
+    }
+    if (!strcmp(command, "inspect")) {
+        if (cmd_argc != 1) {
+            fprintf(stderr, "usage: hold inspect <target>\n");
+            free(cmd_argv);
+            return 5;
+        }
+        int rc = hold_cmd_inspect_action(&inv, &user_store, &system_store, argv[0], cmd_argv[0]);
         free(cmd_argv);
         return rc;
     }

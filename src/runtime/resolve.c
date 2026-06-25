@@ -11,7 +11,8 @@
 bool hold_command_accepts_target_tokens(const char *command) {
     return command && (!strcmp(command, "stop") || !strcmp(command, "kill") ||
                        !strcmp(command, "tail") || !strcmp(command, "dump") ||
-                       !strcmp(command, "prune") || !strcmp(command, "console"));
+                       !strcmp(command, "inspect") || !strcmp(command, "prune") ||
+                       !strcmp(command, "console"));
 }
 
 static int resolve_run_id(const char *dir, const char *input, char *resolved, size_t n);
@@ -201,6 +202,9 @@ bool hold_record_matches_alias_intent(const char *command, const struct hold_run
     }
     if (!strcmp(command, "dump") || !strcmp(command, "view")) {
         return r->has_log;
+    }
+    if (!strcmp(command, "inspect")) {
+        return true;
     }
     if (!strcmp(command, "prune")) {
         return st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE;

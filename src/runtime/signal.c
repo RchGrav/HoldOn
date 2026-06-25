@@ -571,6 +571,72 @@ static int elevate_view_target(const char *program,
     return rc;
 }
 
+static int write_file_as_json_array_object(const char *path) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    if (hold_write_all(STDOUT_FILENO, "[\n", 2) != 0) {
+        close(fd);
+        return -1;
+    }
+    char buf[4096];
+    while (1) {
+        ssize_t n = read(fd, buf, sizeof(buf));
+        if (n == 0) break;
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            return -1;
+        }
+        if (hold_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
+            close(fd);
+            return -1;
+        }
+    }
+    if (hold_write_all(STDOUT_FILENO, "\n]\n", 3) != 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+int hold_cmd_inspect_action(const struct hold_invocation *inv,
+                              const struct hold_store *user_store,
+                              const struct hold_store *system_store,
+                              const char *program,
+                              const char *id_token) {
+    struct hold_resolved_target *targets = NULL;
+    int ntargets = 0;
+    int rc = hold_resolve_action_token(inv, user_store, system_store, "inspect", id_token, false, &targets, &ntargets);
+    if (rc != 0) {
+        free(targets);
+        return rc;
+    }
+    if (ntargets == 0) {
+        free(targets);
+        hold_sig_note(inv, "hold: nothing to inspect\n");
+        return 0;
+    }
+    struct hold_resolved_target target = targets[0];
+    if (target.needs_elevation) {
+        rc = hold_elevate_with_sudo_targets(program, "inspect", NULL, &target, 1, false, false);
+        free(targets);
+        return rc;
+    }
+    struct hold_run_record r;
+    char path[HOLD_PATH_MAX];
+    if (hold_load_record_by_id(target.store.record_dir, target.id, &r, path, sizeof(path)) != 0) {
+        free(targets);
+        return 5;
+    }
+    if (write_file_as_json_array_object(path) != 0) {
+        free(targets);
+        hold_die_errno("hold: failed to inspect run record");
+    }
+    free(targets);
+    return 0;
+}
+
 int hold_cmd_view_action(const struct hold_invocation *inv,
                            const struct hold_store *user_store,
                            const struct hold_store *system_store,

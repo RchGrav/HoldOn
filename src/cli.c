@@ -90,9 +90,9 @@ static int help_profiles(void) {
            "  hold profiles [-v]           list visible profiles\n"
            "  hold profile export <name>   export a typed-shell transcript\n"
            "  hold profile import <file>   import/update a user-local profile\n"
-           "  hold start <name>            start a fresh run under that name\n\n"
+           "  hold run <name>              start a fresh run under that name\n\n"
            "The name is also recorded on runs started as <name>, so later\n"
-           "list, tail, console, dump, stop, kill, and prune commands can use <name>.\n"
+           "ps, logs, inspect, stop, kill, rm, and prune commands can use <name>.\n"
            "If the command behind <name> is updated later, future starts use the updated command; prior runs\n"
            "remain under the same recorded profile label.\n");
     return 0;
@@ -105,9 +105,8 @@ static int help_targets(void) {
            "  system:<target>   force root-managed lookup\n\n"
            "target = run id, leading id prefix, or profile name\n\n"
            "A run id addresses one run directly, always. A profile name resolves among runs\n"
-           "recorded under that name, narrowed by the verb: stop/kill/tail look at\n"
-           "running runs, console looks at running console-enabled runs, dump looks at\n"
-           "logged runs, and prune looks at removable past\n"
+           "recorded under that name, narrowed by the verb: stop/kill/logs look at\n"
+           "running or logged runs, inspect looks at retained records, and prune looks at removable past\n"
            "run data. One match acts. Several matches exit 6 and print candidates;\n"
            "--all resolves that ambiguity for stop, kill, and prune. A known profile with\n"
            "nothing to do exits 0.\n");
@@ -165,11 +164,11 @@ static int help_scripting(void) {
 static int help_console(void) {
     printf("hold help console\n\n"
            "Start a run with an attachable PTY console, then reconnect to it later.\n"
-           "Console output is still tee'd to the normal log, so tail and dump continue\n"
+           "Console output is still tee'd to the normal log, so logs continue\n"
            "to work.\n\n"
-           "  hold --console <cmd...>      start with an attachable console\n"
-           "  hold start <profile> --console start a profile with a console\n"
-           "  hold console <target>        attach to that console\n\n"
+           "  hold -t <cmd...>             start with an attachable PTY console\n"
+           "  hold run -it <profile>       start/reconnect a profile with a TTY\n"
+           "  hold console <target>        IOS/operator attach command when needed\n\n"
            "Console attach is native: On Hold saves your terminal, enters an alternate\n"
            "screen for interactive attaches, forwards terminal size changes to the PTY,\n"
            "and restores your original screen on exit. Ctrl-] detaches without asking\n"
@@ -197,9 +196,9 @@ static int help_action(const char *action) {
             printf("usage: hold tail <target>\n\nFollow live output for a profile match, or follow an id's log directly.\n");
         }
     } else if (!strcmp(action, "console")) {
-        printf("usage: hold console <target>\n\nAttach to a running console-enabled run.\n");
+        printf("usage: hold console <target>\n\nAttach to a running console-enabled run. Shell examples should prefer Docker-shaped `hold run -it <profile>` or `hold -it <cmd>`.\n");
     } else if (!strcmp(action, "dump")) {
-        printf("usage: hold dump <target>\n\nPrint a run log and exit.\n");
+        printf("usage: hold logs <target> --plain\n\nThe public 0.4 log-text command is `hold logs <target> --plain`; structured details are `hold inspect <target>`.\n");
     } else if (!strcmp(action, "__view")) {
         printf("usage: hold __view <target> [internal viewer test options]\n\nInternal regression/debug entrypoint for the log viewer engine. The product UX is hold logs <target>, then type inside the full-screen viewer to filter dynamically.\n");
     } else if (!strcmp(action, "prune")) {
@@ -213,7 +212,7 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "status")) {
         printf("usage: hold status [profile|target]\n\nShow runs, optionally narrowed by profile/target.\n");
     } else if (!strcmp(action, "inspect")) {
-        printf("usage: hold inspect <target>\n\nPrint a target log/record-oriented inspection view.\n");
+        printf("usage: hold inspect <target>\n\nPrint structured JSON details for a run/profile target. Log text belongs to `hold logs <target> --plain`.\n");
     } else if (!strcmp(action, "show")) {
         printf("usage: hold show <runs|profiles|running|dormant|failed|stale> [name]\n\nNavigate alternate views of the same runtime tree.\n");
     } else if (!strcmp(action, "clean")) {
