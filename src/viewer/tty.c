@@ -283,6 +283,7 @@ static void cache_invalidate(struct viewer_state *state) {
 }
 
 static void configure_filter_opts(const struct viewer_state *state, struct hold_log_filter_options *opts);
+static void enter_browsing_mode(struct viewer_state *state, bool stabilize_visible_page);
 
 static bool refresh_terminal_size(struct viewer_state *state) {
     size_t old_rows = state->rows, old_cols = state->cols;
@@ -444,6 +445,13 @@ static bool same_line(const char *a, const char *b) {
 
 static int toggle_example(struct viewer_state *state, const char *line) {
     if (!line) return 0;
+    /*
+     * Space is an editing operation on the line the operator is currently
+     * looking at.  If the viewer is still technically at the live edge, first
+     * pin the rendered page so applying the exclusion does not immediately
+     * re-anchor at EOF and look like it "looped" back to the bottom.
+     */
+    enter_browsing_mode(state, true);
     for (size_t i = 0; i < state->example_count; i++) {
         if (same_line(state->examples[i], line)) {
             free(state->examples[i]);
@@ -677,7 +685,7 @@ static int render(struct viewer_state *state) {
                  sizeof(header),
                  "\033[?25l\033[Hhold logs %s%s%s%s%s%s\033[K\r\n",
                  viewer_run_label(state),
-                 state->follow ? "  ● live" : (state->follow_exited ? "  exited" : ""),
+                 state->follow ? (state->at_live_edge ? "  ● live" : "  browsing") : (state->follow_exited ? "  exited" : ""),
                  state->example_count ? "  excluding similar" : "",
                  state->cache_scan_limited ? " | partial" : (state->cache_reached_eof ? " | EOF" : ""),
                  state->newer_available ? " | newer below" : "",

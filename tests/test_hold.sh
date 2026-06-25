@@ -1156,6 +1156,39 @@ if not stats or stats[-1][4] != 'browsing':
 PYCHECK
 }
 
+test_log_view_follow_exclude_at_live_edge_pins_current_page() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo "drop heartbeat alpha"; echo "keep window one"; echo "keep window two"; echo "keep window three"; echo "keep window four"; echo "keep window five"; sleep 0.5; for i in $(seq 1 40); do sleep 0.03; echo "late bottom $i"; done; sleep 0.2' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.05
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b" "); out.flush(); time.sleep(1.2); out.write(b"q"); out.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 8 cols 120; $HOLD_BIN logs $id --interactive --follow --debug-stats" /dev/null >"$TEST_ROOT/view-follow-exclude-live-pin.out" 2>"$TEST_ROOT/view-follow-exclude-live-pin.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow-exclude-live-pin.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-follow-exclude-live-pin.out" <<'PY' || { cat "$TEST_ROOT/view-follow-exclude-live-pin.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+final = plain[-1800:]
+if 'excluding similar' not in final:
+    raise SystemExit('space did not activate exclude mode')
+if 'keep window one' not in final and 'keep window two' not in final and 'keep window three' not in final:
+    raise SystemExit('excluding at the live edge did not keep the current page pinned')
+if 'late bottom 35' in final or 'late bottom 40' in final:
+    raise SystemExit('excluding at the live edge looped back to the newest tail')
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+) prev=(\d+) next=(\d+).*?follow=(tail|browsing|exited)', plain)
+if not stats or stats[-1][4] != 'browsing':
+    raise SystemExit(f'expected exclude-at-live to leave tail mode, got {stats[-1] if stats else "missing stats"}')
+if 'newer=yes' not in final:
+    raise SystemExit('pinned exclude view did not mark newer data below')
+PY
+}
+
 
 test_log_view_follow_top_refills_as_live_log_grows() {
   command -v script >/dev/null 2>&1 || skip "script not available"
@@ -4486,6 +4519,7 @@ run_test "internal viewer follow page-down from top does not wrap to tail" test_
 run_test "internal viewer follow page-up returns to top after paging down" test_log_view_follow_page_up_after_top_page_down_returns_to_top
 run_test "internal viewer filter changes preserve browsed-away page" test_log_view_follow_filter_change_preserves_browsed_page
 run_test "internal viewer exclude changes preserve browsed-away page" test_log_view_follow_exclude_preserves_browsed_page
+run_test "internal viewer exclude at live edge pins the current page" test_log_view_follow_exclude_at_live_edge_pins_current_page
 run_test "internal viewer follow keeps top pinned while live log grows" test_log_view_follow_top_refills_as_live_log_grows
 run_test "internal viewer cursor navigation disables live tail yank" test_log_view_follow_cursor_navigation_disables_tail_yank
 run_test "internal viewer cursor browsing keeps a short top page pinned" test_log_view_follow_cursor_browse_keeps_short_top_page_pinned
