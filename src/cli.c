@@ -215,7 +215,7 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "doctor")) {
         printf("usage: hold doctor\n\nCheck local On Hold/Hold paths and build identity.\n");
     } else if (!strcmp(action, "shell")) {
-        printf("usage: hold shell\n\nEnter the captive operator shell. Slash views map to normal commands: /profiles, /runs, /running, /stale. Type `profile <name>` to enter a profile submode, then use local commands such as `show`, `create -- <cmd>`, `set command -- <cmd>`, `start`, `rename <new-name>`, or `delete`; `back` returns to the top prompt.\n");
+        printf("usage: hold shell\n\nReserved for system-shell capture mode. The intended behavior is to start an ordinary user shell under Hold's PTY/session wrapper; `exit` returns without creating a runid, while the classic detach sequence Ctrl-P Ctrl-Q captures the foreground process group as a Hold run and returns to the caller. This mode is not implemented yet in this branch.\n");
     } else if (!strcmp(action, "grant") || !strcmp(action, "revoke")) {
         printf("usage: hold %s <profile> <user> [start,stop,kill,tail,dump,prune,console]\n\nManage On Hold-owned sudoers access for a root-managed profile.\n", action);
     } else {

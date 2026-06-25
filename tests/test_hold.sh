@@ -2422,39 +2422,18 @@ test_hold_unified_cli_surface() {
   "$HOLD_BIN" clean hold-web >/dev/null || return 1
 }
 
-test_hold_shell_scripted_commands() {
-  printf 'doctor\n/profiles\nexit\n' | "$HOLD_BIN" shell >"$TEST_ROOT/hold-shell.out" 2>"$TEST_ROOT/hold-shell.err" || {
-    cat "$TEST_ROOT/hold-shell.out" "$TEST_ROOT/hold-shell.err" >&2
-    return 1
-  }
-  grep -q 'version:' "$TEST_ROOT/hold-shell.out" || { cat "$TEST_ROOT/hold-shell.out" >&2; return 1; }
-  grep -q 'NAME' "$TEST_ROOT/hold-shell.out" || { cat "$TEST_ROOT/hold-shell.out" >&2; return 1; }
-}
+test_hold_shell_reserved_for_capture_mode() {
+  "$HOLD_BIN" help shell >"$TEST_ROOT/hold-shell-help.out" || return 1
+  grep -q 'system-shell capture mode' "$TEST_ROOT/hold-shell-help.out" || { cat "$TEST_ROOT/hold-shell-help.out" >&2; return 1; }
+  grep -q 'Ctrl-P Ctrl-Q' "$TEST_ROOT/hold-shell-help.out" || { cat "$TEST_ROOT/hold-shell-help.out" >&2; return 1; }
+  ! grep -q '/profiles' "$TEST_ROOT/hold-shell-help.out" || { cat "$TEST_ROOT/hold-shell-help.out" >&2; return 1; }
 
-test_hold_shell_profile_submode() {
-  printf '%s\n' \
-    'profile shell-prof' \
-    'create -- /bin/echo shell profile' \
-    'show' \
-    'back' \
-    'profile shell-prof show' \
-    'profile shell-prof delete' \
-    'exit' | "$HOLD_BIN" shell >"$TEST_ROOT/hold-shell-profile.out" 2>"$TEST_ROOT/hold-shell-profile.err" || {
-      cat "$TEST_ROOT/hold-shell-profile.out" "$TEST_ROOT/hold-shell-profile.err" >&2
-      return 1
-    }
-  [ ! -s "$TEST_ROOT/hold-shell-profile.err" ] || {
-    cat "$TEST_ROOT/hold-shell-profile.err" >&2
-    return 1
-  }
-  grep -Fxq "profile shell-prof" "$TEST_ROOT/hold-shell-profile.out" || {
-    cat "$TEST_ROOT/hold-shell-profile.out" >&2
-    return 1
-  }
-  grep -Eq "^set command -- (/usr)?/bin/echo shell profile$" "$TEST_ROOT/hold-shell-profile.out" || {
-    cat "$TEST_ROOT/hold-shell-profile.out" >&2
-    return 1
-  }
+  set +e; printf 'exit\n' | "$HOLD_BIN" shell >"$TEST_ROOT/hold-shell.out" 2>"$TEST_ROOT/hold-shell.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold shell: rc=$rc (want 5)" >&2; cat "$TEST_ROOT/hold-shell.out" "$TEST_ROOT/hold-shell.err" >&2; return 1; }
+  grep -q 'shell capture mode is not implemented yet' "$TEST_ROOT/hold-shell.err" || { cat "$TEST_ROOT/hold-shell.err" >&2; return 1; }
+  grep -q 'Ctrl-P Ctrl-Q' "$TEST_ROOT/hold-shell.err" || { cat "$TEST_ROOT/hold-shell.err" >&2; return 1; }
+  ! grep -q 'hold>' "$TEST_ROOT/hold-shell.out" || { cat "$TEST_ROOT/hold-shell.out" >&2; return 1; }
+  ! grep -q 'NAME' "$TEST_ROOT/hold-shell.out" || { cat "$TEST_ROOT/hold-shell.out" >&2; return 1; }
 }
 
 test_build_artifact_coexistence() {
@@ -3159,8 +3138,7 @@ run_test "signal refuses tampered live process-group identity" test_signal_refus
 run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
 run_test "hold unified CLI surface" test_hold_unified_cli_surface
-run_test "hold shell runs scripted commands" test_hold_shell_scripted_commands
-run_test "hold shell profile submode runs local profile commands" test_hold_shell_profile_submode
+run_test "hold shell is reserved for system-shell capture mode" test_hold_shell_reserved_for_capture_mode
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "view filters run logs literally and by similarity" test_log_view_filter_cli

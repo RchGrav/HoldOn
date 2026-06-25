@@ -584,7 +584,7 @@ Lifecycle:
 
 Hold-specific utility/config entry points:
   hold                                         # enter Cisco IOS-style captive CLI when TTY
-  hold shell                                   # explicit captive/operator shell
+  hold shell                                   # system-shell capture mode: real shell, Ctrl-P Ctrl-Q adopts foreground PGID
   hold import <file> as <profile>              # import IOS-style transcript
   hold export <profile> as <file>              # export IOS-style transcript
   hold doctor [target]
@@ -1113,90 +1113,20 @@ interactive terminal runs. Use `hold run -it <profile>` / `hold -it <cmd>` in
 shell examples. The IOS-style captive CLI may still expose `console` as an EXEC
 operator command where that wording fits the mode.
 
-### 4.7 Captive namespace and context navigation
+### 4.7 Rejected prompt/navigation prototype
 
-The captive CLI should be mode-based like IOS, but object contexts still need a
-small, predictable navigation vocabulary so users can drill into profiles and
-run IDs without memorizing every fully qualified command.
+Earlier 0.4 branch work experimented with slash/path/object prompts such as `hold(profile)#`, `hold(profile:web)#`, and `hold(runid:04a7dda8)#`. That model is rejected for the 0.4 captive CLI. Do not implement or preserve it as product code.
 
-General context rules:
+The 0.4 captive CLI target is the Cisco IOS mode model above:
 
-- `?` / `help` shows valid commands for the current mode/context.
-- `exit` leaves the current mode/context.
-- `back` may be accepted as friendly sugar for leaving an object context, but
-  IOS `exit` remains canonical.
-- `ls` lists objects in the current context.
-- `select <name-or-id>` enters the selected child context when the current view
-  is a list of profiles or run IDs.
-- `profile` by itself must not be a no-op. It should list/enter the profile
-  namespace or show contextual profile commands.
+- `hold>` for User EXEC;
+- `hold#` for Privileged EXEC;
+- `hold(config)#` for global configuration;
+- `hold(config-profile:web)#` for profile sub-configuration.
 
-Top-level profile namespace example:
+Operational object selection should be expressed through IOS-style commands (`show`, `run`, `logs`, `inspect`, `stop`, `kill`, `profile`, `configure terminal`) rather than alternate slash/path prompts. If a future TUI explores tree navigation, it must be a separate surface and not the 0.4 captive CLI contract.
 
-```text
-hold# profile
-hold(profile)# ?
-Profile namespace commands:
-  ls        List profiles
-  run       Start a profile
-  rm        Remove a profile
-  select    Enter a profile context
-  import    Import profile transcript
-  export    Export profile transcript
-  help      Show context help
-  exit      Return to privileged EXEC
-
-hold(profile)# ls
-NAME      HASH         ACTIVE  COMMAND
-web       7f3e9c2a     1       /usr/local/bin/nginx -c /etc/nginx.conf
-report    1c5d3b7f     0       /opt/report/run
-
-hold(profile)# select web
-hold(profile:web)#
-```
-
-Profile object context example:
-
-```text
-hold(profile:web)# ?
-Profile commands:
-  ps        List run IDs for this profile
-  run       Start this profile
-  stop      Stop this profile only when singular or explicit
-  logs      Open logs for a singular selected run
-  inspect   Show profile details
-  select    Enter a run ID context
-  export    Export this profile transcript
-  rm        Remove this profile when safe
-  exit      Return to profile namespace
-
-hold(profile:web)# ps
-RUNID         STATE     UPTIME  PROFILE
-04a7dda8      running   12m     web
-
-hold(profile:web)# select 04a7dda8
-hold(profile:web:04a7dda8)#
-```
-
-Run ID context example:
-
-```text
-hold(runid:04a7dda8)# ?
-Run commands:
-  logs      Open log viewer
-  inspect   Show detailed JSON/object view
-  stop      Gracefully stop this concrete run
-  kill      Force stop this concrete run
-  save      Save normalized launch facts as a profile
-  rm        Remove when inactive
-  exit      Return to previous context
-
-hold(runid:04a7dda8)# save web-copy
-```
-
-`save <profile-name>` in a run ID context creates a profile from that run's
-normalized launch facts. This is the context-local form of the shell-level
-profile-from-run operation.
+`hold shell` is also not the captive CLI. It is reserved for the separate system-shell capture mode: start a real user shell under a Hold PTY/session wrapper, create no runid on normal `exit`, and on the classic `Ctrl-P Ctrl-Q` detach sequence inspect the PTY foreground process group and adopt that process group as a Hold run.
 
 ## 5. CLI transcript config
 

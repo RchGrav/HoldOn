@@ -267,7 +267,7 @@ Guardrail: do not introduce a competing captive prompt model such as `hold(/runn
 
 ```sh
 hold                 # if no args and TTY: open Cisco IOS-style captive CLI
-hold shell           # explicit captive CLI entry
+hold shell           # explicit system-shell capture mode, not the captive CLI
 ```
 
 For non-TTY/no args, keep usage and exit nonzero for compatibility.
@@ -621,11 +621,11 @@ Protect the automation contract:
 - Add targeted `rm` and keep Docker-like `prune` for inactive history cleanup.
 - Improve run banner with profile/name hints.
 
-### Phase 2: Hybrid interactive shell
+### Phase 2: Captive CLI and shell-capture split
 
-- Add `hold shell` line-oriented REPL.
-- Support `?`, `enable`, `configure terminal`, `show`, `list`, `run`, `attach`, `console`, `grant`, `revoke`, `write`, `profile`, `binary`, `argv`, `env`, `param`, `no`, `default`, `info`, and `commit`.
-- Implement command completion/history if practical.
+- Add the Cisco IOS-style captive CLI on bare interactive `hold`: `hold>`, `hold#`, `configure terminal`, `hold(config)#`, `hold(config-profile:name)#`, `?`, `enable`, `disable`, `show`, `write`, `no`, `default`, `info`, and `commit`.
+- Implement `hold shell` as the separate system-shell capture mode, not as a line-oriented Hold REPL: launch a real shell under a PTY/session wrapper, create no runid on normal `exit`, and use `Ctrl-P Ctrl-Q` to adopt the PTY foreground process group as a Hold run.
+- Implement command completion/history for the captive CLI when practical.
 - Add contextual help and suggested next actions.
 
 ### Phase 3: Profile editing mode
