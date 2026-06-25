@@ -313,6 +313,7 @@ static int appended_range_has_match(struct viewer_state *state, off_t start, off
 }
 
 static int handle_follow_tick(struct viewer_state *state) {
+    bool changed = false;
     off_t end = lseek(state->fd, 0, SEEK_END);
     if (end >= 0 && end > state->tail_anchor) {
         state->tail_anchor = end;
@@ -321,6 +322,7 @@ static int handle_follow_tick(struct viewer_state *state) {
             state->newer_scan_offset = end;
             state->newer_available = false;
             cache_invalidate(state);
+            changed = true;
         }
     }
     if (end >= 0 && !state->at_live_edge && !state->newer_available && state->newer_scan_offset < state->tail_anchor) {
@@ -330,14 +332,18 @@ static int handle_follow_tick(struct viewer_state *state) {
             return -1;
         }
         if (scanned_to > state->newer_scan_offset) state->newer_scan_offset = scanned_to;
-        if (has_match) state->newer_available = true;
+        if (has_match) {
+            state->newer_available = true;
+            changed = true;
+        }
     }
     if (state->follow && state->cache_reached_eof && state->is_running && !state->is_running(state->running_userdata)) {
         state->follow = false;
         state->follow_exited = true;
         cache_invalidate(state);
+        changed = true;
     }
-    return 0;
+    return changed ? 1 : 0;
 }
 
 static bool same_line(const char *a, const char *b) {
@@ -420,7 +426,7 @@ static int render(struct viewer_state *state) {
     char header[512];
     snprintf(header,
              sizeof(header),
-             "\033[H\033[2Jhold logs %s%s | filter: %s%s%s | similar: %zu | q quit\033[K\r\n",
+             "\033[?25l\033[Hhold logs %s%s | filter: %s%s%s | similar: %zu | q quit\033[K\r\n",
              state->title ? state->title : "",
              state->follow ? " [follow]" : (state->follow_exited ? " [exited]" : ""),
              state->filter[0] ? state->filter : "(type to filter)",
@@ -464,7 +470,8 @@ static int render(struct viewer_state *state) {
                  state->follow ? (state->at_live_edge ? " | Follow tail" : " | Browsing older matches") :
                                  (state->follow_exited ? " | Run exited" : ""));
     }
-    return viewer_puts(footer);
+    if (viewer_puts(footer) != 0) return -1;
+    return viewer_puts("\033[K\033[J");
 }
 
 static void push_history(struct viewer_state *state, off_t off) {
@@ -566,18 +573,22 @@ int hold_log_viewer_tty_fd(int fd,
     struct raw_terminal raw;
     if (raw_terminal_enter(&raw) != 0) return -1;
     int rc = 0;
+    bool need_render = true;
     while (1) {
-        if (render(&state) != 0) {
+        if (need_render && render(&state) != 0) {
             rc = -1;
             break;
         }
+        need_render = false;
         unsigned char printable = 0;
         enum viewer_key key = read_key(&printable, state.follow ? 250 : -1);
         if (key == VIEWER_KEY_NONE && state.follow) {
-            if (handle_follow_tick(&state) != 0) {
+            int tick = handle_follow_tick(&state);
+            if (tick < 0) {
                 rc = -1;
                 break;
             }
+            if (tick > 0) need_render = true;
             continue;
         }
         if (key == VIEWER_KEY_QUIT) {
@@ -586,18 +597,23 @@ int hold_log_viewer_tty_fd(int fd,
         if (key == VIEWER_KEY_DOWN) {
             if (state.selected + 1 < state.visible_count) state.selected++;
             else page_down(&state);
+            need_render = true;
         } else if (key == VIEWER_KEY_UP) {
             if (state.selected > 0) state.selected--;
             else page_up(&state);
+            need_render = true;
         } else if (key == VIEWER_KEY_PAGE_DOWN) {
             page_down(&state);
+            need_render = true;
         } else if (key == VIEWER_KEY_PAGE_UP) {
             page_up(&state);
+            need_render = true;
         } else if (key == VIEWER_KEY_BACKSPACE) {
             size_t n = strlen(state.filter);
             if (n > 0) {
                 state.filter[n - 1] = '\0';
                 reset_filter_navigation(&state);
+                need_render = true;
             }
         } else if (key == VIEWER_KEY_PRINTABLE) {
             size_t n = strlen(state.filter);
@@ -605,10 +621,12 @@ int hold_log_viewer_tty_fd(int fd,
                 state.filter[n] = (char)printable;
                 state.filter[n + 1] = '\0';
                 reset_filter_navigation(&state);
+                need_render = true;
             }
         } else if (key == VIEWER_KEY_TOGGLE) {
             const char *line = state.selected < state.visible_count ? state.visible[state.selected].line : NULL;
             if (toggle_example(&state, line) != 0) rc = -1;
+            need_render = true;
         }
         if (rc != 0) break;
     }
