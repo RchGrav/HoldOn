@@ -1713,6 +1713,49 @@ test_profile_start_inherits_current_environment() {
   ! printf '%s\n' "$got" | grep -qx 'seed'
 }
 
+test_docker_env_persists_with_named_profile() {
+  local out id out2 id2 got store
+  store="$HOME/.local/state/hold"
+  out=$("$HOLD_BIN" run --name envpersist -e HOLD_DOCKER_ENV=fromdocker /bin/sh -c 'printf "%s\n" "$HOLD_DOCKER_ENV"' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.2
+  got=$("$HOLD_BIN" dump "$id") || return 1
+  printf '%s\n' "$got" | grep -qx 'fromdocker' || return 1
+  grep -Fq '"env": ["HOLD_DOCKER_ENV=fromdocker"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
+
+  out2=$("$HOLD_BIN" run envpersist 2>&1) || return 1
+  id2=$(printf '%s\n' "$out2" | extract_id)
+  [ -n "$id2" ] || return 1
+  sleep 0.2
+  got=$("$HOLD_BIN" dump "$id2") || return 1
+  printf '%s\n' "$got" | grep -qx 'fromdocker'
+}
+
+test_captive_profile_env_persists_and_runs() {
+  local out id got store
+  store="$HOME/.local/state/hold"
+  cat <<'EOF' | "$HOLD_BIN" >"$TEST_ROOT/captive-env.out" 2>"$TEST_ROOT/captive-env.err" || { cat "$TEST_ROOT/captive-env.out" "$TEST_ROOT/captive-env.err" >&2; return 1; }
+enable
+configure terminal
+profile envcap
+binary /usr/bin/env
+env HOLD_CISCO_ENV cisco-value
+info
+commit
+end
+run envcap
+exit
+EOF
+  grep -q 'HOLD_CISCO_ENV=cisco-value' "$TEST_ROOT/captive-env.out" || { cat "$TEST_ROOT/captive-env.out" >&2; return 1; }
+  grep -Fq '"env": ["HOLD_CISCO_ENV=cisco-value"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
+  id=$(extract_id <"$TEST_ROOT/captive-env.out")
+  [ -n "$id" ] || { cat "$TEST_ROOT/captive-env.out" "$TEST_ROOT/captive-env.err" >&2; return 1; }
+  sleep 0.2
+  got=$("$HOLD_BIN" dump "$id") || return 1
+  printf '%s\n' "$got" | grep -qx 'HOLD_CISCO_ENV=cisco-value'
+}
+
 test_profile_transcript_import_export_roundtrip() {
   local transcript export out id got store
   store="$HOME/.local/state/hold"
@@ -3397,6 +3440,8 @@ run_test "user alias stores a direct recipe and starts/stops by alias" test_alia
 run_test "alias from relative executable keeps absolute recorded argv0" test_alias_from_relative_executable_uses_recorded_absolute_argv0
 run_test "profile start requires --force when already running and --all stops all" test_alias_multi_gate_and_all_stop
 run_test "profile start inherits current environment" test_profile_start_inherits_current_environment
+run_test "Docker --env persists with a named profile" test_docker_env_persists_with_named_profile
+run_test "captive profile env persists and runs" test_captive_profile_env_persists_and_runs
 run_test "profile transcript import/export round-trips a user-local recipe" test_profile_transcript_import_export_roundtrip
 run_test "profile name-first set command edits a user-local recipe" test_profile_name_first_set_command
 run_test "profile name-first create rename and delete manage a user-local recipe" test_profile_name_first_crud

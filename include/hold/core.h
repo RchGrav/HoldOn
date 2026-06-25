@@ -54,6 +54,7 @@ int hold_json_get_argv_display(const char *j, char *out, size_t n);
 void hold_free_argv_alloc(char **argv, int argc);
 int hold_json_get_argv_alloc(const char *j, char ***argv_out, int *argc_out);
 int hold_json_get_args_alloc(const char *j, char ***argv_out, int *argc_out);
+int hold_json_get_env_alloc(const char *j, char ***env_out, int *envc_out);
 int hold_read_owned_file_no_symlink(const char *path, char **out);
 int hold_fsync_dir_path(const char *dir);
 int hold_copy_argv(char ***out, int argc, char **argv);

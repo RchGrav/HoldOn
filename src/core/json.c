@@ -420,6 +420,10 @@ int hold_json_get_args_alloc(const char *j, char ***argv_out, int *argc_out) {
     return json_get_string_array_alloc(j, "args", argv_out, argc_out);
 }
 
+int hold_json_get_env_alloc(const char *j, char ***env_out, int *envc_out) {
+    return json_get_string_array_alloc(j, "env", env_out, envc_out);
+}
+
 int hold_copy_argv(char ***out, int argc, char **argv) {
     *out = NULL;
     if (argc <= 0 || !argv) {

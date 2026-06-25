@@ -15,17 +15,21 @@ static bool parse_docker_run_flag(const char *arg,
                                   bool *interactive,
                                   bool *tty,
                                   bool *privileged);
-static int apply_env_assignment(const char *arg);
+static int append_env_assignment(const char *arg, char ***env_out, int *envc_out);
 static int run_recipe_matches_profile(const struct hold_store *store,
                                       const char *name,
                                       int argc,
                                       char **argv,
+                                      int envc,
+                                      char **env,
                                       bool *matched);
 static int ensure_named_run_profile(const struct hold_invocation *inv,
                                     const struct hold_store *store,
                                     const char *name,
                                     int argc,
-                                    char **argv);
+                                    char **argv,
+                                    int envc,
+                                    char **env);
 static bool is_legacy_run_namespace_verb(const char *arg);
 
 static int build_cap_request_token(const char *op, bool force, char *out, size_t n) {
@@ -79,7 +83,7 @@ static bool parse_docker_run_flag(const char *arg,
     return false;
 }
 
-static int apply_env_assignment(const char *arg) {
+static int append_env_assignment(const char *arg, char ***env_out, int *envc_out) {
     const char *eq = arg ? strchr(arg, '=') : NULL;
     if (!arg || !*arg || !eq || eq == arg) {
         fprintf(stderr, "hold: error: expected KEY=VALUE after --env/-e\n");
@@ -102,6 +106,11 @@ static int apply_env_assignment(const char *arg) {
     if (setenv(key, eq + 1, 1) != 0) {
         hold_die_errno("hold: failed to set launch environment");
     }
+    char **next = realloc(*env_out, ((size_t)*envc_out + 1) * sizeof(*next));
+    if (!next) return 3;
+    next[*envc_out] = (char *)arg;
+    *env_out = next;
+    (*envc_out)++;
     return 0;
 }
 
@@ -109,6 +118,8 @@ static int run_recipe_matches_profile(const struct hold_store *store,
                                       const char *name,
                                       int argc,
                                       char **argv,
+                                      int envc,
+                                      char **env,
                                       bool *matched) {
     *matched = false;
     struct hold_profile recipe;
@@ -120,9 +131,12 @@ static int run_recipe_matches_profile(const struct hold_store *store,
         hold_free_profile(&recipe);
         return -1;
     }
-    bool same = recipe.argc == argc && !strcmp(recipe.binary_path, binary_path);
+    bool same = recipe.argc == argc && recipe.envc == envc && !strcmp(recipe.binary_path, binary_path);
     for (int i = 0; same && i < argc; i++) {
         same = !strcmp(recipe.argv[i], argv[i]);
+    }
+    for (int i = 0; same && i < envc; i++) {
+        same = recipe.env && env && !strcmp(recipe.env[i], env[i]);
     }
     *matched = same;
     hold_free_profile(&recipe);
@@ -133,7 +147,9 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
                                     const struct hold_store *store,
                                     const char *name,
                                     int argc,
-                                    char **argv) {
+                                    char **argv,
+                                    int envc,
+                                    char **env) {
     if (!name) return 0;
     if (!hold_valid_alias(name)) {
         fprintf(stderr, "hold: error: invalid profile name '%s'\n", name);
@@ -149,7 +165,7 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
     }
     if (hold_alias_exists_in_store(store, name)) {
         bool matched = false;
-        int rc = run_recipe_matches_profile(store, name, argc, argv, &matched);
+        int rc = run_recipe_matches_profile(store, name, argc, argv, envc, env, &matched);
         if (rc < 0) return 5;
         if (!matched) {
             fprintf(stderr,
@@ -169,7 +185,7 @@ static int ensure_named_run_profile(const struct hold_invocation *inv,
         }
         return 1;
     }
-    if (hold_alias_upsert_recipe(store, name, binary_path, argc, argv) != 0) {
+    if (hold_alias_upsert_recipe_env(store, name, binary_path, argc, argv, envc, env) != 0) {
         hold_die_errno("hold: failed to write profile");
     }
     hold_sig_note(inv, "hold: created profile '%s'\n", name);
@@ -222,6 +238,8 @@ int main(int argc, char **argv) {
     bool docker_tty = false;
     bool docker_privileged = false;
     const char *docker_name = NULL;
+    char **docker_env = NULL;
+    int docker_envc = 0;
     int multi_count = 1;
 
     while (argi < argc) {
@@ -249,14 +267,14 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
                 return 5;
             }
-            int env_rc = apply_env_assignment(argv[argi + 1]);
-            if (env_rc != 0) return env_rc;
+            int env_rc = append_env_assignment(argv[argi + 1], &docker_env, &docker_envc);
+            if (env_rc != 0) { free(docker_env); return env_rc; }
             argi += 2;
             continue;
         }
         if (!strncmp(argv[argi], "--env=", 6)) {
-            int env_rc = apply_env_assignment(argv[argi] + 6);
-            if (env_rc != 0) return env_rc;
+            int env_rc = append_env_assignment(argv[argi] + 6, &docker_env, &docker_envc);
+            if (env_rc != 0) { free(docker_env); return env_rc; }
             argi++;
             continue;
         }
@@ -400,18 +418,20 @@ int main(int argc, char **argv) {
                     free(cmd_argv);
                     return 5;
                 }
-                int env_rc = apply_env_assignment(argv[++i]);
+                int env_rc = append_env_assignment(argv[++i], &docker_env, &docker_envc);
                 if (env_rc != 0) {
                     free(cmd_argv);
+                    free(docker_env);
                     return env_rc;
                 }
                 continue;
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
                 !strncmp(argv[i], "--env=", 6)) {
-                int env_rc = apply_env_assignment(argv[i] + 6);
+                int env_rc = append_env_assignment(argv[i] + 6, &docker_env, &docker_envc);
                 if (env_rc != 0) {
                     free(cmd_argv);
+                    free(docker_env);
                     return env_rc;
                 }
                 continue;
@@ -678,16 +698,17 @@ int main(int argc, char **argv) {
         }
         int rc;
         if (docker_name) {
-            rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv);
+            rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv, docker_envc, docker_env);
             if (rc == 0) {
-                rc = hold_perform_start(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, docker_name);
+                rc = hold_perform_start_with_env(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, docker_name, docker_envc, docker_env);
             }
         } else if (saw_owned_delimiter) {
-            rc = hold_perform_start(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, NULL);
+            rc = hold_perform_start_with_env(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, NULL, docker_envc, docker_env);
         } else {
             rc = hold_cmd_start_action(&inv, &user_store, &system_store, argv[0], &start_store, tail, console_mode, multi, multi_count, cmd_argc, cmd_argv);
         }
         free(cmd_argv);
+        free(docker_env);
         return rc;
     }
 
@@ -707,11 +728,18 @@ int main(int argc, char **argv) {
             hold_die_errno("hold: failed to init start storage");
         }
         if (docker_name) {
-            int rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv);
-            if (rc != 0) return rc;
-            return hold_perform_start(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, docker_name);
+            int rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv, docker_envc, docker_env);
+            if (rc != 0) {
+                free(docker_env);
+                return rc;
+            }
+            rc = hold_perform_start_with_env(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, docker_name, docker_envc, docker_env);
+            free(docker_env);
+            return rc;
         }
-        return hold_perform_start(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, NULL);
+        int rc = hold_perform_start_with_env(&inv, &start_store, tail, console_mode, cmd_argc, cmd_argv, NULL, NULL, docker_envc, docker_env);
+        free(docker_env);
+        return rc;
     }
 
     if (!strcmp(command, "doctor")) {

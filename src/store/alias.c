@@ -13,6 +13,7 @@ void hold_free_aliases(struct hold_alias *entries, size_t count) {
     }
     for (size_t i = 0; i < count; i++) {
         hold_free_argv_alloc(entries[i].argv, entries[i].argc);
+        hold_free_argv_alloc(entries[i].env, entries[i].envc);
     }
     free(entries);
 }
@@ -29,6 +30,10 @@ static int parse_alias_recipe_object(const char *j, struct hold_alias *entry) {
     if (hold_json_get_args_alloc(j, &entry->argv, &entry->argc) != 0 &&
         hold_json_get_argv_alloc(j, &entry->argv, &entry->argc) != 0) {
         return -1;
+    }
+    if (hold_json_get_env_alloc(j, &entry->env, &entry->envc) != 0) {
+        entry->env = NULL;
+        entry->envc = 0;
     }
     entry->has_recipe = true;
     return 0;
@@ -183,6 +188,10 @@ static int write_aliases_atomic(const struct hold_store *store, const struct hol
             hold_json_escape(f, entries[i].binary_path);
             fprintf(f, "\", \"args\": ");
             hold_write_json_argv(f, entries[i].argc, entries[i].argv);
+            if (entries[i].envc > 0 && entries[i].env) {
+                fprintf(f, ", \"env\": ");
+                hold_write_json_argv(f, entries[i].envc, entries[i].env);
+            }
             fprintf(f, "}%s\n", i + 1 == count ? "" : ",");
         }
     }
@@ -280,8 +289,10 @@ int hold_alias_lookup_recipe(const struct hold_store *store, const char *alias, 
         }
         if (entries[i].has_recipe) {
             if (hold_checked_snprintf(recipe->binary_path, sizeof(recipe->binary_path), "%s", entries[i].binary_path) == 0 &&
-                hold_copy_argv(&recipe->argv, entries[i].argc, entries[i].argv) == 0) {
+                hold_copy_argv(&recipe->argv, entries[i].argc, entries[i].argv) == 0 &&
+                (entries[i].envc == 0 || hold_copy_argv(&recipe->env, entries[i].envc, entries[i].env) == 0)) {
                 recipe->argc = entries[i].argc;
+                recipe->envc = entries[i].envc;
                 rc = 0;
             }
             break;
@@ -300,7 +311,17 @@ int hold_alias_upsert_recipe(const struct hold_store *store,
                                const char *binary_path,
                                int argc,
                                char **argv) {
-    if (!hold_valid_alias(alias) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv) {
+    return hold_alias_upsert_recipe_env(store, alias, binary_path, argc, argv, 0, NULL);
+}
+
+int hold_alias_upsert_recipe_env(const struct hold_store *store,
+                                   const char *alias,
+                                   const char *binary_path,
+                                   int argc,
+                                   char **argv,
+                                   int envc,
+                                   char **env) {
+    if (!hold_valid_alias(alias) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv || envc < 0 || (envc > 0 && !env)) {
         errno = EINVAL;
         return -1;
     }
@@ -312,14 +333,19 @@ int hold_alias_upsert_recipe(const struct hold_store *store,
     for (size_t i = 0; i < count; i++) {
         if (strcmp(entries[i].name, alias) == 0) {
             hold_free_argv_alloc(entries[i].argv, entries[i].argc);
+            hold_free_argv_alloc(entries[i].env, entries[i].envc);
             entries[i].argv = NULL;
             entries[i].argc = 0;
+            entries[i].env = NULL;
+            entries[i].envc = 0;
             if (hold_checked_snprintf(entries[i].binary_path, sizeof(entries[i].binary_path), "%s", binary_path) != 0 ||
-                hold_copy_argv(&entries[i].argv, argc, argv) != 0) {
+                hold_copy_argv(&entries[i].argv, argc, argv) != 0 ||
+                (envc > 0 && hold_copy_argv(&entries[i].env, envc, env) != 0)) {
                 hold_free_aliases(entries, count);
                 return -1;
             }
             entries[i].argc = argc;
+            entries[i].envc = envc;
             entries[i].has_recipe = true;
             entries[i].has_hash = false;
             entries[i].hash[0] = '\0';
@@ -337,11 +363,13 @@ int hold_alias_upsert_recipe(const struct hold_store *store,
     memset(&entries[count], 0, sizeof(entries[count]));
     snprintf(entries[count].name, sizeof(entries[count].name), "%s", alias);
     if (hold_checked_snprintf(entries[count].binary_path, sizeof(entries[count].binary_path), "%s", binary_path) != 0 ||
-        hold_copy_argv(&entries[count].argv, argc, argv) != 0) {
+        hold_copy_argv(&entries[count].argv, argc, argv) != 0 ||
+        (envc > 0 && hold_copy_argv(&entries[count].env, envc, env) != 0)) {
         hold_free_aliases(entries, count + 1);
         return -1;
     }
     entries[count].argc = argc;
+    entries[count].envc = envc;
     entries[count].has_recipe = true;
     count++;
     int rc = write_aliases_atomic(store, entries, count);
@@ -367,6 +395,7 @@ int hold_alias_delete(const struct hold_store *store, const char *alias, bool *d
             continue;
         }
         hold_free_argv_alloc(entries[i].argv, entries[i].argc);
+        hold_free_argv_alloc(entries[i].env, entries[i].envc);
         for (size_t j = i + 1; j < count; j++) {
             entries[j - 1] = entries[j];
         }

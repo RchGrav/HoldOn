@@ -764,7 +764,7 @@ int hold_cmd_cap_request_action(const struct hold_invocation *inv,
     int rc = 0;
     if (!strcmp(op, "start")) {
         (void)force;
-        rc = hold_perform_start(inv, system_store, tail, console_mode, granted.argc, granted.argv, granted.binary_path, profile);
+        rc = hold_perform_start_with_env(inv, system_store, tail, console_mode, granted.argc, granted.argv, granted.binary_path, profile, granted.envc, granted.env);
     } else {
         fprintf(stderr, "hold: error: unsupported capability operation '%s'\n", op);
         rc = 5;

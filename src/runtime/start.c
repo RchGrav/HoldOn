@@ -64,6 +64,27 @@ static const char *explicit_start_argv0(bool owned, const char *command, int arg
     return NULL;
 }
 
+static int apply_child_env(int envc, char **env) {
+    for (int i = 0; i < envc; i++) {
+        const char *entry = env ? env[i] : NULL;
+        const char *eq = entry ? strchr(entry, '=') : NULL;
+        if (!entry || !*entry || !eq || eq == entry) {
+            errno = EINVAL;
+            return -1;
+        }
+        size_t key_len = (size_t)(eq - entry);
+        char key[256];
+        if (key_len >= sizeof(key)) {
+            errno = EINVAL;
+            return -1;
+        }
+        memcpy(key, entry, key_len);
+        key[key_len] = '\0';
+        if (setenv(key, eq + 1, 1) != 0) return -1;
+    }
+    return 0;
+}
+
 bool hold_start_target_is_within_invoking_home(const struct hold_invocation *inv,
                                                  bool owned,
                                                  const char *command,
@@ -99,7 +120,20 @@ int hold_perform_start(const struct hold_invocation *inv,
                          char **argv,
                          const char *exec_path,
                          const char *run_alias) {
-    if (argc <= 0 || !argv || !argv[0]) {
+    return hold_perform_start_with_env(inv, store, tail, console_mode, argc, argv, exec_path, run_alias, 0, NULL);
+}
+
+int hold_perform_start_with_env(const struct hold_invocation *inv,
+                                  const struct hold_store *store,
+                                  bool tail,
+                                  bool console_mode,
+                                  int argc,
+                                  char **argv,
+                                  const char *exec_path,
+                                  const char *run_alias,
+                                  int envc,
+                                  char **env) {
+    if (argc <= 0 || !argv || !argv[0] || envc < 0 || (envc > 0 && !env)) {
         hold_usage();
         return 5;
     }
@@ -203,6 +237,11 @@ int hold_perform_start(const struct hold_invocation *inv,
             hold_write_all(pipefd[1], &e, sizeof(e));
             _exit(127);
         }
+        if (apply_child_env(envc, env) != 0) {
+            int e = errno;
+            hold_write_all(pipefd[1], &e, sizeof(e));
+            _exit(127);
+        }
         if (console_mode) {
             int nullfd = open("/dev/null", O_RDWR);
             if (nullfd < 0 ||
@@ -247,7 +286,6 @@ int hold_perform_start(const struct hold_invocation *inv,
             close(lfd);
         }
         execv(resolved_exec_path, launch_argv);
-        /* No envp variant here: children intentionally inherit On Hold's environment. */
         int e = errno;
         hold_write_all(pipefd[1], &e, sizeof(e));
         _exit(127);
@@ -727,7 +765,7 @@ int hold_perform_profile_start(const struct hold_invocation *inv,
         fprintf(stderr, "hold: error: profile %s is unavailable\n", hash);
         return 5;
     }
-    int rc = hold_perform_start(inv, store, tail, console_mode, p.argc, p.argv, p.binary_path, alias);
+    int rc = hold_perform_start_with_env(inv, store, tail, console_mode, p.argc, p.argv, p.binary_path, alias, p.envc, p.env);
     hold_free_profile(&p);
     return rc;
 }
@@ -789,14 +827,16 @@ int hold_cmd_start_action(const struct hold_invocation *inv,
                 start_rc = 0;
                 for (int i = 0; i < starts; i++) {
                     if (target.has_recipe) {
-                        start_rc = hold_perform_start(inv,
+                        start_rc = hold_perform_start_with_env(inv,
                                                  &target.store,
                                                  tail,
                                                  console_mode,
                                                  target.recipe.argc,
                                                  target.recipe.argv,
                                                  target.recipe.binary_path,
-                                                 target.has_alias ? target.alias : NULL);
+                                                 target.has_alias ? target.alias : NULL,
+                                                 target.recipe.envc,
+                                                 target.recipe.env);
                     } else {
                         start_rc = hold_perform_profile_start(inv,
                                                          &target.store,

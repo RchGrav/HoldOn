@@ -102,6 +102,8 @@ struct hold_profile {
     char binary_path[HOLD_PATH_MAX];
     int argc;
     char **argv;
+    int envc;
+    char **env;
 };
 
 struct hold_alias {
@@ -110,6 +112,8 @@ struct hold_alias {
     char binary_path[HOLD_PATH_MAX];
     int argc;
     char **argv;
+    int envc;
+    char **env;
     bool has_hash;
     bool has_recipe;
 };

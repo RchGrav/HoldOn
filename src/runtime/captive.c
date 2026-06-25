@@ -7,6 +7,7 @@
 
 #define CAPTIVE_MAX_TOKENS 128
 #define CAPTIVE_MAX_ARGS 128
+#define CAPTIVE_MAX_ENV 128
 
 enum captive_mode {
     CAP_USER_EXEC = 0,
@@ -20,6 +21,8 @@ struct captive_profile_stage {
     char binary[HOLD_PATH_MAX];
     char *args[CAPTIVE_MAX_ARGS];
     size_t arg_count;
+    char *env[CAPTIVE_MAX_ENV];
+    size_t env_count;
     bool dirty;
 };
 
@@ -34,6 +37,7 @@ struct captive_session {
 
 static void stage_clear(struct captive_profile_stage *stage) {
     for (size_t i = 0; i < stage->arg_count; i++) free(stage->args[i]);
+    for (size_t i = 0; i < stage->env_count; i++) free(stage->env[i]);
     memset(stage, 0, sizeof(*stage));
 }
 
@@ -130,6 +134,8 @@ static void help_profile(void) {
     printf("Profile configuration commands:\n");
     printf("  binary      Set the target executable\n");
     printf("  argv        Append base argv tokens\n");
+    printf("  env         Set an environment variable\n");
+    printf("  no env      Remove environment variables\n");
     printf("  no argv     Clear base argv tokens\n");
     printf("  info        Show staged profile state\n");
     printf("  commit      Validate and save profile\n");
@@ -187,6 +193,13 @@ static void profile_info(const struct captive_profile_stage *stage) {
         for (size_t i = 0; i < stage->arg_count; i++) printf(" %s", stage->args[i]);
     }
     printf("\n");
+    printf("  env       :");
+    if (stage->env_count == 0) {
+        printf(" -");
+    } else {
+        for (size_t i = 0; i < stage->env_count; i++) printf(" %s", stage->env[i]);
+    }
+    printf("\n");
     printf("  staged    : %s\n", stage->dirty ? "uncommitted changes present" : "clean");
 }
 
@@ -208,6 +221,88 @@ static int profile_append_args(struct captive_profile_stage *stage, int argc, ch
     return 0;
 }
 
+static bool env_key_matches(const char *assignment, const char *key) {
+    size_t key_len = key ? strlen(key) : 0;
+    return assignment && key && strncmp(assignment, key, key_len) == 0 && assignment[key_len] == '=';
+}
+
+static int profile_set_env(struct captive_profile_stage *stage, int argc, char **argv) {
+    if (argc != 2 && argc != 3) {
+        fprintf(stderr, "%% Usage: env <KEY> <VALUE> or env <KEY=VALUE>\n");
+        return 5;
+    }
+    char assignment[4096];
+    if (argc == 2) {
+        const char *eq = strchr(argv[1], '=');
+        if (!eq || eq == argv[1]) {
+            fprintf(stderr, "%% Usage: env <KEY> <VALUE> or env <KEY=VALUE>\n");
+            return 5;
+        }
+        if (strlen(argv[1]) >= sizeof(assignment)) return 5;
+        memcpy(assignment, argv[1], strlen(argv[1]) + 1);
+    } else {
+        if (!argv[1] || !*argv[1] || strchr(argv[1], '=')) {
+            fprintf(stderr, "%% Invalid environment key\n");
+            return 5;
+        }
+        if (hold_checked_snprintf(assignment, sizeof(assignment), "%s=%s", argv[1], argv[2] ? argv[2] : "") != 0) {
+            return 5;
+        }
+    }
+    const char *eq = strchr(assignment, '=');
+    size_t key_len = eq ? (size_t)(eq - assignment) : 0;
+    char key[256];
+    if (key_len == 0 || key_len >= sizeof(key)) {
+        fprintf(stderr, "%% Invalid environment key\n");
+        return 5;
+    }
+    memcpy(key, assignment, key_len);
+    key[key_len] = '\0';
+    for (size_t i = 0; i < stage->env_count; i++) {
+        if (env_key_matches(stage->env[i], key)) {
+            char *copy = strdup(assignment);
+            if (!copy) return 3;
+            free(stage->env[i]);
+            stage->env[i] = copy;
+            stage->dirty = true;
+            return 0;
+        }
+    }
+    if (stage->env_count >= CAPTIVE_MAX_ENV) {
+        fprintf(stderr, "%% Too many env entries\n");
+        return 5;
+    }
+    stage->env[stage->env_count] = strdup(assignment);
+    if (!stage->env[stage->env_count]) return 3;
+    stage->env_count++;
+    stage->dirty = true;
+    return 0;
+}
+
+static int profile_no_env(struct captive_profile_stage *stage, int argc, char **argv) {
+    if (argc == 2) {
+        for (size_t i = 0; i < stage->env_count; i++) free(stage->env[i]);
+        memset(stage->env, 0, sizeof(stage->env));
+        stage->env_count = 0;
+        stage->dirty = true;
+        return 0;
+    }
+    if (argc != 3) {
+        fprintf(stderr, "%% Usage: no env [KEY]\n");
+        return 5;
+    }
+    for (size_t i = 0; i < stage->env_count; i++) {
+        if (env_key_matches(stage->env[i], argv[2])) {
+            free(stage->env[i]);
+            for (size_t j = i + 1; j < stage->env_count; j++) stage->env[j - 1] = stage->env[j];
+            stage->env[--stage->env_count] = NULL;
+            stage->dirty = true;
+            return 0;
+        }
+    }
+    return 0;
+}
+
 static int profile_commit(struct captive_session *s) {
     struct captive_profile_stage *stage = &s->profile;
     if (!stage->binary[0]) {
@@ -224,7 +319,7 @@ static int profile_commit(struct captive_session *s) {
     if (!argv) return 3;
     argv[0] = binary_path;
     for (size_t i = 0; i < stage->arg_count; i++) argv[i + 1] = stage->args[i];
-    if (hold_alias_upsert_recipe(s->user_store, stage->name, binary_path, argc, argv) != 0) {
+    if (hold_alias_upsert_recipe_env(s->user_store, stage->name, binary_path, argc, argv, (int)stage->env_count, stage->env) != 0) {
         free(argv);
         hold_die_errno("hold: failed to commit profile");
     }
@@ -260,6 +355,8 @@ static int handle_profile(struct captive_session *s, int argc, char **argv) {
         return 0;
     }
     if (!strcmp(argv[0], "argv")) return profile_append_args(&s->profile, argc, argv);
+    if (!strcmp(argv[0], "env")) return profile_set_env(&s->profile, argc, argv);
+    if (!strcmp(argv[0], "no") && argc >= 2 && !strcmp(argv[1], "env")) return profile_no_env(&s->profile, argc, argv);
     if (!strcmp(argv[0], "no") && argc == 2 && !strcmp(argv[1], "argv")) {
         for (size_t i = 0; i < s->profile.arg_count; i++) free(s->profile.args[i]);
         memset(s->profile.args, 0, sizeof(s->profile.args));
