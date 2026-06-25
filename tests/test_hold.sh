@@ -2851,6 +2851,33 @@ PY
   ! grep -q 'docker-direct' "$TEST_ROOT/docker-profiles-after-rm.out" || { cat "$TEST_ROOT/docker-profiles-after-rm.out" >&2; return 1; }
 }
 
+test_docker_unsupported_options_fail_loudly() {
+  local rc
+  set +e
+  "$HOLD_BIN" run -p 8080:80 -- /bin/true >/dev/null 2>"$TEST_ROOT/docker-publish.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { echo "run -p: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "not supported by Hold yet" "$TEST_ROOT/docker-publish.err" || { cat "$TEST_ROOT/docker-publish.err" >&2; return 1; }
+
+  set +e
+  "$HOLD_BIN" --restart=always /bin/true >/dev/null 2>"$TEST_ROOT/docker-restart.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { echo "bare --restart: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "not supported by Hold yet" "$TEST_ROOT/docker-restart.err" || { cat "$TEST_ROOT/docker-restart.err" >&2; return 1; }
+
+  set +e
+  "$HOLD_BIN" start /bin/true --detach-keys ctrl-p,ctrl-q >/dev/null 2>"$TEST_ROOT/docker-detach-keys.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { echo "start --detach-keys: rc=$rc (want 5)" >&2; return 1; }
+  grep -q "not supported by Hold yet" "$TEST_ROOT/docker-detach-keys.err" || { cat "$TEST_ROOT/docker-detach-keys.err" >&2; return 1; }
+
+  "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-unsupported-ps.out" || return 1
+  ! grep -q '/bin/true' "$TEST_ROOT/docker-unsupported-ps.out" || { cat "$TEST_ROOT/docker-unsupported-ps.out" >&2; return 1; }
+}
+
 test_hold_shell_runs_real_shell_without_creating_runid_on_exit() {
   local before after rc
   "$HOLD_BIN" help shell >"$TEST_ROOT/hold-shell-help.out" || return 1
@@ -3659,6 +3686,7 @@ run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
 run_test "hold unified CLI surface" test_hold_unified_cli_surface
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
+run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit
 run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hold_shell_detach_adopts_foreground_process_group
 run_test "captive CLI shows Cisco prompts and commits a profile" test_captive_cli_cisco_prompts_and_profile_commit

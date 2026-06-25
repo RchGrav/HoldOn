@@ -16,6 +16,7 @@ static bool parse_docker_run_flag(const char *arg,
                                   bool *tty,
                                   bool *privileged);
 static int append_env_assignment(const char *arg, char ***env_out, int *envc_out);
+static int reject_unsupported_docker_option(const char *arg);
 static int append_env_file(const char *path, char ***env_out, int *envc_out);
 static int run_recipe_matches_profile(const struct hold_store *store,
                                       const char *name,
@@ -87,6 +88,11 @@ static bool parse_docker_run_flag(const char *arg,
         return true;
     }
     return false;
+}
+
+static int reject_unsupported_docker_option(const char *arg) {
+    fprintf(stderr, "hold: error: Docker option '%s' is not supported by Hold yet\n", arg && *arg ? arg : "<unknown>");
+    return 5;
 }
 
 static int append_env_assignment(const char *arg, char ***env_out, int *envc_out) {
@@ -347,19 +353,13 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[argi], "-p") || !strcmp(argv[argi], "--publish") ||
             !strcmp(argv[argi], "-v") || !strcmp(argv[argi], "--volume") ||
             !strcmp(argv[argi], "--detach-keys") || !strcmp(argv[argi], "--restart") ||
-            !strcmp(argv[argi], "--restart-delay")) {
-            if (argi + 1 >= argc) {
-                fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
-                return 5;
-            }
-            argi += 2;
-            continue;
-        }
-        if (!strncmp(argv[argi], "--publish=", 10) || !strncmp(argv[argi], "--volume=", 9) ||
+            !strcmp(argv[argi], "--restart-delay") ||
+            !strncmp(argv[argi], "--publish=", 10) || !strncmp(argv[argi], "--volume=", 9) ||
             !strncmp(argv[argi], "--detach-keys=", 14) || !strncmp(argv[argi], "--restart=", 10) ||
             !strncmp(argv[argi], "--restart-delay=", 16)) {
-            argi++;
-            continue;
+            int unsupported_rc = reject_unsupported_docker_option(argv[argi]);
+            free(docker_env);
+            return unsupported_rc;
         }
         if (!strcmp(argv[argi], "--rm")) {
             docker_rm = true;
@@ -532,20 +532,14 @@ int main(int argc, char **argv) {
                 (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--publish") ||
                  !strcmp(argv[i], "-v") || !strcmp(argv[i], "--volume") ||
                  !strcmp(argv[i], "--detach-keys") || !strcmp(argv[i], "--restart") ||
-                 !strcmp(argv[i], "--restart-delay"))) {
-                if (i + 1 >= argc) {
-                    fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
-                    free(cmd_argv);
-                    return 5;
-                }
-                i++;
-                continue;
-            }
-            if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
-                (!strncmp(argv[i], "--publish=", 10) || !strncmp(argv[i], "--volume=", 9) ||
+                 !strcmp(argv[i], "--restart-delay") ||
+                 !strncmp(argv[i], "--publish=", 10) || !strncmp(argv[i], "--volume=", 9) ||
                  !strncmp(argv[i], "--detach-keys=", 14) || !strncmp(argv[i], "--restart=", 10) ||
                  !strncmp(argv[i], "--restart-delay=", 16))) {
-                continue;
+                int unsupported_rc = reject_unsupported_docker_option(argv[i]);
+                free(cmd_argv);
+                free(docker_env);
+                return unsupported_rc;
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) && !strcmp(argv[i], "--rm")) {
                 docker_rm = true;
