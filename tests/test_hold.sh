@@ -886,13 +886,13 @@ test_log_viewer_integrated_chrome_help_and_info() {
   set -e
   [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/viewer-chrome.err" >&2; return 1; }
   grep -q 'HELP Ctrl-H' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
-  grep -q 'Hold log viewer' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
+  grep -q 'Space exclude similar' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
   grep -q 'Process information' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
   grep -q "runid: $id" "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
   grep -q 'PRESS ANY KEY TO EXIT' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
 }
 
-test_log_viewer_space_collects_example_without_immediate_filter() {
+test_log_viewer_space_excludes_and_ctrl_r_resets_filters() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
@@ -901,12 +901,13 @@ test_log_viewer_space_collects_example_without_immediate_filter() {
   [ -n "$id" ] || return 1
   sleep 0.3
   set +e
-  python3 -c 'import sys,time; sys.stdout.write(" q"); sys.stdout.flush(); time.sleep(0.1)' |
+  python3 -c 'import sys,time; sys.stdout.buffer.write(b" \x12q"); sys.stdout.flush(); time.sleep(0.1)' |
     script -qfec "stty rows 8 cols 90; $HOLD_BIN logs $id --interactive" /dev/null >"$TEST_ROOT/viewer-example-mark.out" 2>"$TEST_ROOT/viewer-example-mark.err"
   rc=$?
   set -e
   [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/viewer-example-mark.err" >&2; return 1; }
-  grep -q 'examples: 1' "$TEST_ROOT/viewer-example-mark.out" || { cat "$TEST_ROOT/viewer-example-mark.out" >&2; return 1; }
+  grep -q 'excluding similar' "$TEST_ROOT/viewer-example-mark.out" || { cat "$TEST_ROOT/viewer-example-mark.out" >&2; return 1; }
+  grep -q 'Ctrl-R reset' "$TEST_ROOT/viewer-example-mark.out" || { cat "$TEST_ROOT/viewer-example-mark.out" >&2; return 1; }
   grep -q 'unrelated payment ok' "$TEST_ROOT/viewer-example-mark.out" || { cat "$TEST_ROOT/viewer-example-mark.out" >&2; return 1; }
 }
 
@@ -3189,7 +3190,7 @@ run_test "internal viewer follows live logs through filter engine" test_log_view
 run_test "logs follow opens dynamic TTY filter" test_hold_logs_follow_opens_dynamic_tty_filter
 run_test "internal viewer follow filters dynamically from typed TTY input" test_log_view_follow_dynamic_tty_filter
 run_test "log viewer shows integrated chrome help and info overlays" test_log_viewer_integrated_chrome_help_and_info
-run_test "log viewer space marks examples without immediate similarity filter" test_log_viewer_space_collects_example_without_immediate_filter
+run_test "log viewer space excludes similar lines and Ctrl-R resets filters" test_log_viewer_space_excludes_and_ctrl_r_resets_filters
 run_test "internal viewer selection movement uses cached filter rows" test_log_view_selection_uses_cached_rows
 run_test "internal viewer follow pages older and newer filtered windows" test_log_view_follow_pages_filtered_windows
 run_test "internal viewer follow marks newer data while browsed away" test_log_view_follow_browsed_away_marks_newer_without_yank

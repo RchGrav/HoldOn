@@ -1236,7 +1236,7 @@ q                quit viewer
 
 Backspace to an empty query restores the full view immediately. A dedicated clear key is optional, not required.
 
-Current branch v1 evidence: `hold logs <target>` routes to the viewer engine; `--plain` forces script-style output and `--interactive` fails closed when no TTY is available. The intended live-log UX is dynamic and full-screen: `hold logs <target>` / `hold logs <target> --follow` opens the viewer, printable keys update the top filter field per keystroke, Backspace relaxes the filter, and matching live output appears without restarting the command. CLI prefilter flags are not part of the product UX; seeded filters may exist only as internal regression/debug hooks. Non-TTY follow streams until the recorded run exits; TTY follow refreshes while running and marks the view exited when the run ends. The v1 keys are printable type-to-filter, Backspace, Space to toggle the highlighted line as a similarity example, arrows/`j`/`k`, PgUp/PgDn, and `q`.
+Current branch v1 evidence: `hold logs <target>` routes to the viewer engine; `--plain` forces script-style output and `--interactive` fails closed when no TTY is available. The intended live-log UX is dynamic and full-screen: `hold logs <target>` / `hold logs <target> --follow` opens the viewer, printable keys update the top filter field per keystroke, Backspace relaxes the filter, and matching live output appears without restarting the command. CLI prefilter flags are not part of the product UX; seeded filters may exist only as internal regression/debug hooks. Non-TTY follow streams until the recorded run exits; TTY follow refreshes while running and marks the view exited when the run ends. The v1 keys are printable type-to-filter, Backspace, Space to exclude lines similar to the highlighted line, Ctrl-R to reset filters/exclusions, Ctrl-H for bottom-strip help, Ctrl-I for process info, arrows/`j`/`k`, PgUp/PgDn, and `q`.
 
 ### 6.1 Search vs filter
 
@@ -1521,7 +1521,7 @@ Resolved decisions for the current 0.4.0 direction:
 3. Use `run` and `stop` as profile lifecycle verbs, not as a namespace for managing existing executions. `hold run web logs` remains invalid.
 4. Use concrete run IDs as the safest singular handles for `stop`, `kill`, `logs`, `inspect`, and targeted `rm`. Profile-name selectors are allowed only when they resolve safely.
 5. Keep `prune` for bulk inactive history cleanup and `rm` for targeted deletion; `rm --force` is the explicit stop-and-remove form for an active concrete run ID.
-6. Treat current Space-selected, local deterministic similarity as the minimum implemented v1 slice until the fuller `S/X/A/D/U` interaction model is implemented.
+6. Treat current Space-selected, local deterministic exclusion as the minimum implemented v1 slice until the fuller `S/X/A/D/U` interaction model is implemented. The 0.4.0 default interaction is subtractive: Space removes things that look like the selected row, while Ctrl-R restores the full view.
 
 Still-open release decisions:
 

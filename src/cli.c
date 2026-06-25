@@ -188,7 +188,7 @@ static int help_action(const char *action) {
         printf("usage: hold run [--tail|-f] [--console] -- <cmd> [args...]\n\nStart an ad-hoc command explicitly. The -- delimiter keeps command args unambiguous.\n");
     } else if (!strcmp(action, "tail") || !strcmp(action, "logs")) {
         if (!strcmp(action, "logs")) {
-            printf("usage: hold logs <target> [--follow|-f] [--plain|--interactive]\n\nOpen the log viewer for a run. In a TTY, type directly in the full-screen viewer to filter dynamically; Backspace relaxes the filter and Space marks the highlighted line as a similarity example. Non-TTY output stays script-friendly.\n");
+            printf("usage: hold logs <target> [--follow|-f] [--plain|--interactive]\n\nOpen the log viewer for a run. In a TTY, type directly in the full-screen viewer to filter dynamically; Backspace relaxes the filter, Space excludes lines like the highlighted line, and Ctrl-R resets filters. Non-TTY output stays script-friendly.\n");
         } else {
             printf("usage: hold tail <target>\n\nFollow live output for a profile match, or follow an id's log directly.\n");
         }

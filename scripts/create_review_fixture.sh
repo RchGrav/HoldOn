@@ -168,7 +168,7 @@ Viewer things to try:
     RARE_MATCH
 
   Backspace relaxes the filter.
-  Space toggles the highlighted line as a similarity example.
+  Space excludes lines like the highlighted line; Ctrl-R resets filters.
   PgUp/PgDn move through filtered windows.
   q quits.
 

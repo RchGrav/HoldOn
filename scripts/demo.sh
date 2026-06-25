@@ -75,7 +75,7 @@ Inside the full-screen log viewer, just type to filter:
   payment
   RARE_MATCH
 
-Backspace relaxes the filter. Space marks a highlighted line as a similarity example. q quits.
+Backspace relaxes the filter. Space excludes lines like the highlighted line. Ctrl-R resets filters. q quits.
 
 Saved variables:
   source $state_file

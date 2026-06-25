@@ -86,6 +86,30 @@ static void test_similarity_filter(void) {
     close(fd);
 }
 
+static void test_exclude_similarity_filter(void) {
+    int fd = temp_log_fd();
+    write_all_or_die(fd,
+                     "info request completed normally\n"
+                     "warn database connection timeout retrying\n"
+                     "debug cache warmed successfully\n");
+    rewind_or_die(fd);
+
+    struct hold_log_filter_options opts;
+    hold_log_filter_options_init(&opts);
+    opts.exclude_examples[0] = "error database connection timeout";
+    opts.exclude_example_count = 1;
+    opts.similar_threshold = 0.45;
+    opts.max_results = 3;
+    opts.visible_capacity = 3;
+    struct hold_log_filter_result result;
+    EXPECT_TRUE("exclude filter succeeds", hold_log_filter_fd(fd, &opts, &result) == 0);
+    EXPECT_TRUE("exclude removes one similar line", result.line_count == 2);
+    EXPECT_TRUE("exclude keeps normal info", result.line_count > 0 && strstr(result.lines[0], "request completed"));
+    EXPECT_TRUE("exclude keeps debug", result.line_count > 1 && strstr(result.lines[1], "cache warmed"));
+    hold_log_filter_result_free(&result);
+    close(fd);
+}
+
 static void test_match_ring_wraps(void) {
     int fd = temp_log_fd();
     write_all_or_die(fd, "hit-0\nhit-1\nhit-2\nhit-3\n");
@@ -203,6 +227,7 @@ static void test_backward_sparse_window_reports_partial(void) {
 int main(void) {
     test_literal_filter();
     test_similarity_filter();
+    test_exclude_similarity_filter();
     test_match_ring_wraps();
     test_lazy_large_file_stops_after_first_screen();
     test_next_offset_resumes_next_screen();

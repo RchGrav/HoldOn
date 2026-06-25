@@ -18,6 +18,8 @@ struct filter_state {
     const struct hold_log_filter_options *opts;
     struct term_profile examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
     size_t example_count;
+    struct term_profile exclude_examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
+    size_t exclude_example_count;
 };
 
 void hold_log_filter_options_init(struct hold_log_filter_options *opts) {
@@ -82,12 +84,12 @@ static double dice_similarity(const struct term_profile *a, const struct term_pr
     return (2.0 * (double)common) / (double)(a->count + b->count);
 }
 
-static bool line_matches_similarity(const struct filter_state *state, const char *line) {
-    if (state->example_count == 0) return false;
+static bool line_matches_profiles(const struct term_profile *examples, size_t count, double threshold, const char *line) {
+    if (count == 0) return false;
     struct term_profile line_profile;
     build_profile(line, &line_profile);
-    for (size_t i = 0; i < state->example_count; i++) {
-        if (dice_similarity(&line_profile, &state->examples[i]) >= state->opts->similar_threshold) return true;
+    for (size_t i = 0; i < count; i++) {
+        if (dice_similarity(&line_profile, &examples[i]) >= threshold) return true;
     }
     return false;
 }
@@ -95,10 +97,15 @@ static bool line_matches_similarity(const struct filter_state *state, const char
 static bool line_matches(const struct filter_state *state, const char *line) {
     bool has_literal = state->opts->literal && *state->opts->literal;
     bool has_similarity = state->example_count > 0;
-    if (!has_literal && !has_similarity) return true;
-    if (has_literal && strstr(line, state->opts->literal)) return true;
-    if (has_similarity && line_matches_similarity(state, line)) return true;
-    return false;
+    bool included = !has_literal && !has_similarity;
+    if (has_literal && strstr(line, state->opts->literal)) included = true;
+    if (has_similarity && line_matches_profiles(state->examples, state->example_count, state->opts->similar_threshold, line)) included = true;
+    if (!included) return false;
+    if (state->exclude_example_count > 0 &&
+        line_matches_profiles(state->exclude_examples, state->exclude_example_count, state->opts->similar_threshold, line)) {
+        return false;
+    }
+    return true;
 }
 
 static char *dup_line(const char *line, size_t n) {
@@ -158,8 +165,14 @@ static int prepare_state(const struct hold_log_filter_options *opts, struct filt
         errno = EINVAL;
         return -1;
     }
+    if (opts->exclude_example_count > HOLD_LOG_VIEWER_MAX_EXAMPLES) {
+        errno = EINVAL;
+        return -1;
+    }
     state->example_count = opts->similar_example_count;
     for (size_t i = 0; i < state->example_count; i++) build_profile(opts->similar_examples[i], &state->examples[i]);
+    state->exclude_example_count = opts->exclude_example_count;
+    for (size_t i = 0; i < state->exclude_example_count; i++) build_profile(opts->exclude_examples[i], &state->exclude_examples[i]);
     return 0;
 }
 

@@ -10,6 +10,8 @@ struct hold_log_filter_options {
     const char *literal;
     const char *similar_examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
     size_t similar_example_count;
+    const char *exclude_examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
+    size_t exclude_example_count;
     double similar_threshold;
     size_t visible_capacity;
     size_t match_ring_capacity;
