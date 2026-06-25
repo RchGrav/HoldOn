@@ -5,6 +5,7 @@
 # Local release-artifact staging (scripts/release_build.sh, scripts/linux.sh release)
 /dist/
 /review-builds/
+/review-fixtures/
 
 # Local agent instructions
 
