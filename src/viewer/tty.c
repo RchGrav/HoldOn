@@ -767,8 +767,16 @@ static void page_down(struct viewer_state *state) {
      * browsed page.  EOF itself is not a page.  Advancing to next_offset here
      * creates the apparent wrap/loop back to the bottom (or an empty tail
      * page) while the operator is trying to stay in manual navigation.
+     *
+     * The filter can stop exactly after filling the screen with the final real
+     * line before it performs the read that would mark reached_eof.  Treat a
+     * next anchor at-or-past the observed file end as EOF too, so repeated
+     * PageDown stops on the last real page instead of moving to an empty
+     * bottom page.
      */
     if (state->cache_reached_eof) return;
+    off_t end = state->follow ? state->tail_anchor : lseek(state->fd, 0, SEEK_END);
+    if (end >= 0 && state->next_offset >= end) return;
     push_history(state, state->start_offset);
     state->start_offset = state->next_offset;
     state->selected = 0;

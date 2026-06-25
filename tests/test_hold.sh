@@ -1089,6 +1089,8 @@ if not stats:
 last = stats[-1]
 if last[4] != 'browsing':
     raise SystemExit(f'expected manual browsing to remain active, got {last}')
+if last[1] == last[3]:
+    raise SystemExit(f'PageDown advanced to an empty EOF anchor instead of stopping on the last real page: {last}')
 final = plain[-1400:]
 for wanted in ('loopend-line-9', 'loopend-line-10', 'loopend-line-11', 'loopend-line-12'):
     if wanted not in final:
