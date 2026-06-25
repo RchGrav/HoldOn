@@ -1845,6 +1845,38 @@ EOF
   ! printf '%s\n' "$got" | grep -q 'HOLD_OLD_ENV=old' || { printf '%s\n' "$got" >&2; return 1; }
 }
 
+
+test_captive_profile_quoted_argv_and_env_round_trip() {
+  local rc id got store
+  store="$HOME/.local/state/hold"
+  set +e
+  cat <<'EOF' | "$HOLD_BIN" >"$TEST_ROOT/captive-quoted.out" 2>"$TEST_ROOT/captive-quoted.err"
+enable
+configure terminal
+profile quoted
+binary /bin/sh
+argv -c 'printf "%s\n" "$HOLD_QUOTED_ENV"; printf "%s\n" "arg with spaces"'
+env HOLD_QUOTED_ENV "value with spaces"
+commit
+end
+run quoted
+exit
+EOF
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-quoted.out" "$TEST_ROOT/captive-quoted.err" >&2; return 1; }
+  grep -q 'Profile committed.' "$TEST_ROOT/captive-quoted.out" || { cat "$TEST_ROOT/captive-quoted.out" >&2; return 1; }
+  grep -Fq '"env": ["HOLD_QUOTED_ENV=value with spaces"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
+  grep -Fq 'HOLD_QUOTED_ENV' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
+  grep -Fq 'arg with spaces' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
+  id=$(extract_id <"$TEST_ROOT/captive-quoted.out")
+  [ -n "$id" ] || { cat "$TEST_ROOT/captive-quoted.out" "$TEST_ROOT/captive-quoted.err" >&2; return 1; }
+  sleep 0.2
+  got=$("$HOLD_BIN" logs --plain -n 50 "$id") || return 1
+  printf '%s\n' "$got" | grep -qx 'value with spaces' || { printf '%s\n' "$got" >&2; return 1; }
+  printf '%s\n' "$got" | grep -qx 'arg with spaces' || { printf '%s\n' "$got" >&2; return 1; }
+}
+
 test_profile_transcript_import_export_roundtrip() {
   local transcript export out id got store
   store="$HOME/.local/state/hold"
@@ -3557,6 +3589,7 @@ run_test "profile start inherits current environment" test_profile_start_inherit
 run_test "Docker --env persists with a named profile" test_docker_env_persists_with_named_profile
 run_test "captive profile env persists and runs" test_captive_profile_env_persists_and_runs
 run_test "captive profile mode loads and edits an existing recipe" test_captive_profile_loads_existing_recipe_for_edit
+run_test "captive profile mode preserves quoted argv and env values" test_captive_profile_quoted_argv_and_env_round_trip
 run_test "profile transcript import/export round-trips a user-local recipe" test_profile_transcript_import_export_roundtrip
 run_test "profile name-first set command edits a user-local recipe" test_profile_name_first_set_command
 run_test "profile name-first create rename and delete manage a user-local recipe" test_profile_name_first_crud

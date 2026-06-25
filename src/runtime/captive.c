@@ -109,28 +109,31 @@ static int split_line(char *line, char **tokens, int *count) {
             return 5;
         }
         char *out = p;
+        char *in = p;
         tokens[n++] = out;
         char quote = 0;
-        while (*p) {
-            char c = *p++;
+        while (*in) {
+            char c = *in++;
             if (quote) {
                 if (c == quote) {
                     quote = 0;
-                    out = p - 1;
-                } else if (c == '\\' && *p) {
-                    *out++ = *p++;
+                } else if (c == '\\' && quote != '\'' && *in) {
+                    *out++ = *in++;
                 } else {
                     *out++ = c;
                 }
                 continue;
             }
+            if (c == '\n' || c == '\r' || isspace((unsigned char)c)) {
+                break;
+            }
             if (c == '\'' || c == '"') {
                 quote = c;
-                out = p - 1;
                 continue;
             }
-            if (isspace((unsigned char)c)) {
-                break;
+            if (c == '\\' && *in) {
+                *out++ = *in++;
+                continue;
             }
             *out++ = c;
         }
@@ -139,6 +142,7 @@ static int split_line(char *line, char **tokens, int *count) {
             return 5;
         }
         *out = '\0';
+        p = in;
     }
     *count = n;
     return 0;
