@@ -688,7 +688,13 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
                 lseek(fd, 0, SEEK_END);
             }
         }
-        rc = hold_log_viewer_tty_fd(fd, target_token, &opts, follow ? &follow_opts : NULL, debug_stats);
+        struct hold_log_viewer_context viewer_context = {
+            .run_id = r.id[0] ? r.id : target.id,
+            .profile = r.has_alias ? r.alias : NULL,
+            .command = r.cmdline,
+            .log_path = r.log_path,
+        };
+        rc = hold_log_viewer_tty_fd(fd, target_token, &opts, follow ? &follow_opts : NULL, &viewer_context, debug_stats);
         if (rc != 0) {
             close(fd);
             free(targets);

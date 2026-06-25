@@ -41,6 +41,13 @@ struct hold_log_viewer_follow {
     void *userdata;
 };
 
+struct hold_log_viewer_context {
+    const char *run_id;
+    const char *profile;
+    const char *command;
+    const char *log_path;
+};
+
 void hold_log_filter_options_init(struct hold_log_filter_options *opts);
 void hold_log_filter_result_free(struct hold_log_filter_result *result);
 int hold_log_filter_fd(int fd,
@@ -55,6 +62,7 @@ int hold_log_viewer_tty_fd(int fd,
                              const char *title,
                              const struct hold_log_filter_options *opts,
                              const struct hold_log_viewer_follow *follow,
+                             const struct hold_log_viewer_context *context,
                              bool debug_stats);
 
 #endif /* HOLD_LOG_VIEWER_H */

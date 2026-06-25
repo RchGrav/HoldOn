@@ -19,7 +19,16 @@ enum viewer_key {
     VIEWER_KEY_PAGE_DOWN,
     VIEWER_KEY_BACKSPACE,
     VIEWER_KEY_TOGGLE,
+    VIEWER_KEY_HELP,
+    VIEWER_KEY_INFO,
+    VIEWER_KEY_FILTER_TOGGLE,
     VIEWER_KEY_PRINTABLE
+};
+
+enum viewer_overlay {
+    VIEWER_OVERLAY_NONE = 0,
+    VIEWER_OVERLAY_HELP,
+    VIEWER_OVERLAY_INFO
 };
 
 struct viewer_row {
@@ -35,10 +44,14 @@ struct viewer_state {
     bool follow_exited;
     hold_log_viewer_running_fn is_running;
     void *running_userdata;
+    struct hold_log_viewer_context context;
     struct hold_log_filter_options base_opts;
     char filter[VIEWER_FILTER_MAX + 1];
+    bool filters_enabled;
+    bool examples_enabled;
     char *examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
     size_t example_count;
+    enum viewer_overlay overlay;
     off_t start_offset;
     off_t history[VIEWER_OFFSET_HISTORY_MAX];
     size_t history_count;
@@ -166,8 +179,11 @@ static enum viewer_key read_key(unsigned char *printable, int timeout_ms) {
     }
     if (read_byte(&c) != 0) return VIEWER_KEY_QUIT;
     if (c == 3 || c == 4 || c == 'q' || c == 'Q') return VIEWER_KEY_QUIT;
+    if (c == 8) return VIEWER_KEY_HELP;
+    if (c == 9) return VIEWER_KEY_INFO;
+    if (c == 6) return VIEWER_KEY_FILTER_TOGGLE;
     if (c == ' ' || c == '\r' || c == '\n') return c == ' ' ? VIEWER_KEY_TOGGLE : VIEWER_KEY_DOWN;
-    if (c == 127 || c == 8) return VIEWER_KEY_BACKSPACE;
+    if (c == 127) return VIEWER_KEY_BACKSPACE;
     if (c == 'j') return VIEWER_KEY_DOWN;
     if (c == 'k') return VIEWER_KEY_UP;
     if (c == 'f' || c == 6) return VIEWER_KEY_PAGE_DOWN;
@@ -262,6 +278,16 @@ static void cache_invalidate(struct viewer_state *state) {
 
 static void configure_filter_opts(const struct viewer_state *state, struct hold_log_filter_options *opts);
 
+static bool refresh_terminal_size(struct viewer_state *state) {
+    size_t old_rows = state->rows, old_cols = state->cols;
+    terminal_size(&state->rows, &state->cols);
+    if (old_rows && (old_rows != state->rows || old_cols != state->cols)) {
+        cache_invalidate(state);
+        return true;
+    }
+    return false;
+}
+
 static void reset_filter_navigation(struct viewer_state *state) {
     if (state->follow) {
         off_t end = lseek(state->fd, 0, SEEK_END);
@@ -296,7 +322,7 @@ static int appended_range_has_match(struct viewer_state *state, off_t start, off
     opts.max_results = 1;
     opts.match_ring_capacity = 1;
 
-    size_t visible_rows = state->rows > 4 ? state->rows - 4 : 1;
+    size_t visible_rows = state->rows > 2 ? state->rows - 2 : 1;
     opts.scan_byte_budget = visible_rows * VIEWER_SCAN_BYTES_PER_ROW;
     off_t appended_bytes = end - start;
     if (appended_bytes > 0 && (uintmax_t)appended_bytes < (uintmax_t)opts.scan_byte_budget) {
@@ -358,7 +384,7 @@ static int toggle_example(struct viewer_state *state, const char *line) {
             for (size_t j = i + 1; j < state->example_count; j++) state->examples[j - 1] = state->examples[j];
             state->example_count--;
             state->examples[state->example_count] = NULL;
-            reset_filter_navigation(state);
+            if (state->example_count == 0) state->examples_enabled = false;
             return 0;
         }
     }
@@ -366,16 +392,16 @@ static int toggle_example(struct viewer_state *state, const char *line) {
     char *copy = strdup(line);
     if (!copy) return -1;
     state->examples[state->example_count++] = copy;
-    reset_filter_navigation(state);
+    state->examples_enabled = false;
     return 0;
 }
 
 static void configure_filter_opts(const struct viewer_state *state, struct hold_log_filter_options *opts) {
     *opts = state->base_opts;
-    opts->literal = state->filter[0] ? state->filter : NULL;
-    opts->similar_example_count = state->example_count;
-    for (size_t i = 0; i < state->example_count; i++) opts->similar_examples[i] = state->examples[i];
-    size_t visible_rows = state->rows > 4 ? state->rows - 4 : 1;
+    opts->literal = (state->filters_enabled && state->filter[0]) ? state->filter : NULL;
+    opts->similar_example_count = state->filters_enabled && state->examples_enabled ? state->example_count : 0;
+    for (size_t i = 0; i < opts->similar_example_count; i++) opts->similar_examples[i] = state->examples[i];
+    size_t visible_rows = state->rows > 2 ? state->rows - 2 : 1;
     opts->visible_capacity = visible_rows;
     opts->max_results = visible_rows;
     if (opts->match_ring_capacity < visible_rows * 4) opts->match_ring_capacity = visible_rows * 4;
@@ -394,7 +420,7 @@ static void write_sanitized_line(const char *line, size_t width) {
 static int refill_cache(struct viewer_state *state) {
     struct hold_log_filter_options opts;
     configure_filter_opts(state, &opts);
-    size_t visible_rows = state->rows > 4 ? state->rows - 4 : 1;
+    size_t visible_rows = state->rows > 2 ? state->rows - 2 : 1;
     size_t scan_budget = visible_rows * VIEWER_SCAN_BYTES_PER_ROW;
     struct hold_log_filter_result result;
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
@@ -417,25 +443,153 @@ static int refill_cache(struct viewer_state *state) {
     return rc;
 }
 
+static const char *viewer_run_label(const struct viewer_state *state) {
+    if (state->context.run_id && *state->context.run_id) return state->context.run_id;
+    return state->title && *state->title ? state->title : "-";
+}
+
+static void put_bar_text(char *bar, size_t width, size_t pos, const char *text) {
+    if (!bar || !text || pos >= width) return;
+    size_t room = width - pos;
+    size_t n = strlen(text);
+    if (n <= room) {
+        memcpy(bar + pos, text, n);
+        return;
+    }
+    if (room >= 4) {
+        memcpy(bar + pos, text, room - 3);
+        memcpy(bar + pos + room - 3, "...", 3);
+    } else {
+        memcpy(bar + pos, text, room);
+    }
+}
+
+static int render_bottom_bar(const struct viewer_state *state) {
+    size_t width = state->cols ? state->cols : 80;
+    char *bar = malloc(width + 1);
+    if (!bar) return -1;
+    memset(bar, ' ', width);
+    bar[width] = '\0';
+
+    char left[96];
+    snprintf(left, sizeof(left), " %s ", viewer_run_label(state));
+    put_bar_text(bar, width, 0, left);
+
+    const char *profile = state->context.profile && *state->context.profile ? state->context.profile : "-";
+    char center[ALIAS_MAX_LEN + 32];
+    snprintf(center, sizeof(center), " profile: %s ", profile);
+    size_t center_len = strlen(center);
+    if (center_len + 2 < width) put_bar_text(bar, width, (width - center_len) / 2, center);
+
+    const char *right = " HELP Ctrl-H ";
+    size_t right_len = strlen(right);
+    if (right_len < width) put_bar_text(bar, width, width - right_len, right);
+
+    int rc = viewer_puts("\033[7m");
+    if (rc == 0) rc = viewer_write_all(STDOUT_FILENO, bar, width);
+    if (rc == 0) rc = viewer_puts("\033[0m");
+    free(bar);
+    return rc;
+}
+
+static int viewer_move(size_t row, size_t col) {
+    char seq[64];
+    snprintf(seq, sizeof(seq), "\033[%zu;%zuH", row, col);
+    return viewer_puts(seq);
+}
+
+static int draw_modal_line(size_t row, size_t col, size_t inner_width, const char *text) {
+    if (viewer_move(row, col) != 0) return -1;
+    if (viewer_puts("│ ") != 0) return -1;
+    size_t used = 0;
+    if (text) {
+        for (const unsigned char *p = (const unsigned char *)text; *p && used < inner_width; p++, used++) {
+            char out = (isprint(*p) || *p == '\t') ? (char)*p : ' ';
+            if (viewer_write_all(STDOUT_FILENO, &out, 1) != 0) return -1;
+        }
+    }
+    while (used++ < inner_width) {
+        if (viewer_puts(" ") != 0) return -1;
+    }
+    return viewer_puts(" │");
+}
+
+static int draw_modal_rule(size_t row, size_t col, size_t inner_width, bool top) {
+    if (viewer_move(row, col) != 0) return -1;
+    if (viewer_puts(top ? "┌" : "└") != 0) return -1;
+    for (size_t i = 0; i < inner_width + 2; i++) {
+        if (viewer_puts("─") != 0) return -1;
+    }
+    return viewer_puts(top ? "┐" : "┘");
+}
+
+static int render_overlay(const struct viewer_state *state) {
+    if (state->overlay == VIEWER_OVERLAY_NONE) return 0;
+    size_t width = state->cols > 12 ? state->cols - 8 : state->cols;
+    if (width > 72) width = 72;
+    if (width < 32) width = 32;
+    size_t inner = width - 4;
+    size_t col = state->cols > width ? (state->cols - width) / 2 + 1 : 1;
+    size_t row = state->rows > 9 ? (state->rows - 8) / 2 + 1 : 1;
+
+    if (draw_modal_rule(row, col, inner, true) != 0) return -1;
+    if (state->overlay == VIEWER_OVERLAY_HELP) {
+        if (draw_modal_line(row + 1, col, inner, "Hold log viewer") != 0) return -1;
+        if (draw_modal_line(row + 2, col, inner, "type text: filter live | Backspace: relax filter") != 0) return -1;
+        if (draw_modal_line(row + 3, col, inner, "Space: mark selected line as an example") != 0) return -1;
+        if (draw_modal_line(row + 4, col, inner, "Ctrl-F: apply/pause filter and examples") != 0) return -1;
+        if (draw_modal_line(row + 5, col, inner, "Arrows/j/k/PgUp/PgDn: move | q: quit") != 0) return -1;
+        if (draw_modal_line(row + 6, col, inner, "PRESS ANY KEY TO EXIT") != 0) return -1;
+    } else {
+        char line[160];
+        snprintf(line, sizeof(line), "runid: %s", viewer_run_label(state));
+        if (draw_modal_line(row + 1, col, inner, "Process information") != 0) return -1;
+        if (draw_modal_line(row + 2, col, inner, line) != 0) return -1;
+        snprintf(line, sizeof(line), "profile: %s", state->context.profile && *state->context.profile ? state->context.profile : "-");
+        if (draw_modal_line(row + 3, col, inner, line) != 0) return -1;
+        snprintf(line,
+                 sizeof(line),
+                 "filter: %s%.80s examples=%zu%s",
+                 state->filters_enabled ? "" : "paused ",
+                 state->filter[0] ? state->filter : "-",
+                 state->example_count,
+                 state->examples_enabled ? " applied" : "");
+        if (draw_modal_line(row + 4, col, inner, line) != 0) return -1;
+        snprintf(line, sizeof(line), "command: %.96s", state->context.command && *state->context.command ? state->context.command : "-");
+        if (draw_modal_line(row + 5, col, inner, line) != 0) return -1;
+        if (draw_modal_line(row + 6, col, inner, "PRESS ANY KEY TO EXIT") != 0) return -1;
+    }
+    return draw_modal_rule(row + 7, col, inner, false);
+}
+
 static int render(struct viewer_state *state) {
-    size_t old_rows = state->rows, old_cols = state->cols;
-    terminal_size(&state->rows, &state->cols);
-    if (old_rows && (old_rows != state->rows || old_cols != state->cols)) cache_invalidate(state);
+    refresh_terminal_size(state);
     if (!state->cache_valid && refill_cache(state) != 0) return -1;
 
     char header[512];
-    snprintf(header,
-             sizeof(header),
-             "\033[?25l\033[Hhold logs %s%s | filter: %s%s%s | similar: %zu | q quit\033[K\r\n",
-             state->title ? state->title : "",
-             state->follow ? " [follow]" : (state->follow_exited ? " [exited]" : ""),
-             state->filter[0] ? state->filter : "(type to filter)",
-             state->cache_scan_limited ? " | partial" : (state->cache_reached_eof ? " | EOF" : ""),
-             state->newer_available ? " | newer below" : "",
-             state->example_count);
+    if (state->filter[0]) {
+        snprintf(header,
+                 sizeof(header),
+                 "\033[?25l\033[Hfilter: %s%s%s | examples: %zu%s\033[K\r\n",
+                 state->filter,
+                 state->filters_enabled ? "" : " [paused]",
+                 state->cache_scan_limited ? " | partial" : (state->cache_reached_eof ? " | EOF" : ""),
+                 state->example_count,
+                 state->newer_available ? " | newer below" : "");
+    } else {
+        snprintf(header,
+                 sizeof(header),
+                 "\033[?25l\033[Hhold logs %s%s%s%s | examples: %zu%s\033[K\r\n",
+                 viewer_run_label(state),
+                 state->follow ? "  ● live" : (state->follow_exited ? "  exited" : ""),
+                 state->filters_enabled ? "" : "  filters paused",
+                 state->cache_scan_limited ? " | partial" : (state->cache_reached_eof ? " | EOF" : ""),
+                 state->example_count,
+                 state->newer_available ? " | newer below" : "");
+    }
     if (viewer_puts(header) != 0) return -1;
 
-    size_t body_rows = state->rows > 4 ? state->rows - 4 : 1;
+    size_t body_rows = state->rows > 2 ? state->rows - 2 : 1;
     size_t line_width = state->cols;
     for (size_t i = 0; i < body_rows; i++) {
         if (i < state->visible_count) {
@@ -448,11 +602,11 @@ static int render(struct viewer_state *state) {
         viewer_puts("\r\n");
     }
 
-    char footer[512];
     if (state->debug_stats) {
+        char footer[512];
         snprintf(footer,
                  sizeof(footer),
-                 "scan_gen=%zu offset=%lld prev=%lld next=%lld scanned=%zu bytes=%zu matches=%zu%s%s | arrows/j/k PgUp/PgDn space=similar backspace=filter\033[K",
+                 "scan_gen=%zu offset=%lld prev=%lld next=%lld scanned=%zu bytes=%zu matches=%zu%s%s | Ctrl-H help Ctrl-I info Ctrl-F filter\033[K",
                  state->scan_generation,
                  (long long)state->start_offset,
                  (long long)state->prev_offset,
@@ -462,14 +616,11 @@ static int render(struct viewer_state *state) {
                  state->cache_match_count,
                  state->follow ? (state->at_live_edge ? " follow=tail" : " follow=browsing") : (state->follow_exited ? " follow=exited" : ""),
                  state->newer_available ? " newer=yes" : "");
+        if (viewer_puts(footer) != 0) return -1;
     } else {
-        snprintf(footer,
-                 sizeof(footer),
-                 "arrows/j/k move | PgUp/PgDn page | type filters | Backspace clears | Space toggles similarity%s\033[K",
-                 state->follow ? (state->at_live_edge ? " | Follow tail" : " | Browsing older matches") :
-                                 (state->follow_exited ? " | Run exited" : ""));
+        if (render_bottom_bar(state) != 0) return -1;
     }
-    if (viewer_puts(footer) != 0) return -1;
+    if (render_overlay(state) != 0) return -1;
     return viewer_puts("\033[K\033[J");
 }
 
@@ -538,6 +689,7 @@ int hold_log_viewer_tty_fd(int fd,
                              const char *title,
                              const struct hold_log_filter_options *opts,
                              const struct hold_log_viewer_follow *follow,
+                             const struct hold_log_viewer_context *context,
                              bool debug_stats) {
     if (fd < 0 || !opts || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
         errno = ENOTTY;
@@ -551,7 +703,9 @@ int hold_log_viewer_tty_fd(int fd,
     state.follow = follow && follow->enabled;
     state.is_running = follow ? follow->is_running : NULL;
     state.running_userdata = follow ? follow->userdata : NULL;
+    if (context) state.context = *context;
     state.base_opts = *opts;
+    state.filters_enabled = true;
     off_t current = lseek(fd, 0, SEEK_CUR);
     state.start_offset = current >= 0 ? current : 0;
     state.tail_anchor = state.start_offset;
@@ -580,14 +734,22 @@ int hold_log_viewer_tty_fd(int fd,
         }
         need_render = false;
         unsigned char printable = 0;
-        enum viewer_key key = read_key(&printable, state.follow ? 250 : -1);
-        if (key == VIEWER_KEY_NONE && state.follow) {
-            int tick = handle_follow_tick(&state);
-            if (tick < 0) {
-                rc = -1;
-                break;
+        enum viewer_key key = read_key(&printable, 250);
+        if (key == VIEWER_KEY_NONE) {
+            if (refresh_terminal_size(&state)) need_render = true;
+            if (state.follow) {
+                int tick = handle_follow_tick(&state);
+                if (tick < 0) {
+                    rc = -1;
+                    break;
+                }
+                if (tick > 0) need_render = true;
             }
-            if (tick > 0) need_render = true;
+            continue;
+        }
+        if (state.overlay != VIEWER_OVERLAY_NONE) {
+            state.overlay = VIEWER_OVERLAY_NONE;
+            need_render = true;
             continue;
         }
         if (key == VIEWER_KEY_QUIT) {
@@ -611,6 +773,7 @@ int hold_log_viewer_tty_fd(int fd,
             size_t n = strlen(state.filter);
             if (n > 0) {
                 state.filter[n - 1] = '\0';
+                state.filters_enabled = true;
                 reset_filter_navigation(&state);
                 need_render = true;
             }
@@ -619,6 +782,7 @@ int hold_log_viewer_tty_fd(int fd,
             if (n < VIEWER_FILTER_MAX) {
                 state.filter[n] = (char)printable;
                 state.filter[n + 1] = '\0';
+                state.filters_enabled = true;
                 reset_filter_navigation(&state);
                 need_render = true;
             }
@@ -626,6 +790,26 @@ int hold_log_viewer_tty_fd(int fd,
             const char *line = state.selected < state.visible_count ? state.visible[state.selected].line : NULL;
             if (toggle_example(&state, line) != 0) rc = -1;
             need_render = true;
+        } else if (key == VIEWER_KEY_HELP) {
+            state.overlay = VIEWER_OVERLAY_HELP;
+            need_render = true;
+        } else if (key == VIEWER_KEY_INFO) {
+            state.overlay = VIEWER_OVERLAY_INFO;
+            need_render = true;
+        } else if (key == VIEWER_KEY_FILTER_TOGGLE) {
+            bool has_filters = state.filter[0] || state.example_count > 0;
+            if (has_filters) {
+                if (state.example_count > 0 && !state.examples_enabled) {
+                    state.filters_enabled = true;
+                    state.examples_enabled = true;
+                } else if (!state.filters_enabled) {
+                    state.filters_enabled = true;
+                } else {
+                    state.filters_enabled = false;
+                }
+                reset_filter_navigation(&state);
+                need_render = true;
+            }
         }
         if (rc != 0) break;
     }
