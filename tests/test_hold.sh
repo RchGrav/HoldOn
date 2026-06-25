@@ -2878,6 +2878,26 @@ test_docker_unsupported_options_fail_loudly() {
   ! grep -q '/bin/true' "$TEST_ROOT/docker-unsupported-ps.out" || { cat "$TEST_ROOT/docker-unsupported-ps.out" >&2; return 1; }
 }
 
+test_docker_interactive_stdin_pipes_to_child() {
+  local out id
+  out=$(printf 'stdin-i-ok\n' | "$HOLD_BIN" run -i -f -- /bin/cat 2>"$TEST_ROOT/docker-i.err") || {
+    cat "$TEST_ROOT/docker-i.err" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  grep -q '^stdin-i-ok$' <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
+
+  out=$(printf 'stdin-no-i\n' | "$HOLD_BIN" run -f -- /bin/cat 2>"$TEST_ROOT/docker-no-i.err") || {
+    cat "$TEST_ROOT/docker-no-i.err" >&2
+    return 1
+  }
+  if grep -q '^stdin-no-i$' <<<"$out"; then
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+}
+
 test_hold_shell_runs_real_shell_without_creating_runid_on_exit() {
   local before after rc
   "$HOLD_BIN" help shell >"$TEST_ROOT/hold-shell-help.out" || return 1
@@ -3687,6 +3707,7 @@ run_test "argument edge cases" test_argument_edges
 run_test "hold unified CLI surface" test_hold_unified_cli_surface
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
+run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit
 run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hold_shell_detach_adopts_foreground_process_group
 run_test "captive CLI shows Cisco prompts and commits a profile" test_captive_cli_cisco_prompts_and_profile_commit

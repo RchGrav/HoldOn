@@ -49,6 +49,7 @@ static int perform_explicit_start_options(const struct hold_invocation *inv,
                                             bool tail,
                                             bool console_mode,
                                             bool auto_remove,
+                                            bool interactive_stdin,
                                             int argc,
                                             char **argv);
 static void spawn_auto_remove_watcher(const struct hold_store *store, const struct hold_run_record *record);
@@ -176,7 +177,7 @@ int hold_perform_start_with_env(const struct hold_invocation *inv,
                                   const char *run_alias,
                                   int envc,
                                   char **env) {
-    return hold_perform_start_with_env_options(inv, store, tail, console_mode, false, argc, argv, exec_path, run_alias, envc, env);
+    return hold_perform_start_with_env_options(inv, store, tail, console_mode, false, false, argc, argv, exec_path, run_alias, envc, env);
 }
 
 int hold_perform_start_with_env_options(const struct hold_invocation *inv,
@@ -184,6 +185,7 @@ int hold_perform_start_with_env_options(const struct hold_invocation *inv,
                                           bool tail,
                                           bool console_mode,
                                           bool auto_remove,
+                                          bool interactive_stdin,
                                           int argc,
                                           char **argv,
                                           const char *exec_path,
@@ -323,14 +325,16 @@ int hold_perform_start_with_env_options(const struct hold_invocation *inv,
                                       resolved_exec_path);
             _exit(127);
         }
-        int nullfd = open("/dev/null", O_RDONLY);
-        if (nullfd < 0 || dup2(nullfd, STDIN_FILENO) < 0) {
-            int e = errno;
-            hold_write_all(pipefd[1], &e, sizeof(e));
-            _exit(127);
-        }
-        if (nullfd > 2) {
-            close(nullfd);
+        if (!interactive_stdin) {
+            int nullfd = open("/dev/null", O_RDONLY);
+            if (nullfd < 0 || dup2(nullfd, STDIN_FILENO) < 0) {
+                int e = errno;
+                hold_write_all(pipefd[1], &e, sizeof(e));
+                _exit(127);
+            }
+            if (nullfd > 2) {
+                close(nullfd);
+            }
         }
 
         int lfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
@@ -788,13 +792,14 @@ static int resolve_start_profile_target(const struct hold_invocation *inv,
 int hold_elevate_start_token(const char *program,
                                bool tail,
                                bool console_mode,
+                               bool interactive_stdin,
                                const char *token_atom,
                                const char *hash,
                                bool multi,
                                int multi_count) {
     char token[8 + ALIAS_MAX_LEN + 1 + PROFILE_HASH_STR_LEN];
     char count_buf[32];
-    char *canon[7];
+    char *canon[10];
     int n = 0;
     canon[n++] = "start";
     if (tail) {
@@ -802,6 +807,18 @@ int hold_elevate_start_token(const char *program,
     }
     if (console_mode) {
         canon[n++] = "--console";
+    }
+    if (interactive_stdin) {
+        canon[n++] = "--interactive";
+    }
+    if (multi) {
+        if (multi_count == 1) {
+            canon[n++] = "--force";
+        } else {
+            canon[n++] = "--multi";
+            snprintf(count_buf, sizeof(count_buf), "%d", multi_count);
+            canon[n++] = count_buf;
+        }
     }
     if (hash && hold_valid_alias(token_atom) && hold_valid_profile_hash(hash)) {
         canon[n++] = "00000000";
@@ -812,13 +829,6 @@ int hold_elevate_start_token(const char *program,
         return 3;
     }
     canon[n++] = token;
-    if (multi) {
-        canon[n++] = "--multi";
-        if (multi_count != 1) {
-            snprintf(count_buf, sizeof(count_buf), "%d", multi_count);
-            canon[n++] = count_buf;
-        }
-    }
     return hold_elevate_with_sudo_canonical(program, n, canon);
 }
 
@@ -827,6 +837,7 @@ static int hold_perform_profile_start_options(const struct hold_invocation *inv,
                                                 bool tail,
                                                 bool console_mode,
                                                 bool auto_remove,
+                                                bool interactive_stdin,
                                                 const char *hash,
                                                 const char *alias) {
     struct hold_profile p;
@@ -834,7 +845,7 @@ static int hold_perform_profile_start_options(const struct hold_invocation *inv,
         fprintf(stderr, "hold: error: profile %s is unavailable\n", hash);
         return 5;
     }
-    int rc = hold_perform_start_with_env_options(inv, store, tail, console_mode, auto_remove, p.argc, p.argv, p.binary_path, alias, p.envc, p.env);
+    int rc = hold_perform_start_with_env_options(inv, store, tail, console_mode, auto_remove, interactive_stdin, p.argc, p.argv, p.binary_path, alias, p.envc, p.env);
     hold_free_profile(&p);
     return rc;
 }
@@ -846,7 +857,7 @@ int hold_perform_profile_start(const struct hold_invocation *inv,
                                  bool console_mode,
                                  const char *hash,
                                  const char *alias) {
-    return hold_perform_profile_start_options(inv, store, tail, console_mode, false, hash, alias);
+    return hold_perform_profile_start_options(inv, store, tail, console_mode, false, false, hash, alias);
 }
 
 int hold_cmd_start_action(const struct hold_invocation *inv,
@@ -860,7 +871,7 @@ int hold_cmd_start_action(const struct hold_invocation *inv,
                             int multi_count,
                             int argc,
                             char **argv) {
-    return hold_cmd_start_action_options(inv, user_store, system_store, program, fallback_store, tail, console_mode, false, multi, multi_count, argc, argv);
+    return hold_cmd_start_action_options(inv, user_store, system_store, program, fallback_store, tail, console_mode, false, false, multi, multi_count, argc, argv);
 }
 
 int hold_cmd_start_action_options(const struct hold_invocation *inv,
@@ -871,6 +882,7 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                     bool tail,
                                     bool console_mode,
                                     bool auto_remove,
+                                    bool interactive_stdin,
                                     bool multi,
                                     int multi_count,
                                     int argc,
@@ -895,6 +907,7 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                     start_rc = hold_elevate_start_token(program,
                                                    tail,
                                                    console_mode,
+                                                   interactive_stdin,
                                                    target.has_alias ? target.alias : target.hash,
                                                    target.has_alias ? target.hash : NULL,
                                                    false,
@@ -926,6 +939,7 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                                  tail,
                                                  console_mode,
                                                  auto_remove,
+                                                 interactive_stdin,
                                                  target.recipe.argc,
                                                  target.recipe.argv,
                                                  target.recipe.binary_path,
@@ -938,6 +952,7 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                                          tail,
                                                          console_mode,
                                                          auto_remove,
+                                                         interactive_stdin,
                                                          target.hash,
                                                          target.has_alias ? target.alias : NULL);
                     }
@@ -955,7 +970,7 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
         fprintf(stderr, "hold: error: --multi applies only to profile starts\n");
         return 5;
     }
-    return perform_explicit_start_options(inv, fallback_store, tail, console_mode, auto_remove, argc, argv);
+    return perform_explicit_start_options(inv, fallback_store, tail, console_mode, auto_remove, interactive_stdin, argc, argv);
 }
 
 int hold_ensure_start_store_for_command(const struct hold_invocation *inv,
@@ -986,6 +1001,7 @@ static int perform_explicit_start_options(const struct hold_invocation *inv,
                                             bool tail,
                                             bool console_mode,
                                             bool auto_remove,
+                                            bool interactive_stdin,
                                             int argc,
                                             char **argv) {
     if (argc <= 0) {
@@ -998,7 +1014,7 @@ static int perform_explicit_start_options(const struct hold_invocation *inv,
         shell_argv[1] = "-c";
         shell_argv[2] = argv[0];
         shell_argv[3] = NULL;
-        return hold_perform_start_with_env_options(inv, store, tail, console_mode, auto_remove, 3, shell_argv, NULL, NULL, 0, NULL);
+        return hold_perform_start_with_env_options(inv, store, tail, console_mode, auto_remove, interactive_stdin, 3, shell_argv, NULL, NULL, 0, NULL);
     }
-    return hold_perform_start_with_env_options(inv, store, tail, console_mode, auto_remove, argc, argv, NULL, NULL, 0, NULL);
+    return hold_perform_start_with_env_options(inv, store, tail, console_mode, auto_remove, interactive_stdin, argc, argv, NULL, NULL, 0, NULL);
 }

@@ -658,9 +658,7 @@ int main(int argc, char **argv) {
     if (docker_detach) {
         tail = false;
     }
-    if (docker_interactive && !docker_tty) {
-        /* Parsed for Docker-shaped CLI compatibility; non-PTY stdin plumbing is a later runner slice. */
-    }
+    bool interactive_stdin = docker_interactive && !docker_tty;
     if (inv.elevated && !inv.euid_root) {
         fprintf(stderr, "hold: internal error: --elevated without root authority\n");
         if (owned) {
@@ -711,6 +709,7 @@ int main(int argc, char **argv) {
                         rc = hold_elevate_start_token(argv[0],
                                                  tail,
                                                  console_mode,
+                                                 interactive_stdin,
                                                  hold_valid_alias(atom) ? atom : hash,
                                                  hold_valid_alias(atom) ? hash : NULL,
                                                  false,
@@ -731,7 +730,7 @@ int main(int argc, char **argv) {
             free(cmd_argv);
             return canonical_rc;
         }
-        int rc = hold_elevate_with_sudo_parsed(argv[0], owned, command, tail, console_mode, docker_rm, all, print_cmd, multi, multi_count, force_raw, cmd_argc, cmd_argv);
+        int rc = hold_elevate_with_sudo_parsed(argv[0], owned, command, tail, console_mode, docker_rm, interactive_stdin, all, print_cmd, multi, multi_count, force_raw, cmd_argc, cmd_argv);
         if (owned) {
             free(cmd_argv);
         }
@@ -790,12 +789,12 @@ int main(int argc, char **argv) {
         if (docker_name) {
             rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv, docker_envc, docker_env);
             if (rc == 0) {
-                rc = hold_perform_start_with_env_options(&inv, &start_store, tail, console_mode, docker_rm, cmd_argc, cmd_argv, NULL, docker_name, docker_envc, docker_env);
+                rc = hold_perform_start_with_env_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin, cmd_argc, cmd_argv, NULL, docker_name, docker_envc, docker_env);
             }
         } else if (saw_owned_delimiter) {
-            rc = hold_perform_start_with_env_options(&inv, &start_store, tail, console_mode, docker_rm, cmd_argc, cmd_argv, NULL, NULL, docker_envc, docker_env);
+            rc = hold_perform_start_with_env_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin, cmd_argc, cmd_argv, NULL, NULL, docker_envc, docker_env);
         } else {
-            rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, tail, console_mode, docker_rm, multi, multi_count, cmd_argc, cmd_argv);
+            rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, tail, console_mode, docker_rm, interactive_stdin, multi, multi_count, cmd_argc, cmd_argv);
         }
         free(cmd_argv);
         free(docker_env);
@@ -823,11 +822,11 @@ int main(int argc, char **argv) {
                 free(docker_env);
                 return rc;
             }
-            rc = hold_perform_start_with_env_options(&inv, &start_store, tail, console_mode, docker_rm, cmd_argc, cmd_argv, NULL, docker_name, docker_envc, docker_env);
+            rc = hold_perform_start_with_env_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin, cmd_argc, cmd_argv, NULL, docker_name, docker_envc, docker_env);
             free(docker_env);
             return rc;
         }
-        int rc = hold_perform_start_with_env_options(&inv, &start_store, tail, console_mode, docker_rm, cmd_argc, cmd_argv, NULL, NULL, docker_envc, docker_env);
+        int rc = hold_perform_start_with_env_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin, cmd_argc, cmd_argv, NULL, NULL, docker_envc, docker_env);
         free(docker_env);
         return rc;
     }
@@ -1049,7 +1048,7 @@ int main(int argc, char **argv) {
             if (hold_ensure_start_store_for_command(&inv, requested_system, true, "start", 1, start_argv, &start_store) != 0) {
                 hold_die_errno("hold: failed to init start storage");
             }
-            int rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, p_tail, p_console, docker_rm, p_multi, p_multi_count, 1, start_argv);
+            int rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, p_tail, p_console, docker_rm, interactive_stdin, p_multi, p_multi_count, 1, start_argv);
             free(cmd_argv);
             return rc;
         }
@@ -1082,7 +1081,7 @@ int main(int argc, char **argv) {
             }
             hold_die_errno("hold: failed to init start storage");
         }
-        int rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, tail, console_mode, docker_rm, multi, multi_count, cmd_argc, cmd_argv);
+        int rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, tail, console_mode, docker_rm, interactive_stdin, multi, multi_count, cmd_argc, cmd_argv);
         free(cmd_argv);
         return rc;
     }

@@ -115,6 +115,7 @@ int hold_elevate_with_sudo_parsed(const char *program,
                                     bool tail,
                                     bool console_mode,
                                     bool auto_remove,
+                                    bool interactive_stdin,
                                     bool all,
                                     bool print_cmd,
                                     bool multi,
@@ -132,6 +133,9 @@ int hold_elevate_with_sudo_parsed(const char *program,
             extra += 1;
         }
         if ((!strcmp(command, "start") || !strcmp(command, "run")) && auto_remove) {
+            extra += 1;
+        }
+        if ((!strcmp(command, "start") || !strcmp(command, "run")) && interactive_stdin) {
             extra += 1;
         }
         if (all) {
@@ -177,6 +181,9 @@ int hold_elevate_with_sudo_parsed(const char *program,
         }
         if ((!strcmp(command, "start") || !strcmp(command, "run")) && auto_remove) {
             canon[n++] = "--rm";
+        }
+        if ((!strcmp(command, "start") || !strcmp(command, "run")) && interactive_stdin) {
+            canon[n++] = "--interactive";
         }
         if (all) {
             canon[n++] = "--all";
