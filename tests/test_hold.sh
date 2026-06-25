@@ -988,6 +988,40 @@ PY
 }
 
 
+test_log_view_follow_page_up_after_top_page_down_returns_to_top() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in $(seq 1 60); do echo "navloop-line-$i"; done; sleep 0.3' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.3
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[5~" * 20); out.flush(); time.sleep(0.1); out.write(b"\x1b[6~"); out.flush(); time.sleep(0.1); out.write(b"\x1b[5~"); out.flush(); time.sleep(0.1); out.write(b"q"); out.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 6 cols 120; $HOLD_BIN logs $id --interactive --follow --debug-stats" /dev/null >"$TEST_ROOT/view-follow-top-down-up.out" 2>"$TEST_ROOT/view-follow-top-down-up.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow-top-down-up.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-follow-top-down-up.out" <<'PY' || { cat "$TEST_ROOT/view-follow-top-down-up.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+) prev=(\d+) next=(\d+).*?follow=(tail|browsing|exited)', plain)
+if not stats:
+    raise SystemExit('missing debug stats')
+last = stats[-1]
+if last[1] != '0' or last[4] != 'browsing':
+    raise SystemExit(f'expected PageUp after PageDown from top to return to offset 0 browsing page, got {last}')
+final = plain[-1200:]
+for wanted in ('navloop-line-1', 'navloop-line-2', 'navloop-line-3', 'navloop-line-4'):
+    if wanted not in final:
+        raise SystemExit(f'final page did not return to top line {wanted}')
+if 'navloop-line-8' in final and 'navloop-line-1' not in final:
+    raise SystemExit('final page stayed on the newer page instead of returning to top')
+PY
+}
+
+
 test_log_view_follow_top_refills_as_live_log_grows() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
@@ -3828,6 +3862,7 @@ run_test "log viewer space excludes similar lines and Ctrl-R resets filters" tes
 run_test "internal viewer selection movement uses cached filter rows" test_log_view_selection_uses_cached_rows
 run_test "internal viewer follow pages older and newer filtered windows" test_log_view_follow_pages_filtered_windows
 run_test "internal viewer follow page-up stays at the first log page" test_log_view_follow_page_up_stays_at_start
+run_test "internal viewer follow page-up returns to top after paging down" test_log_view_follow_page_up_after_top_page_down_returns_to_top
 run_test "internal viewer follow keeps top pinned while live log grows" test_log_view_follow_top_refills_as_live_log_grows
 run_test "internal viewer follow page-up stops at first filtered match" test_log_view_follow_page_up_stops_at_first_filtered_match
 run_test "internal viewer printable f starts the dynamic filter" test_log_view_printable_f_starts_dynamic_filter
