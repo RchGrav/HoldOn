@@ -1087,6 +1087,37 @@ if 'growtop-line-12' in final:
 PY
 }
 
+test_log_view_follow_cursor_navigation_disables_tail_yank() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'for i in $(seq 1 12); do echo "cursor-yank-line-$i"; done; for i in $(seq 13 40); do sleep 0.04; echo "cursor-yank-line-$i"; done; sleep 0.2' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.15
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[B\x1b[B\x1b[A"); out.flush(); time.sleep(0.7); out.write(b"q"); out.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 8 cols 120; $HOLD_BIN logs $id --interactive --follow --debug-stats" /dev/null >"$TEST_ROOT/view-follow-cursor-yank.out" 2>"$TEST_ROOT/view-follow-cursor-yank.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow-cursor-yank.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-follow-cursor-yank.out" <<'PY' || { cat "$TEST_ROOT/view-follow-cursor-yank.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+stats = re.findall(r'scan_gen=(\d+) offset=(\d+) prev=(\d+) next=(\d+).*?follow=(tail|browsing|exited)', plain)
+if not stats:
+    raise SystemExit('missing debug stats')
+if stats[-1][4] != 'browsing':
+    raise SystemExit(f'cursor navigation did not leave live-tail mode: {stats[-1]}')
+final = plain[-1600:]
+if 'cursor-yank-line-40' in final:
+    raise SystemExit('cursor navigation was yanked back to the newest tail line')
+if 'newer=yes' not in final:
+    raise SystemExit('browsed-away viewer did not mark newer matching data')
+PY
+}
+
 
 test_log_view_follow_page_up_stops_at_first_filtered_match() {
   command -v script >/dev/null 2>&1 || skip "script not available"
@@ -4006,6 +4037,7 @@ run_test "internal viewer follow page-up stays at the first log page" test_log_v
 run_test "internal viewer follow oldest page does not wrap back to tail" test_log_view_follow_oldest_page_does_not_wrap_to_tail
 run_test "internal viewer follow page-up returns to top after paging down" test_log_view_follow_page_up_after_top_page_down_returns_to_top
 run_test "internal viewer follow keeps top pinned while live log grows" test_log_view_follow_top_refills_as_live_log_grows
+run_test "internal viewer cursor navigation disables live tail yank" test_log_view_follow_cursor_navigation_disables_tail_yank
 run_test "internal viewer follow page-up stops at first filtered match" test_log_view_follow_page_up_stops_at_first_filtered_match
 run_test "internal viewer printable f starts the dynamic filter" test_log_view_printable_f_starts_dynamic_filter
 run_test "internal viewer follow page-up still works after the run exits" test_log_view_follow_exited_page_up_keeps_backward_navigation

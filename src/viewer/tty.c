@@ -698,7 +698,14 @@ static void pin_to_oldest_visible_page(struct viewer_state *state) {
     cache_invalidate(state);
 }
 
+static void enter_browsing_mode(struct viewer_state *state) {
+    if (!state->follow || !state->at_live_edge) return;
+    state->at_live_edge = false;
+    state->newer_scan_offset = state->tail_anchor;
+}
+
 static void page_up(struct viewer_state *state) {
+    enter_browsing_mode(state);
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         state->at_live_edge = false;
         if (state->at_oldest_edge ||
@@ -802,6 +809,7 @@ int hold_log_viewer_tty_fd(int fd,
             else page_down(&state);
             need_render = true;
         } else if (key == VIEWER_KEY_UP) {
+            enter_browsing_mode(&state);
             if (state.selected > 0) state.selected--;
             else page_up(&state);
             need_render = true;
