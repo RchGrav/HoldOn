@@ -424,6 +424,14 @@ int hold_json_get_env_alloc(const char *j, char ***env_out, int *envc_out) {
     return json_get_string_array_alloc(j, "env", env_out, envc_out);
 }
 
+int hold_json_get_ports_alloc(const char *j, char ***ports_out, int *portc_out) {
+    return json_get_string_array_alloc(j, "ports", ports_out, portc_out);
+}
+
+int hold_json_get_volumes_alloc(const char *j, char ***volumes_out, int *volumec_out) {
+    return json_get_string_array_alloc(j, "volumes", volumes_out, volumec_out);
+}
+
 int hold_copy_argv(char ***out, int argc, char **argv) {
     *out = NULL;
     if (argc <= 0 || !argv) {

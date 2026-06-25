@@ -2834,7 +2834,7 @@ test_sudo_context_can_stop_unique_user_local_run() {
 }
 
 test_hold_unified_cli_surface() {
-  local out id id2
+  local out id id2 id3
   out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo hold-run-line' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
@@ -2967,13 +2967,6 @@ test_docker_run_foreground_follows_output_by_default() {
 test_docker_unsupported_options_fail_loudly() {
   local rc
   set +e
-  "$HOLD_BIN" run -p 8080:80 -- /bin/true >/dev/null 2>"$TEST_ROOT/docker-publish.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 5 ] || { echo "run -p: rc=$rc (want 5)" >&2; return 1; }
-  grep -q "not supported by Hold yet" "$TEST_ROOT/docker-publish.err" || { cat "$TEST_ROOT/docker-publish.err" >&2; return 1; }
-
-  set +e
   "$HOLD_BIN" --restart=always /bin/true >/dev/null 2>"$TEST_ROOT/docker-restart.err"
   rc=$?
   set -e
@@ -2989,6 +2982,59 @@ test_docker_unsupported_options_fail_loudly() {
 
   "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-unsupported-ps.out" || return 1
   ! grep -q '/bin/true' "$TEST_ROOT/docker-unsupported-ps.out" || { cat "$TEST_ROOT/docker-unsupported-ps.out" >&2; return 1; }
+}
+
+test_docker_publish_and_volume_record_metadata() {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id id2
+  out=$("$HOLD_BIN" run -d --name docker-meta -p 8080:3000 --publish=127.0.0.1:8443:443 -v "$TEST_ROOT:/work" --volume=cache:/cache /bin/sh -c 'echo docker-meta; sleep 0.1' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  sleep 0.2
+  "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/docker-meta-run.json" || return 1
+  "$HOLD_BIN" profile export docker-meta --json >"$TEST_ROOT/docker-meta-profile.json" || return 1
+  out=$("$HOLD_BIN" run -d docker-meta 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id2=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id2" ] || { printf '%s\n' "$out" >&2; return 1; }
+  sleep 0.2
+  "$HOLD_BIN" inspect "$id2" >"$TEST_ROOT/docker-meta-replay.json" || return 1
+  out=$("$HOLD_BIN" run -d -p 9000:9000 -v "$TEST_ROOT:/adhoc" /bin/sh -c 'echo adhoc-meta; sleep 0.1' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id3=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id3" ] || { printf '%s\n' "$out" >&2; return 1; }
+  sleep 0.2
+  "$HOLD_BIN" inspect "$id3" >"$TEST_ROOT/docker-meta-adhoc.json" || return 1
+  "$HOLD_BIN" stop "$id" "$id2" "$id3" >/dev/null 2>&1 || true
+  python3 - "$TEST_ROOT/docker-meta-run.json" "$TEST_ROOT/docker-meta-profile.json" "$TEST_ROOT/docker-meta-replay.json" "$TEST_ROOT/docker-meta-adhoc.json" "$TEST_ROOT" <<'PY' || {
+import json, sys
+run = json.load(open(sys.argv[1], encoding='utf-8'))[0]
+profile = json.load(open(sys.argv[2], encoding='utf-8'))
+replay = json.load(open(sys.argv[3], encoding='utf-8'))[0]
+adhoc = json.load(open(sys.argv[4], encoding='utf-8'))[0]
+root = sys.argv[5]
+ports = ["8080:3000", "127.0.0.1:8443:443"]
+volumes = [f"{root}:/work", "cache:/cache"]
+for label, obj in (("run", run), ("profile", profile), ("replay", replay)):
+    if obj.get("ports") != ports:
+        raise SystemExit(f"{label} ports mismatch: {obj.get('ports')!r}")
+    if obj.get("volumes") != volumes:
+        raise SystemExit(f"{label} volumes mismatch: {obj.get('volumes')!r}")
+if adhoc.get("ports") != ["9000:9000"]:
+    raise SystemExit(f"adhoc ports mismatch: {adhoc.get('ports')!r}")
+if adhoc.get("volumes") != [f"{root}:/adhoc"]:
+    raise SystemExit(f"adhoc volumes mismatch: {adhoc.get('volumes')!r}")
+PY
+    cat "$TEST_ROOT/docker-meta-run.json" "$TEST_ROOT/docker-meta-profile.json" "$TEST_ROOT/docker-meta-replay.json" "$TEST_ROOT/docker-meta-adhoc.json" >&2
+    return 1
+  }
 }
 
 test_docker_interactive_stdin_pipes_to_child() {
@@ -3902,6 +3948,7 @@ run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and
 run_test "Docker bare launch foreground follows output by default" test_docker_bare_launch_foreground_follows_output_by_default
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
+run_test "Docker publish and volume flags record metadata" test_docker_publish_and_volume_record_metadata
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
 run_test "run IDs and named profiles normalize relative file args" test_runid_and_named_profile_normalize_relative_file_args
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit

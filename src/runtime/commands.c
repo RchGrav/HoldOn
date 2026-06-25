@@ -283,6 +283,18 @@ static int profile_export_json(const char *name, const struct hold_profile *reci
     hold_json_escape(stdout, recipe->binary_path);
     fputs("\",\n  \"args\": ", stdout);
     hold_write_json_argv(stdout, recipe->argc, recipe->argv);
+    if (recipe->envc > 0 && recipe->env) {
+        fputs(",\n  \"env\": ", stdout);
+        hold_write_json_argv(stdout, recipe->envc, recipe->env);
+    }
+    if (recipe->portc > 0 && recipe->ports) {
+        fputs(",\n  \"ports\": ", stdout);
+        hold_write_json_argv(stdout, recipe->portc, recipe->ports);
+    }
+    if (recipe->volumec > 0 && recipe->volumes) {
+        fputs(",\n  \"volumes\": ", stdout);
+        hold_write_json_argv(stdout, recipe->volumec, recipe->volumes);
+    }
     fputs("\n}\n", stdout);
     return ferror(stdout) ? 3 : 0;
 }

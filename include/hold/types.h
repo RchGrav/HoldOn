@@ -46,6 +46,10 @@ struct hold_run_record {
     bool has_invocation;
     bool has_alias;
     bool has_console;
+    int portc;
+    char **ports;
+    int volumec;
+    char **volumes;
 };
 
 enum run_state { STATE_RUNNING, STATE_EXITED, STATE_STALE, STATE_FAILED, STATE_UNKNOWN };
@@ -104,6 +108,10 @@ struct hold_profile {
     char **argv;
     int envc;
     char **env;
+    int portc;
+    char **ports;
+    int volumec;
+    char **volumes;
 };
 
 struct hold_alias {
@@ -114,6 +122,10 @@ struct hold_alias {
     char **argv;
     int envc;
     char **env;
+    int portc;
+    char **ports;
+    int volumec;
+    char **volumes;
     bool has_hash;
     bool has_recipe;
 };

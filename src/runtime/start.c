@@ -192,7 +192,30 @@ int hold_perform_start_with_env_options(const struct hold_invocation *inv,
                                           const char *run_alias,
                                           int envc,
                                           char **env) {
-    if (argc <= 0 || !argv || !argv[0] || envc < 0 || (envc > 0 && !env)) {
+    return hold_perform_start_with_metadata_options(inv, store, tail, console_mode, auto_remove, interactive_stdin,
+                                                    argc, argv, exec_path, run_alias, envc, env, 0, NULL, 0, NULL);
+}
+
+int hold_perform_start_with_metadata_options(const struct hold_invocation *inv,
+                                               const struct hold_store *store,
+                                               bool tail,
+                                               bool console_mode,
+                                               bool auto_remove,
+                                               bool interactive_stdin,
+                                               int argc,
+                                               char **argv,
+                                               const char *exec_path,
+                                               const char *run_alias,
+                                               int envc,
+                                               char **env,
+                                               int portc,
+                                               char **ports,
+                                               int volumec,
+                                               char **volumes) {
+    if (argc <= 0 || !argv || !argv[0] ||
+        envc < 0 || (envc > 0 && !env) ||
+        portc < 0 || (portc > 0 && !ports) ||
+        volumec < 0 || (volumec > 0 && !volumes)) {
         hold_usage();
         return 5;
     }
@@ -440,6 +463,14 @@ int hold_perform_start_with_env_options(const struct hold_invocation *inv,
             hold_die_errno("hold: console socket path too long");
         }
     }
+    if (portc > 0 && hold_copy_argv(&r.ports, portc, ports) != 0) {
+        hold_die_errno("hold: failed to copy port metadata");
+    }
+    r.portc = portc;
+    if (volumec > 0 && hold_copy_argv(&r.volumes, volumec, volumes) != 0) {
+        hold_die_errno("hold: failed to copy volume metadata");
+    }
+    r.volumec = volumec;
     r.has_log = true;
     if (hold_checked_snprintf(r.log_path, sizeof(r.log_path), "%s", log_path) != 0) {
         hold_die_errno("hold: log path too long");
@@ -544,13 +575,17 @@ int hold_perform_start_with_env_options(const struct hold_invocation *inv,
                 bool have_boot = hold_current_boot_id(boot, sizeof(boot));
                 bool removed = false;
                 int prune_rc = hold_prune_one_run(store, r.id, have_boot ? boot : NULL, true, &removed);
-                if (tail_rc == 0 && prune_rc != 0) return prune_rc;
+                if (tail_rc == 0 && prune_rc != 0) tail_rc = prune_rc;
             }
+            hold_free_argv_alloc(r.ports, r.portc);
+            hold_free_argv_alloc(r.volumes, r.volumec);
             return tail_rc;
         }
         if (auto_remove) {
             spawn_auto_remove_watcher(store, &r);
         }
+        hold_free_argv_alloc(r.ports, r.portc);
+        hold_free_argv_alloc(r.volumes, r.volumec);
         hold_free_argv_alloc(launch_argv, argc);
         return 0;
     }
@@ -848,7 +883,11 @@ static int hold_perform_profile_start_options(const struct hold_invocation *inv,
         fprintf(stderr, "hold: error: profile %s is unavailable\n", hash);
         return 5;
     }
-    int rc = hold_perform_start_with_env_options(inv, store, tail, console_mode, auto_remove, interactive_stdin, p.argc, p.argv, p.binary_path, alias, p.envc, p.env);
+    int rc = hold_perform_start_with_metadata_options(inv, store, tail, console_mode, auto_remove, interactive_stdin,
+                                                      p.argc, p.argv, p.binary_path, alias,
+                                                      p.envc, p.env,
+                                                      p.portc, p.ports,
+                                                      p.volumec, p.volumes);
     hold_free_profile(&p);
     return rc;
 }
@@ -937,7 +976,7 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                 start_rc = 0;
                 for (int i = 0; i < starts; i++) {
                     if (target.has_recipe) {
-                        start_rc = hold_perform_start_with_env_options(inv,
+                        start_rc = hold_perform_start_with_metadata_options(inv,
                                                  &target.store,
                                                  tail,
                                                  console_mode,
@@ -948,7 +987,11 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                                  target.recipe.binary_path,
                                                  target.has_alias ? target.alias : NULL,
                                                  target.recipe.envc,
-                                                 target.recipe.env);
+                                                 target.recipe.env,
+                                                 target.recipe.portc,
+                                                 target.recipe.ports,
+                                                 target.recipe.volumec,
+                                                 target.recipe.volumes);
                     } else {
                         start_rc = hold_perform_profile_start_options(inv,
                                                          &target.store,

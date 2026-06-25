@@ -5,7 +5,16 @@
 #include "hold/platform.h"
 
 static void free_profiles(struct hold_profile *profiles, size_t count);
-static bool profile_equal_recipe(const struct hold_profile *p, const char *binary_path, int argc, char **argv, int envc, char **env);
+static bool profile_equal_recipe(const struct hold_profile *p,
+                                 const char *binary_path,
+                                 int argc,
+                                 char **argv,
+                                 int envc,
+                                 char **env,
+                                 int portc,
+                                 char **ports,
+                                 int volumec,
+                                 char **volumes);
 static int parse_profile_object(const char *j, const char *hash, struct hold_profile *profile);
 static int load_profiles(const struct hold_store *store, struct hold_profile **profiles_out, size_t *count_out);
 static int write_profiles_atomic(const struct hold_store *store, const struct hold_profile *profiles, size_t count);
@@ -40,6 +49,8 @@ void hold_free_profile(struct hold_profile *p) {
     }
     hold_free_argv_alloc(p->argv, p->argc);
     hold_free_argv_alloc(p->env, p->envc);
+    hold_free_argv_alloc(p->ports, p->portc);
+    hold_free_argv_alloc(p->volumes, p->volumec);
     memset(p, 0, sizeof(*p));
 }
 
@@ -63,11 +74,22 @@ static bool string_array_equal(int ac, char **av, int bc, char **bv) {
     return true;
 }
 
-static bool profile_equal_recipe(const struct hold_profile *p, const char *binary_path, int argc, char **argv, int envc, char **env) {
+static bool profile_equal_recipe(const struct hold_profile *p,
+                                 const char *binary_path,
+                                 int argc,
+                                 char **argv,
+                                 int envc,
+                                 char **env,
+                                 int portc,
+                                 char **ports,
+                                 int volumec,
+                                 char **volumes) {
     if (strcmp(p->binary_path, binary_path) != 0 || !string_array_equal(p->argc, p->argv, argc, argv)) {
         return false;
     }
-    return string_array_equal(p->envc, p->env, envc, env);
+    return string_array_equal(p->envc, p->env, envc, env) &&
+           string_array_equal(p->portc, p->ports, portc, ports) &&
+           string_array_equal(p->volumec, p->volumes, volumec, volumes);
 }
 
 static int parse_profile_object(const char *j, const char *hash, struct hold_profile *profile) {
@@ -92,6 +114,14 @@ static int parse_profile_object(const char *j, const char *hash, struct hold_pro
     if (hold_json_get_env_alloc(j, &profile->env, &profile->envc) != 0) {
         profile->env = NULL;
         profile->envc = 0;
+    }
+    if (hold_json_get_ports_alloc(j, &profile->ports, &profile->portc) != 0) {
+        profile->ports = NULL;
+        profile->portc = 0;
+    }
+    if (hold_json_get_volumes_alloc(j, &profile->volumes, &profile->volumec) != 0) {
+        profile->volumes = NULL;
+        profile->volumec = 0;
     }
     hold_profile_hash_for_argv(profile->binary_path, profile->argc, profile->argv, profile->hash);
     if (strcmp(profile->hash, hash) != 0) {
@@ -225,6 +255,14 @@ static int write_profiles_atomic(const struct hold_store *store, const struct ho
             fprintf(f, ", \"env\": ");
             hold_write_json_argv(f, profiles[i].envc, profiles[i].env);
         }
+        if (profiles[i].portc > 0 && profiles[i].ports) {
+            fprintf(f, ", \"ports\": ");
+            hold_write_json_argv(f, profiles[i].portc, profiles[i].ports);
+        }
+        if (profiles[i].volumec > 0 && profiles[i].volumes) {
+            fprintf(f, ", \"volumes\": ");
+            hold_write_json_argv(f, profiles[i].volumec, profiles[i].volumes);
+        }
         fprintf(f, "}%s\n", i + 1 == count ? "" : ",");
     }
     fprintf(f, "}\n");
@@ -262,7 +300,24 @@ int hold_write_profile_atomic_env(const struct hold_store *store,
                                     char **argv,
                                     int envc,
                                     char **env) {
-    if (!hold_valid_profile_hash(hash) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv || envc < 0 || (envc > 0 && !env)) {
+    return hold_write_profile_atomic_full(store, hash, binary_path, argc, argv, envc, env, 0, NULL, 0, NULL);
+}
+
+int hold_write_profile_atomic_full(const struct hold_store *store,
+                                    const char *hash,
+                                    const char *binary_path,
+                                    int argc,
+                                    char **argv,
+                                    int envc,
+                                    char **env,
+                                    int portc,
+                                    char **ports,
+                                    int volumec,
+                                    char **volumes) {
+    if (!hold_valid_profile_hash(hash) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv ||
+        envc < 0 || (envc > 0 && !env) ||
+        portc < 0 || (portc > 0 && !ports) ||
+        volumec < 0 || (volumec > 0 && !volumes)) {
         errno = EINVAL;
         return -1;
     }
@@ -280,7 +335,7 @@ int hold_write_profile_atomic_env(const struct hold_store *store,
     for (size_t i = 0; i < count; i++) {
         if (strcmp(profiles[i].hash, hash) == 0) {
             int rc = 0;
-            if (!profile_equal_recipe(&profiles[i], binary_path, argc, argv, envc, env)) {
+            if (!profile_equal_recipe(&profiles[i], binary_path, argc, argv, envc, env, portc, ports, volumec, volumes)) {
                 errno = EEXIST;
                 rc = -1;
             }
@@ -298,12 +353,16 @@ int hold_write_profile_atomic_env(const struct hold_store *store,
     snprintf(profiles[count].hash, sizeof(profiles[count].hash), "%s", hash);
     if (hold_checked_snprintf(profiles[count].binary_path, sizeof(profiles[count].binary_path), "%s", binary_path) != 0 ||
         hold_copy_argv(&profiles[count].argv, argc, argv) != 0 ||
-        (envc > 0 && hold_copy_argv(&profiles[count].env, envc, env) != 0)) {
+        (envc > 0 && hold_copy_argv(&profiles[count].env, envc, env) != 0) ||
+        (portc > 0 && hold_copy_argv(&profiles[count].ports, portc, ports) != 0) ||
+        (volumec > 0 && hold_copy_argv(&profiles[count].volumes, volumec, volumes) != 0)) {
         free_profiles(profiles, count + 1);
         return -1;
     }
     profiles[count].argc = argc;
     profiles[count].envc = envc;
+    profiles[count].portc = portc;
+    profiles[count].volumec = volumec;
     count++;
     int rc = write_profiles_atomic(store, profiles, count);
     free_profiles(profiles, count);

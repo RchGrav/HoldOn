@@ -14,6 +14,8 @@ void hold_free_aliases(struct hold_alias *entries, size_t count) {
     for (size_t i = 0; i < count; i++) {
         hold_free_argv_alloc(entries[i].argv, entries[i].argc);
         hold_free_argv_alloc(entries[i].env, entries[i].envc);
+        hold_free_argv_alloc(entries[i].ports, entries[i].portc);
+        hold_free_argv_alloc(entries[i].volumes, entries[i].volumec);
     }
     free(entries);
 }
@@ -34,6 +36,14 @@ static int parse_alias_recipe_object(const char *j, struct hold_alias *entry) {
     if (hold_json_get_env_alloc(j, &entry->env, &entry->envc) != 0) {
         entry->env = NULL;
         entry->envc = 0;
+    }
+    if (hold_json_get_ports_alloc(j, &entry->ports, &entry->portc) != 0) {
+        entry->ports = NULL;
+        entry->portc = 0;
+    }
+    if (hold_json_get_volumes_alloc(j, &entry->volumes, &entry->volumec) != 0) {
+        entry->volumes = NULL;
+        entry->volumec = 0;
     }
     entry->has_recipe = true;
     return 0;
@@ -192,6 +202,14 @@ static int write_aliases_atomic(const struct hold_store *store, const struct hol
                 fprintf(f, ", \"env\": ");
                 hold_write_json_argv(f, entries[i].envc, entries[i].env);
             }
+            if (entries[i].portc > 0 && entries[i].ports) {
+                fprintf(f, ", \"ports\": ");
+                hold_write_json_argv(f, entries[i].portc, entries[i].ports);
+            }
+            if (entries[i].volumec > 0 && entries[i].volumes) {
+                fprintf(f, ", \"volumes\": ");
+                hold_write_json_argv(f, entries[i].volumec, entries[i].volumes);
+            }
             fprintf(f, "}%s\n", i + 1 == count ? "" : ",");
         }
     }
@@ -290,9 +308,13 @@ int hold_alias_lookup_recipe(const struct hold_store *store, const char *alias, 
         if (entries[i].has_recipe) {
             if (hold_checked_snprintf(recipe->binary_path, sizeof(recipe->binary_path), "%s", entries[i].binary_path) == 0 &&
                 hold_copy_argv(&recipe->argv, entries[i].argc, entries[i].argv) == 0 &&
-                (entries[i].envc == 0 || hold_copy_argv(&recipe->env, entries[i].envc, entries[i].env) == 0)) {
+                (entries[i].envc == 0 || hold_copy_argv(&recipe->env, entries[i].envc, entries[i].env) == 0) &&
+                (entries[i].portc == 0 || hold_copy_argv(&recipe->ports, entries[i].portc, entries[i].ports) == 0) &&
+                (entries[i].volumec == 0 || hold_copy_argv(&recipe->volumes, entries[i].volumec, entries[i].volumes) == 0)) {
                 recipe->argc = entries[i].argc;
                 recipe->envc = entries[i].envc;
+                recipe->portc = entries[i].portc;
+                recipe->volumec = entries[i].volumec;
                 rc = 0;
             }
             break;
@@ -321,7 +343,24 @@ int hold_alias_upsert_recipe_env(const struct hold_store *store,
                                    char **argv,
                                    int envc,
                                    char **env) {
-    if (!hold_valid_alias(alias) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv || envc < 0 || (envc > 0 && !env)) {
+    return hold_alias_upsert_recipe_full(store, alias, binary_path, argc, argv, envc, env, 0, NULL, 0, NULL);
+}
+
+int hold_alias_upsert_recipe_full(const struct hold_store *store,
+                                   const char *alias,
+                                   const char *binary_path,
+                                   int argc,
+                                   char **argv,
+                                   int envc,
+                                   char **env,
+                                   int portc,
+                                   char **ports,
+                                   int volumec,
+                                   char **volumes) {
+    if (!hold_valid_alias(alias) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv ||
+        envc < 0 || (envc > 0 && !env) ||
+        portc < 0 || (portc > 0 && !ports) ||
+        volumec < 0 || (volumec > 0 && !volumes)) {
         errno = EINVAL;
         return -1;
     }
@@ -334,18 +373,28 @@ int hold_alias_upsert_recipe_env(const struct hold_store *store,
         if (strcmp(entries[i].name, alias) == 0) {
             hold_free_argv_alloc(entries[i].argv, entries[i].argc);
             hold_free_argv_alloc(entries[i].env, entries[i].envc);
+            hold_free_argv_alloc(entries[i].ports, entries[i].portc);
+            hold_free_argv_alloc(entries[i].volumes, entries[i].volumec);
             entries[i].argv = NULL;
             entries[i].argc = 0;
             entries[i].env = NULL;
             entries[i].envc = 0;
+            entries[i].ports = NULL;
+            entries[i].portc = 0;
+            entries[i].volumes = NULL;
+            entries[i].volumec = 0;
             if (hold_checked_snprintf(entries[i].binary_path, sizeof(entries[i].binary_path), "%s", binary_path) != 0 ||
                 hold_copy_argv(&entries[i].argv, argc, argv) != 0 ||
-                (envc > 0 && hold_copy_argv(&entries[i].env, envc, env) != 0)) {
+                (envc > 0 && hold_copy_argv(&entries[i].env, envc, env) != 0) ||
+                (portc > 0 && hold_copy_argv(&entries[i].ports, portc, ports) != 0) ||
+                (volumec > 0 && hold_copy_argv(&entries[i].volumes, volumec, volumes) != 0)) {
                 hold_free_aliases(entries, count);
                 return -1;
             }
             entries[i].argc = argc;
             entries[i].envc = envc;
+            entries[i].portc = portc;
+            entries[i].volumec = volumec;
             entries[i].has_recipe = true;
             entries[i].has_hash = false;
             entries[i].hash[0] = '\0';
@@ -364,12 +413,16 @@ int hold_alias_upsert_recipe_env(const struct hold_store *store,
     snprintf(entries[count].name, sizeof(entries[count].name), "%s", alias);
     if (hold_checked_snprintf(entries[count].binary_path, sizeof(entries[count].binary_path), "%s", binary_path) != 0 ||
         hold_copy_argv(&entries[count].argv, argc, argv) != 0 ||
-        (envc > 0 && hold_copy_argv(&entries[count].env, envc, env) != 0)) {
+        (envc > 0 && hold_copy_argv(&entries[count].env, envc, env) != 0) ||
+        (portc > 0 && hold_copy_argv(&entries[count].ports, portc, ports) != 0) ||
+        (volumec > 0 && hold_copy_argv(&entries[count].volumes, volumec, volumes) != 0)) {
         hold_free_aliases(entries, count + 1);
         return -1;
     }
     entries[count].argc = argc;
     entries[count].envc = envc;
+    entries[count].portc = portc;
+    entries[count].volumec = volumec;
     entries[count].has_recipe = true;
     count++;
     int rc = write_aliases_atomic(store, entries, count);
@@ -396,6 +449,8 @@ int hold_alias_delete(const struct hold_store *store, const char *alias, bool *d
         }
         hold_free_argv_alloc(entries[i].argv, entries[i].argc);
         hold_free_argv_alloc(entries[i].env, entries[i].envc);
+        hold_free_argv_alloc(entries[i].ports, entries[i].portc);
+        hold_free_argv_alloc(entries[i].volumes, entries[i].volumec);
         for (size_t j = i + 1; j < count; j++) {
             entries[j - 1] = entries[j];
         }

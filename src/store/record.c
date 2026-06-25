@@ -84,6 +84,16 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
         hold_json_escape(f, r->console_sock);
         fprintf(f, "\",\n");
     }
+    if (r->portc > 0 && r->ports) {
+        fprintf(f, "  \"ports\": ");
+        hold_write_json_argv(f, r->portc, r->ports);
+        fprintf(f, ",\n");
+    }
+    if (r->volumec > 0 && r->volumes) {
+        fprintf(f, "  \"volumes\": ");
+        hold_write_json_argv(f, r->volumec, r->volumes);
+        fprintf(f, ",\n");
+    }
     fprintf(f, "  \"uid\": %u,\n", r->uid);
     fprintf(f, "  \"gid\": %u,\n", r->gid);
     if (r->has_invocation) {
