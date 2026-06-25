@@ -2069,9 +2069,14 @@ test_profile_transcript_import_export_roundtrip() {
   store="$HOME/.local/state/hold"
   transcript="$TEST_ROOT/import.profile"
   cat >"$transcript" <<'EOF' || return 1
+enable
+configure terminal
 profile cli-prof
-set command -- /bin/echo 'hello import'
-save
+binary /bin/echo
+argv 'hello import'
+commit
+end
+write
 EOF
   "$HOLD_BIN" profile import "$transcript" >"$TEST_ROOT/import.out" 2>"$TEST_ROOT/import.err" || return 1
   [ ! -s "$TEST_ROOT/import.out" ] || return 1
@@ -2081,9 +2086,14 @@ EOF
   grep -Fq '"args": ["/bin/echo", "hello import"]' "$store/aliases.json" || return 1
 
   "$HOLD_BIN" profile export cli-prof >"$TEST_ROOT/export.profile" || return 1
+  grep -Fxq "enable" "$TEST_ROOT/export.profile" || return 1
+  grep -Fxq "configure terminal" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "profile cli-prof" "$TEST_ROOT/export.profile" || return 1
-  grep -Eq "^set command -- (/usr)?/bin/echo 'hello import'$" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "save" "$TEST_ROOT/export.profile" || return 1
+  grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/export.profile" || return 1
+  grep -Fxq "argv 'hello import'" "$TEST_ROOT/export.profile" || return 1
+  grep -Fxq "commit" "$TEST_ROOT/export.profile" || return 1
+  grep -Fxq "end" "$TEST_ROOT/export.profile" || return 1
+  grep -Fxq "write" "$TEST_ROOT/export.profile" || return 1
 
   out=$("$HOLD_BIN" start cli-prof 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
@@ -2105,14 +2115,22 @@ test_profile_name_first_set_command() {
 
   "$HOLD_BIN" profile edit-prof export --format cli >"$TEST_ROOT/profile-set.export" || return 1
   grep -Fxq "profile edit-prof" "$TEST_ROOT/profile-set.export" || return 1
-  grep -Eq "^set command -- (/usr)?/bin/echo 'name first edit'$" "$TEST_ROOT/profile-set.export" || {
+  grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/profile-set.export" || {
+    cat "$TEST_ROOT/profile-set.export" >&2
+    return 1
+  }
+  grep -Fxq "argv 'name first edit'" "$TEST_ROOT/profile-set.export" || {
     cat "$TEST_ROOT/profile-set.export" >&2
     return 1
   }
 
   "$HOLD_BIN" profile edit-prof show >"$TEST_ROOT/profile-set.show" || return 1
   grep -Fxq "profile edit-prof" "$TEST_ROOT/profile-set.show" || return 1
-  grep -Eq "^set command -- (/usr)?/bin/echo 'name first edit'$" "$TEST_ROOT/profile-set.show" || {
+  grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/profile-set.show" || {
+    cat "$TEST_ROOT/profile-set.show" >&2
+    return 1
+  }
+  grep -Fxq "argv 'name first edit'" "$TEST_ROOT/profile-set.show" || {
     cat "$TEST_ROOT/profile-set.show" >&2
     return 1
   }
@@ -2164,7 +2182,11 @@ test_profile_name_first_crud() {
 
   "$HOLD_BIN" profile renamed-prof show >"$TEST_ROOT/profile-crud.show" || return 1
   grep -Fxq "profile renamed-prof" "$TEST_ROOT/profile-crud.show" || return 1
-  grep -Eq "^set command -- (/usr)?/bin/echo 'crud profile'$" "$TEST_ROOT/profile-crud.show" || {
+  grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/profile-crud.show" || {
+    cat "$TEST_ROOT/profile-crud.show" >&2
+    return 1
+  }
+  grep -Fxq "argv 'crud profile'" "$TEST_ROOT/profile-crud.show" || {
     cat "$TEST_ROOT/profile-crud.show" >&2
     return 1
   }
@@ -3342,12 +3364,26 @@ test_captive_cli_profile_mode_flags_commit_and_clear() {
     return 1
   }
   "$HOLD_BIN" profile export iosmode --json >"$TEST_ROOT/iosmode-set.json" || return 1
+  "$HOLD_BIN" profile export iosmode >"$TEST_ROOT/iosmode-set.profile" || return 1
+  grep -Fxq "interactive" "$TEST_ROOT/iosmode-set.profile" || { cat "$TEST_ROOT/iosmode-set.profile" >&2; return 1; }
+  grep -Fxq "tty" "$TEST_ROOT/iosmode-set.profile" || { cat "$TEST_ROOT/iosmode-set.profile" >&2; return 1; }
+  grep -Fxq "detach" "$TEST_ROOT/iosmode-set.profile" || { cat "$TEST_ROOT/iosmode-set.profile" >&2; return 1; }
   python3 - "$TEST_ROOT/iosmode-set.json" <<'PY' || { cat "$TEST_ROOT/iosmode-set.json" >&2; return 1; }
 import json, sys
 mode = (json.load(open(sys.argv[1], encoding='utf-8')).get('mode') or {})
 for key in ('interactive', 'tty', 'detach'):
     if mode.get(key) is not True:
         raise SystemExit(f'missing committed mode {key}: {mode!r}')
+PY
+  "$HOLD_BIN" profile iosmode delete >/dev/null || return 1
+  "$HOLD_BIN" profile import "$TEST_ROOT/iosmode-set.profile" >/dev/null || return 1
+  "$HOLD_BIN" profile export iosmode --json >"$TEST_ROOT/iosmode-imported.json" || return 1
+  python3 - "$TEST_ROOT/iosmode-imported.json" <<'PY' || { cat "$TEST_ROOT/iosmode-imported.json" >&2; return 1; }
+import json, sys
+mode = (json.load(open(sys.argv[1], encoding='utf-8')).get('mode') or {})
+for key in ('interactive', 'tty', 'detach'):
+    if mode.get(key) is not True:
+        raise SystemExit(f'imported transcript missing mode {key}: {mode!r}')
 PY
 
   set +e

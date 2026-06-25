@@ -265,14 +265,37 @@ static void profile_shell_quote(FILE *f, const char *s) {
 }
 
 static int profile_export_transcript(const char *name, const struct hold_profile *recipe) {
-    fputs("profile ", stdout);
+    fputs("enable\nconfigure terminal\nprofile ", stdout);
     profile_shell_quote(stdout, name);
-    fputs("\nset command --", stdout);
-    for (int i = 0; i < recipe->argc; i++) {
+    fputs("\nbinary ", stdout);
+    profile_shell_quote(stdout, recipe->binary_path);
+    fputc('\n', stdout);
+    if (recipe->argc > 1) {
+        fputs("argv", stdout);
+    }
+    for (int i = 1; i < recipe->argc; i++) {
         fputc(' ', stdout);
         profile_shell_quote(stdout, recipe->argv[i]);
     }
-    fputs("\nsave\n", stdout);
+    if (recipe->argc > 1) fputc('\n', stdout);
+    for (int i = 0; i < recipe->envc; i++) {
+        const char *eq = recipe->env[i] ? strchr(recipe->env[i], '=') : NULL;
+        if (!eq || eq == recipe->env[i]) continue;
+        fputs("env ", stdout);
+        char key[256];
+        size_t key_len = (size_t)(eq - recipe->env[i]);
+        if (key_len >= sizeof(key)) key_len = sizeof(key) - 1;
+        memcpy(key, recipe->env[i], key_len);
+        key[key_len] = '\0';
+        profile_shell_quote(stdout, key);
+        fputc(' ', stdout);
+        profile_shell_quote(stdout, eq + 1);
+        fputc('\n', stdout);
+    }
+    if (recipe->mode_interactive) fputs("interactive\n", stdout);
+    if (recipe->mode_tty) fputs("tty\n", stdout);
+    if (recipe->mode_detach) fputs("detach\n", stdout);
+    fputs("commit\nend\nwrite\n", stdout);
     return ferror(stdout) ? 3 : 0;
 }
 
@@ -537,6 +560,51 @@ static int profile_write_command_recipe(const struct hold_store *store,
     return 0;
 }
 
+static int profile_write_full_recipe(const struct hold_store *store,
+                                     const char *name,
+                                     const char *binary,
+                                     int argc,
+                                     char **argv,
+                                     int envc,
+                                     char **env,
+                                     bool mode_interactive,
+                                     bool mode_tty,
+                                     bool mode_detach) {
+    if (!hold_valid_alias(name)) {
+        fprintf(stderr, "hold: error: invalid profile name '%s'\n", name ? name : "");
+        return 5;
+    }
+    if (!binary || binary[0] != '/' || argc <= 0 || !argv || !argv[0]) {
+        fprintf(stderr, "hold: error: incomplete profile transcript\n");
+        return 5;
+    }
+    char binary_path[HOLD_PATH_MAX];
+    if (hold_resolve_binary_path(binary, binary_path, sizeof(binary_path)) != 0) {
+        fprintf(stderr, "hold: error: failed to resolve profile command '%s'\n", binary);
+        return 5;
+    }
+    if (hold_normalize_existing_argv_paths_from_cwd(argv, argc, 1, NULL) != 0) {
+        hold_die_errno("hold: failed to normalize profile argv paths");
+    }
+    if (hold_alias_upsert_recipe_full(store,
+                                      name,
+                                      binary_path,
+                                      argc,
+                                      argv,
+                                      envc,
+                                      env,
+                                      0,
+                                      NULL,
+                                      0,
+                                      NULL,
+                                      mode_interactive,
+                                      mode_tty,
+                                      mode_detach) != 0) {
+        hold_die_errno("hold: failed to update profile");
+    }
+    return 0;
+}
+
 static int profile_import_transcript(const struct hold_store *store, const char *path) {
     char *text = NULL;
     if (hold_read_small_file(path, &text) != 0) {
@@ -551,8 +619,18 @@ static int profile_import_transcript(const struct hold_store *store, const char 
     }
 
     char name[ALIAS_MAX_LEN + 1] = {0};
+    char binary[HOLD_PATH_MAX] = {0};
+    char **args = NULL;
+    int arg_count = 0;
+    int arg_cap = 0;
+    char **env = NULL;
+    int envc = 0;
+    int env_cap = 0;
     char **cmd_argv = NULL;
     int cmd_argc = 0;
+    bool mode_interactive = false;
+    bool mode_tty = false;
+    bool mode_detach = false;
     bool saw_save = false;
     int rc = 5;
 
@@ -583,6 +661,61 @@ static int profile_import_transcript(const struct hold_store *store, const char 
                 goto out;
             }
             snprintf(name, sizeof(name), "%s", tokens[1]);
+        } else if (!strcmp(tokens[0], "enable") && ntokens == 1) {
+            /* Cisco-style transcript prelude; no-op for file import. */
+        } else if (!strcmp(tokens[0], "configure") && ntokens == 2 && !strcmp(tokens[1], "terminal")) {
+            /* Cisco-style transcript prelude; no-op for file import. */
+        } else if (!strcmp(tokens[0], "binary") && ntokens == 2) {
+            if (tokens[1][0] != '/') {
+                fprintf(stderr, "hold: error: profile binary must be absolute\n");
+                profile_free_tokens(tokens, ntokens);
+                goto out;
+            }
+            snprintf(binary, sizeof(binary), "%s", tokens[1]);
+        } else if (!strcmp(tokens[0], "argv") && ntokens >= 2) {
+            for (int i = 1; i < ntokens; i++) {
+                char *copy = strdup(tokens[i]);
+                if (!copy || profile_push_token(&args, &arg_count, &arg_cap, copy) != 0) {
+                    free(copy);
+                    profile_free_tokens(tokens, ntokens);
+                    goto out;
+                }
+            }
+        } else if (!strcmp(tokens[0], "env") && (ntokens == 2 || ntokens == 3)) {
+            char assignment[4096];
+            if (ntokens == 2) {
+                if (!strchr(tokens[1], '=') || strlen(tokens[1]) >= sizeof(assignment)) {
+                    fprintf(stderr, "hold: error: invalid env command in profile transcript\n");
+                    profile_free_tokens(tokens, ntokens);
+                    goto out;
+                }
+                memcpy(assignment, tokens[1], strlen(tokens[1]) + 1);
+            } else {
+                if (!tokens[1][0] || strchr(tokens[1], '=') ||
+                    hold_checked_snprintf(assignment, sizeof(assignment), "%s=%s", tokens[1], tokens[2]) != 0) {
+                    fprintf(stderr, "hold: error: invalid env command in profile transcript\n");
+                    profile_free_tokens(tokens, ntokens);
+                    goto out;
+                }
+            }
+            char *copy = strdup(assignment);
+            if (!copy || profile_push_token(&env, &envc, &env_cap, copy) != 0) {
+                free(copy);
+                profile_free_tokens(tokens, ntokens);
+                goto out;
+            }
+        } else if (!strcmp(tokens[0], "interactive") && ntokens == 1) {
+            mode_interactive = true;
+        } else if ((!strcmp(tokens[0], "tty") || !strcmp(tokens[0], "console")) && ntokens == 1) {
+            mode_tty = true;
+        } else if (!strcmp(tokens[0], "detach") && ntokens == 1) {
+            mode_detach = true;
+        } else if (!strcmp(tokens[0], "no") && ntokens == 2 && !strcmp(tokens[1], "interactive")) {
+            mode_interactive = false;
+        } else if (!strcmp(tokens[0], "no") && ntokens == 2 && (!strcmp(tokens[1], "tty") || !strcmp(tokens[1], "console"))) {
+            mode_tty = false;
+        } else if (!strcmp(tokens[0], "no") && ntokens == 2 && !strcmp(tokens[1], "detach")) {
+            mode_detach = false;
         } else if (!strcmp(tokens[0], "set") && ntokens >= 4 &&
                    !strcmp(tokens[1], "command") && !strcmp(tokens[2], "--")) {
             profile_free_tokens(cmd_argv, cmd_argc);
@@ -599,8 +732,10 @@ static int profile_import_transcript(const struct hold_store *store, const char 
                     goto out;
                 }
             }
-        } else if (!strcmp(tokens[0], "save") && ntokens == 1) {
+        } else if ((!strcmp(tokens[0], "save") || !strcmp(tokens[0], "commit")) && ntokens == 1) {
             saw_save = true;
+        } else if ((!strcmp(tokens[0], "end") || !strcmp(tokens[0], "write")) && ntokens == 1) {
+            /* Cisco-style transcript trailer; no-op for file import. */
         } else {
             fprintf(stderr, "hold: error: unsupported profile transcript command '%s'\n", tokens[0]);
             profile_free_tokens(tokens, ntokens);
@@ -609,13 +744,32 @@ static int profile_import_transcript(const struct hold_store *store, const char 
         profile_free_tokens(tokens, ntokens);
     }
 
-    if (!saw_save || name[0] == '\0' || cmd_argc <= 0 || !cmd_argv) {
+    if (!saw_save || name[0] == '\0') {
         fprintf(stderr, "hold: error: incomplete profile transcript\n");
         goto out;
     }
-    rc = profile_write_command_recipe(store, name, cmd_argc, cmd_argv);
+    if (cmd_argv) {
+        rc = profile_write_command_recipe(store, name, cmd_argc, cmd_argv);
+    } else {
+        if (!binary[0]) {
+            fprintf(stderr, "hold: error: incomplete profile transcript\n");
+            goto out;
+        }
+        int argc = arg_count + 1;
+        char **argv = calloc((size_t)argc + 1, sizeof(*argv));
+        if (!argv) {
+            rc = 3;
+            goto out;
+        }
+        argv[0] = binary;
+        for (int i = 0; i < arg_count; i++) argv[i + 1] = args[i];
+        rc = profile_write_full_recipe(store, name, binary, argc, argv, envc, env, mode_interactive, mode_tty, mode_detach);
+        free(argv);
+    }
 
 out:
+    profile_free_tokens(args, arg_count);
+    profile_free_tokens(env, envc);
     profile_free_tokens(cmd_argv, cmd_argc);
     free(text);
     return rc;
