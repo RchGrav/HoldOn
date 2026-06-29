@@ -42,7 +42,10 @@ Concrete naming and size rules:
 - Profile names are human handles for launching tools. Maximum length is **64** characters/bytes in the 0.4 target unless a later audited protocol budget proves this must shrink further.
 - Profile names may be used as safe selectors only when the operation can resolve them unambiguously.
 - Sudoers/capability digests are full SHA-256 hex strings: **64 lowercase hex characters**. They are computed from decoded subject-private grant/profile material and are not source-profile fields.
-- Existing/current run IDs are 12 lowercase hex characters with reserved sentinels inherited from the 0.3.x model. The 0.4 target may extend displayed/generated run IDs to **12 lowercase hex characters** for Docker familiarity, but that is a deliberate storage/protocol migration decision, not an accidental rename.
+- 0.4 run IDs are created once from SHA-256 over creation material such as the normalized command, argv, timestamp, and process identity. Store the full 64-lowercase-hex value and display the first **12 lowercase hex characters** by default for Docker familiarity. Do not use a retrying random-ID generator as the product model; if a full-hash collision is ever detected, treat it as a fatal integrity anomaly rather than silently minting an unrelated random handle.
+- Profile tracking IDs, where the storage layer needs them, follow the same one-time tracking-number rule at profile creation. They are not source-profile authority; the source profile's operator identity remains its validated profile name.
+- Run IDs and profile tracking IDs are stable tracking numbers, not cryptographic signatures. Do not recompute them to prove immutability. Immutability becomes load-bearing only in the grant/capability flow, where the subject-private grant/profile copy is canonicalized and hashed as a separate sudoers/capability digest that can change when the granted material changes.
+- Generated run names use the same creation hash as the run ID: `adjective_noun`, with `adj = h % adjectives_count` and `noun = (h / adjectives_count) % nouns_count`. Compute the counts from the compiled wordlist arrays; do not hardcode the product of the current lists.
 - If sentinel selectors remain in the privileged protocol, `000000000000` means “start/no concrete run yet” and all-`f` means an explicitly approved all-runs selector. The all-`f` sentinel length must match the active run-selector length.
 
 Profile verbs should feel like service/template operations:
@@ -625,6 +628,22 @@ Hold-specific utility/config entry points:
 ```
 
 `ps` always lists run IDs. If a run ID came from a profile, show the profile name in a column; otherwise show `-`.
+
+The normal shell `ps` output should be Docker-shaped by default. `ps -a` uses this
+column contract:
+
+```text
+RUN ID        PROFILE       COMMAND                  CREATED          STATUS                   PORTS                                     NAMES
+098e755e9827  bash          "entrypoint ..."       7 seconds ago    Up 6 seconds                                                       amazing_shamir
+334d00b1806a  web           "npm run start"        2 hours ago      Up 2 hours               0.0.0.0:8089/tcp, [::]:8089/tcp           wonderful_blackburn
+5fd0db121b99  -             "/hello"               2 hours ago      Exited (0) 2 hours ago                                             determined_mcclintock
+```
+
+Column mapping from Docker is deliberate: `RUN ID` replaces Docker's
+`CONTAINER ID`, `PROFILE` replaces Docker's `IMAGE`, and `NAMES` is the
+generated adjective/noun run name. `PORTS` reports observed in-use listening
+ports for the host process; it must not use Docker's `host->container` mapping
+syntax unless a future backend really provides port forwarding.
 
 `show` belongs primarily to the Cisco IOS-style captive CLI. If exposed from the
 normal shell as a convenience, it must remain read-only and route to canonical

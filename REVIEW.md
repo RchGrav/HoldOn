@@ -46,12 +46,15 @@ Recommended next implementation tasks, in order:
    handling. This is the highest-risk release blocker.
 2. **Profile schema expansion:** persist and hash cwd/env so the capability
    digest matches the actual execution context.
-3. **Public CLI contract completion:** finish the table-driven parser/help
+3. **Run identity/name and Docker-shaped listing:** replace the legacy
+   random 12-hex generator with creation-hash run/profile tracking IDs, store
+   full hashes, display the first 12 hex characters, persist generated
+   `adjective_noun` names from the same hash, and make `ps -a` match Docker's
+   table shape with `RUN ID`, `PROFILE`, `COMMAND`, `CREATED`, `STATUS`,
+   observed `PORTS`, and `NAMES`.
+4. **Public CLI contract completion:** finish the table-driven parser/help
    agreement for the 0.4 shell surface, then remove or hide remaining legacy
    primary verbs that conflict with the target command language.
-4. **Run identity/name generator:** decide whether to wire the staged
-   adjective/noun wordlists into run naming now or keep them staged until the
-   run-id/name migration begins.
 5. **Release evidence refresh:** after each implementation slice, update this
    file with exact command/date/environment evidence instead of relying on
    historical green runs.
