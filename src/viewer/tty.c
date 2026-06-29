@@ -144,7 +144,7 @@ static int raw_terminal_enter(struct raw_terminal *raw) {
     t.c_cflag |= CS8;
     t.c_cc[VMIN] = 1;
     t.c_cc[VTIME] = 0;
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &t) != 0) return -1;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &t) != 0) return -1;
     raw->active = true;
     if (viewer_puts("\033[?1049h\033[?25l") != 0) return -1;
     return 0;
