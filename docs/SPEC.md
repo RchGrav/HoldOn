@@ -69,7 +69,19 @@ A root-managed start must never create a run under `/root/.local/state/hold` and
 
 ### Global eligibility and granting
 
-Two separate operations, two separate rules.
+Three related operations, three separate rules.
+
+**Universal path normalization:** every executable and path-like argument stored
+in a record/profile must be normalized to an absolute path when it resolves to a
+real filesystem object. Relative paths are acceptable user input, but they are
+not acceptable as stored authority. This applies before deciding whether a run is
+personal, global, or grantable.
+
+**Elevated run routing:** when a root/elevated start would otherwise become
+root-managed, On Hold must inspect the normalized executable and every
+normalized path-like argument. If any of those paths is inside the invoking
+user's home folder, the start becomes an invoking-user personal run ID instead
+of a public/system run ID. This is a routing rule, not a root-ownership rule.
 
 **To become a global profile:** none of the paths in the command may be located in a user's
 home folder. This applies to *every* path in the command — the program (`argv[0]`), every
@@ -79,20 +91,36 @@ the working directory. Paths were already resolved to absolute form when the com
 resolved path falls inside a user's home folder, the command **cannot become a global
 profile** — On Hold refuses.
 
-**To grant a profile to a user:** every target in the command must be **root-owned**. Granting
-delegates an existing global profile — it makes the per-user private copy and writes the
-sudoers entry — but only if the binary and every path argument are owned by root; otherwise
-On Hold refuses. This is a *stronger and separate* bar from global eligibility: global only
-excludes home-folder paths, whereas a granted profile runs as root on behalf of a non-root
-user, so every target it touches must be root-owned and therefore untamperable by that user.
-A profile can be global yet still not grantable (e.g. a target owned by some non-root service
-account).
+**To grant a global profile to a user:** every target in the command must pass
+the grant security validator. Granting delegates an existing global profile — it
+makes the per-user private copy and writes the sudoers entry — but only if the
+binary and every path argument are root-owned, unwritable by the grantee, and
+pass any other grant-time checks required to keep the delegated execution context
+immutable. This is a *stronger and separate* bar from global eligibility: global
+only excludes home-folder paths, whereas a granted profile runs as root on
+behalf of a non-root user, so every target it touches must be root-controlled and
+therefore untamperable by that user. A profile can be global yet still not
+grantable (e.g. a target owned by some non-root service account).
+
+If a grant is refused, On Hold should list every reason it found, then print two
+operator follow-up commands:
+
+1. the same grant command with `--secure` added, labeled **Recommended**, which
+   means “let On Hold apply safe remediations or stricter checks where it knows
+   how”; and
+2. the same grant command with `--force` added, labeled as a security-weakening
+   override.
+
+`--force` must not bypass absolute-path normalization, personal-vs-global
+routing, or the rule that only global profiles can be granted. If it exists, it
+only overrides grant-hardening checks that are explicitly designed to be
+operator-overridable.
 
 > Implementation status (2026-06-28): only the executable (`argv[0]`) is checked today —
 > `hold_start_target_is_within_invoking_home` (src/runtime/start.c:270) inspects `argv[0]`
 > alone and reroutes the run to the user-local store rather than refusing. The check must be
-> extended to cover every path argument and the working directory, applied as an explicit
-> refusal at the point a command would become global.
+> extended to cover every normalized path-like argument and the working directory. The same
+> absolute normalized paths then feed global-profile eligibility and grant validation.
 
 Production builds use the compiled system store path. Test builds compiled with `HOLD_TESTING` may honor `HOLD_TEST_SYSTEM_STATE_DIR`; production root On Hold must not honor arbitrary user-controlled environment paths for the system store.
 

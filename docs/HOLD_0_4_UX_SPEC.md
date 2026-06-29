@@ -147,13 +147,23 @@ Store both truths:
 
 Observed facts are for audit and UI explanation. Normalized facts are authoritative for replay, profile creation, trust boundaries, and public/system eligibility.
 
+Normalized paths are universal. Any executable or path-like argv value that
+resolves to a filesystem object must be stored and evaluated as an absolute
+path. Relative paths can remain in observed facts for explanation, but they must
+not be used as replay authority, profile authority, global-eligibility input, or
+grant authority.
+
 Normalization rules:
 
 1. Resolve the executable image path.
 2. Capture the working directory.
 3. For each relative argv token that is path-like (`./x`, `../x`, or contains `/`), resolve it against captured cwd when it exists.
 4. For known interpreter shapes such as `python ./app.py`, `node ./server.js`, `ruby ./tool.rb`, `bash ./script.sh`, and `perl ./thing.pl`, treat the script argument as code payload and apply the same public/system trust rule used for executable targets.
-5. If normalized executable or interpreted payload is inside the invoking user's home or otherwise not an allowed system target, it must not become a public/system run ID or protected public profile merely because it was launched through an elevated interpreter.
+5. If normalized executable, interpreted payload, or any normalized path-like
+   argv target is inside the invoking user's home or otherwise not an allowed
+   system target, an elevated start must become an invoking-user personal run ID
+   instead of a public/system run ID. It must not become a protected public
+   profile merely because it was launched through an elevated interpreter.
 
 Profile conversion uses normalized launch facts, while profile editing can show observed facts as explanatory context.
 
@@ -281,6 +291,29 @@ mandatory:
   tooling.
 - The source/global profile is not itself a grant and must not be used as the
   sudoers authority object.
+
+Grant validation is stricter than global-profile eligibility. Global eligibility
+only proves that the normalized launch context is not backed by the invoking
+user's home. Granting proves that a specific subject may safely exercise root
+operations over a subject-private copy of that global profile. At grant time,
+Hold must validate the normalized executable and every normalized path-like argv
+target for root ownership, non-writability by the grantee, root-controlled
+ancestor directories, symlink/TOCTOU hazards where practical, and any other
+security checks required by the delegated-root execution model.
+
+Grant refusal UX should be diagnostic and actionable:
+
+1. list every refusal reason found;
+2. print the same grant command with `--secure` inserted and mark it
+   **Recommended**; and
+3. print the same grant command with `--force` inserted and warn that it may
+   weaken system security.
+
+`--secure` means Hold may perform safe remediations or select stricter safe
+defaults that preserve the grant security model. `--force` is an explicit
+operator override for overridable grant-hardening refusals only. It must not
+bypass absolute-path normalization, personal-run routing for home-backed paths,
+or the requirement that only global profiles can receive sudoers grants.
 
 Sudoers digest authority rule:
 
