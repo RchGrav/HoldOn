@@ -930,10 +930,14 @@ int main(int argc, char **argv) {
         free(cmd_argv);
         return rc;
     }
-    if (owned && !strcmp(command, "run") && !saw_owned_delimiter &&
-        cmd_argc >= 2 && is_legacy_run_namespace_verb(cmd_argv[1])) {
+    if (owned && !strcmp(command, "run") && !saw_owned_delimiter && cmd_argc >= 1 &&
+        (is_legacy_run_namespace_verb(cmd_argv[0]) ||
+         (cmd_argc >= 2 && is_legacy_run_namespace_verb(cmd_argv[1])))) {
         fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]; use -- <cmd> when a command conflicts with Hold syntax\n");
         free(cmd_argv);
+        hold_free_argv_alloc(docker_env, docker_envc);
+        hold_free_argv_alloc(docker_ports, docker_portc);
+        hold_free_argv_alloc(docker_volumes, docker_volumec);
         return 5;
     }
     if (console_mode && owned && strcmp(command, "start") != 0 && strcmp(command, "run") != 0 && strcmp(command, "profile") != 0) {

@@ -1015,7 +1015,6 @@ Exec commands:
   console    Attach with a PTY (interactive)
   enable     Enter privileged mode
   list       List running instances
-  ping       Check daemon-less liveness of a run
   run        Start an instance from a profile or binary
   show       Show running system information
   exit       Close the session

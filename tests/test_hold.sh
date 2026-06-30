@@ -4302,6 +4302,7 @@ exit
   grep -q 'attach      Attach to a compatible running instance' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
   grep -q 'console     Attach with a PTY' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
   grep -q 'grant       Grant a user capability' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
+  ! grep -q '  ping' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
   grep -q 'revoke      Revoke a user capability' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
   grep -q 'write       Write running config to storage' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
   grep -q 'aliases    Show public alias table' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
@@ -4342,6 +4343,52 @@ exit
   grep -q 'captive-op' "$TEST_ROOT/captive-ios-ops.out" || { cat "$TEST_ROOT/captive-ios-ops.out" >&2; return 1; }
   grep -q '"alias": "ops"' "$TEST_ROOT/captive-ios-ops.out" || { cat "$TEST_ROOT/captive-ios-ops.out" >&2; return 1; }
   grep -q 'hold: pruned 1 past run for' "$TEST_ROOT/captive-ios-ops.err" || { cat "$TEST_ROOT/captive-ios-ops.err" >&2; return 1; }
+}
+
+test_captive_cli_rejects_ping_pseudo_command() {
+  local rc
+  set +e
+  printf 'ping target\nexit\n' | "$HOLD_BIN" >"$TEST_ROOT/captive-ping.out" 2>"$TEST_ROOT/captive-ping.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/captive-ping.out" "$TEST_ROOT/captive-ping.err" >&2; return 1; }
+  grep -q "% Unknown command 'ping'" "$TEST_ROOT/captive-ping.err" || { cat "$TEST_ROOT/captive-ping.err" >&2; return 1; }
+}
+
+
+test_captive_cli_interactive_input_handles_arrows_and_mouse_reports() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local rc
+  set +e
+  python3 - <<'PYINPUT' |
+import sys, time
+out = sys.stdout.buffer
+# Exercise the PTY/interactive input path: edit argv "ac" into "abc" with
+# Left/Right style escape input, and inject an SGR mouse event that should be
+# swallowed rather than becoming a literal command.
+out.write(b"enable\n")
+out.write(b"\x1b[<0;10;5M\n")
+out.write(b"configure terminal\nprofile inputedit\nbinary /bin/echo\n")
+out.write(b"argv ac\x1b[Db\n")
+out.write(b"commit\nend\nrun inputedit\nlogs inputedit --plain\nprune inputedit\nexit\n")
+out.flush()
+time.sleep(0.2)
+PYINPUT
+    script -qfec "stty rows 24 cols 120; $HOLD_BIN" /dev/null >"$TEST_ROOT/captive-input-edit.out" 2>"$TEST_ROOT/captive-input-edit.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-input-edit.out" "$TEST_ROOT/captive-input-edit.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/captive-input-edit.out" <<'PYCHECK' || { cat "$TEST_ROOT/captive-input-edit.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '\n')
+if not re.search(r'(?m)^abc$', plain):
+    raise SystemExit('edited argv did not produce abc log output')
+if '^[[D' in raw or '^[[<' in raw:
+    raise SystemExit('literal terminal escape text leaked into captive CLI output')
+PYCHECK
+  ! grep -q "Unknown command" "$TEST_ROOT/captive-input-edit.err" || { cat "$TEST_ROOT/captive-input-edit.err" >&2; return 1; }
 }
 
 test_build_artifact_coexistence() {
@@ -4882,9 +4929,17 @@ test_public_cli_contract_guards() {
   [ "$rc" -eq 5 ] || { echo "hold help alias: rc=$rc (want 5)" >&2; return 1; }
   grep -q "unknown help topic 'alias'" "$TEST_ROOT/help-alias.err" || { cat "$TEST_ROOT/help-alias.err" >&2; return 1; }
 
-  set +e; "$HOLD_BIN" run web stop >/dev/null 2>"$TEST_ROOT/run-namespace.err"; rc=$?; set -e
+  set +e; "$HOLD_BIN" run web stop >/dev/null 2>"$TEST_ROOT/run-namespace-target-first.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "hold run web stop: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'usage: hold run .* -- <cmd>' "$TEST_ROOT/run-namespace.err" || { cat "$TEST_ROOT/run-namespace.err" >&2; return 1; }
+  grep -q 'usage: hold run .* -- <cmd>' "$TEST_ROOT/run-namespace-target-first.err" || { cat "$TEST_ROOT/run-namespace-target-first.err" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" run stop web >/dev/null 2>"$TEST_ROOT/run-namespace-verb-first.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold run stop web: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: hold run .* -- <cmd>' "$TEST_ROOT/run-namespace-verb-first.err" || { cat "$TEST_ROOT/run-namespace-verb-first.err" >&2; return 1; }
+
+  set +e; "$HOLD_BIN" run -e CHECK=1 logs web >/dev/null 2>"$TEST_ROOT/run-namespace-after-option.err"; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "hold run -e CHECK=1 logs web: rc=$rc (want 5)" >&2; return 1; }
+  grep -q 'usage: hold run .* -- <cmd>' "$TEST_ROOT/run-namespace-after-option.err" || { cat "$TEST_ROOT/run-namespace-after-option.err" >&2; return 1; }
 
   mkdir -p "$TEST_ROOT/literal-help-bin" || return 1
   cat >"$TEST_ROOT/literal-help-bin/--help" <<'SH'
@@ -5100,6 +5155,8 @@ run_test "captive CLI noninteractive transcript is script-safe" test_captive_cli
 run_test "captive CLI profile mode flags commit and clear" test_captive_cli_profile_mode_flags_commit_and_clear
 run_test "captive CLI IOS contextual help and reserved words" test_captive_cli_ios_contextual_help_and_reserved_words
 run_test "captive CLI IOS operational commands" test_captive_cli_ios_operational_commands
+run_test "captive CLI rejects ping pseudo-command" test_captive_cli_rejects_ping_pseudo_command
+run_test "captive CLI interactive input handles arrows and mouse reports" test_captive_cli_interactive_input_handles_arrows_and_mouse_reports
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "internal viewer harness seeds literal and similarity filters" test_log_view_internal_seed_filters

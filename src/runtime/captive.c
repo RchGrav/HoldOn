@@ -213,17 +213,247 @@ static int split_line(char *line, char **tokens, int *count) {
     return 0;
 }
 
-static void print_prompt(const struct captive_session *s) {
-    if (s->mode == CAP_USER_EXEC) {
-        printf("hold> ");
-    } else if (s->mode == CAP_PRIV_EXEC) {
-        printf("hold# ");
-    } else if (s->mode == CAP_CONFIG) {
-        printf("hold(config)# ");
-    } else {
-        printf("hold(config-profile:%s)# ", s->profile.name);
+static const char *prompt_text(const struct captive_session *s, char *buf, size_t buf_len) {
+    if (s->mode == CAP_USER_EXEC) return "hold> ";
+    if (s->mode == CAP_PRIV_EXEC) return "hold# ";
+    if (s->mode == CAP_CONFIG) return "hold(config)# ";
+    snprintf(buf, buf_len, "hold(config-profile:%s)# ", s->profile.name[0] ? s->profile.name : "?");
+    return buf;
+}
+
+static void reset_terminal_input_modes(void) {
+    /* A prior fullscreen viewer, terminal multiplexer, or interrupted child can
+     * leave mouse tracking / bracketed paste enabled. The captive CLI is a
+     * command shell, not a mouse UI, so reset those modes before reading lines
+     * to prevent mouse movement from being echoed as literal escape text. */
+    static const char reset[] =
+        "\033[?1000l"  /* X10/button mouse */
+        "\033[?1002l"  /* button-event mouse */
+        "\033[?1003l"  /* any-event mouse */
+        "\033[?1004l"  /* focus events */
+        "\033[?1005l"  /* UTF-8 mouse */
+        "\033[?1006l"  /* SGR mouse */
+        "\033[?1015l"  /* urxvt mouse */
+        "\033[?2004l"; /* bracketed paste */
+    ssize_t ignored = write(STDOUT_FILENO, reset, sizeof(reset) - 1);
+    (void)ignored;
+}
+
+enum captive_input_key {
+    CAP_KEY_IGNORE = 0,
+    CAP_KEY_LEFT,
+    CAP_KEY_RIGHT,
+    CAP_KEY_HOME,
+    CAP_KEY_END,
+    CAP_KEY_DELETE
+};
+
+static int read_byte_timeout(unsigned char *out, int timeout_ms) {
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(STDIN_FILENO, &rfds);
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    int ready = select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv);
+    if (ready <= 0) return 0;
+    ssize_t n = read(STDIN_FILENO, out, 1);
+    return n == 1 ? 1 : 0;
+}
+
+static void consume_bytes_timeout(size_t count) {
+    unsigned char c;
+    for (size_t i = 0; i < count; i++) {
+        if (!read_byte_timeout(&c, 25)) return;
     }
+}
+
+static enum captive_input_key read_escape_key(void) {
+    unsigned char c;
+    if (!read_byte_timeout(&c, 25)) return CAP_KEY_IGNORE;
+
+    if (c == 'M') { /* X10 mouse report: ESC M b x y */
+        consume_bytes_timeout(3);
+        return CAP_KEY_IGNORE;
+    }
+
+    if (c == 'O') { /* SS3 cursor/application-keypad mode. */
+        if (!read_byte_timeout(&c, 25)) return CAP_KEY_IGNORE;
+        if (c == 'D') return CAP_KEY_LEFT;
+        if (c == 'C') return CAP_KEY_RIGHT;
+        if (c == 'H') return CAP_KEY_HOME;
+        if (c == 'F') return CAP_KEY_END;
+        return CAP_KEY_IGNORE;
+    }
+
+    if (c != '[') return CAP_KEY_IGNORE;
+    if (!read_byte_timeout(&c, 25)) return CAP_KEY_IGNORE;
+
+    if (c == '<') { /* SGR mouse report: ESC [ < ... M/m */
+        for (size_t i = 0; i < 64; i++) {
+            if (!read_byte_timeout(&c, 25)) return CAP_KEY_IGNORE;
+            if (c == 'M' || c == 'm') return CAP_KEY_IGNORE;
+        }
+        return CAP_KEY_IGNORE;
+    }
+    if (c == 'M') { /* Normal tracking mouse report: ESC [ M b x y */
+        consume_bytes_timeout(3);
+        return CAP_KEY_IGNORE;
+    }
+
+    if (c == 'D') return CAP_KEY_LEFT;
+    if (c == 'C') return CAP_KEY_RIGHT;
+    if (c == 'H') return CAP_KEY_HOME;
+    if (c == 'F') return CAP_KEY_END;
+    if (c == 'A' || c == 'B') return CAP_KEY_IGNORE;
+
+    char params[32];
+    size_t param_len = 0;
+    if ((c >= '0' && c <= '9') || c == ';') {
+        params[param_len++] = (char)c;
+        for (size_t i = 0; i < sizeof(params) - 1; i++) {
+            if (!read_byte_timeout(&c, 25)) return CAP_KEY_IGNORE;
+            if ((c >= '0' && c <= '9') || c == ';') {
+                params[param_len++] = (char)c;
+                continue;
+            }
+            params[param_len] = '\0';
+            if (c == '~') {
+                if (!strcmp(params, "1") || !strcmp(params, "7")) return CAP_KEY_HOME;
+                if (!strcmp(params, "4") || !strcmp(params, "8")) return CAP_KEY_END;
+                if (!strcmp(params, "3")) return CAP_KEY_DELETE;
+            }
+            if (c == 'D') return CAP_KEY_LEFT;
+            if (c == 'C') return CAP_KEY_RIGHT;
+            if (c == 'H') return CAP_KEY_HOME;
+            if (c == 'F') return CAP_KEY_END;
+            return CAP_KEY_IGNORE;
+        }
+    }
+    return CAP_KEY_IGNORE;
+}
+
+static void redraw_input_line(const char *prompt, const char *line, size_t len, size_t cursor) {
+    fputc('\r', stdout);
+    fputs(prompt, stdout);
+    fwrite(line, 1, len, stdout);
+    fputs("\033[K", stdout);
+    if (len > cursor) fprintf(stdout, "\033[%zuD", len - cursor);
     fflush(stdout);
+}
+
+static int read_interactive_line(const struct captive_session *s, char *line, size_t line_size) {
+    char prompt_buf[128];
+    const char *prompt = prompt_text(s, prompt_buf, sizeof(prompt_buf));
+    struct termios original;
+    if (tcgetattr(STDIN_FILENO, &original) != 0) {
+        fputs(prompt, stdout);
+        fflush(stdout);
+        return fgets(line, (int)line_size, stdin) ? 1 : 0;
+    }
+
+    struct termios raw = original;
+    raw.c_lflag &= (tcflag_t)~(ICANON | ECHO | ISIG);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) {
+        fputs(prompt, stdout);
+        fflush(stdout);
+        return fgets(line, (int)line_size, stdin) ? 1 : 0;
+    }
+
+    size_t len = 0;
+    size_t cursor = 0;
+    line[0] = '\0';
+    fputs(prompt, stdout);
+    fflush(stdout);
+
+    int result = 1;
+    while (1) {
+        unsigned char c;
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        if (n == 0) { result = 0; break; }
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            result = 0;
+            break;
+        }
+
+        if (c == '\r' || c == '\n') {
+            fputc('\n', stdout);
+            line[len] = '\0';
+            break;
+        }
+        if (c == 3) { /* Ctrl-C: cancel the current line, keep the shell alive. */
+            fputs("^C\n", stdout);
+            line[0] = '\0';
+            break;
+        }
+        if (c == 26) { /* Ctrl-Z: Cisco-style end to privileged EXEC. */
+            fputc('\n', stdout);
+            line[0] = (char)26;
+            line[1] = '\0';
+            break;
+        }
+        if (c == 4) { /* Ctrl-D */
+            if (len == 0) { result = 0; break; }
+            if (cursor < len) {
+                memmove(line + cursor, line + cursor + 1, len - cursor);
+                len--;
+                redraw_input_line(prompt, line, len, cursor);
+            }
+            continue;
+        }
+        if (c == 1) { cursor = 0; redraw_input_line(prompt, line, len, cursor); continue; } /* Ctrl-A */
+        if (c == 5) { cursor = len; redraw_input_line(prompt, line, len, cursor); continue; } /* Ctrl-E */
+        if (c == 21) { len = 0; cursor = 0; line[0] = '\0'; redraw_input_line(prompt, line, len, cursor); continue; } /* Ctrl-U */
+        if (c == 127 || c == 8) {
+            if (cursor > 0) {
+                memmove(line + cursor - 1, line + cursor, len - cursor + 1);
+                cursor--;
+                len--;
+                redraw_input_line(prompt, line, len, cursor);
+            }
+            continue;
+        }
+        if (c == 27) {
+            enum captive_input_key key = read_escape_key();
+            if (key == CAP_KEY_LEFT && cursor > 0) {
+                cursor--;
+                fputs("\033[D", stdout);
+                fflush(stdout);
+            } else if (key == CAP_KEY_RIGHT && cursor < len) {
+                cursor++;
+                fputs("\033[C", stdout);
+                fflush(stdout);
+            } else if (key == CAP_KEY_HOME) {
+                cursor = 0;
+                redraw_input_line(prompt, line, len, cursor);
+            } else if (key == CAP_KEY_END) {
+                cursor = len;
+                redraw_input_line(prompt, line, len, cursor);
+            } else if (key == CAP_KEY_DELETE && cursor < len) {
+                memmove(line + cursor, line + cursor + 1, len - cursor);
+                len--;
+                redraw_input_line(prompt, line, len, cursor);
+            }
+            continue;
+        }
+        if (c < 32 && c != '\t') continue;
+        if (len + 1 >= line_size) {
+            fputc('\a', stdout);
+            fflush(stdout);
+            continue;
+        }
+        memmove(line + cursor + 1, line + cursor, len - cursor + 1);
+        line[cursor] = (char)c;
+        cursor++;
+        len++;
+        redraw_input_line(prompt, line, len, cursor);
+    }
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &original);
+    return result;
 }
 
 static void help_exec(bool priv) {
@@ -233,7 +463,6 @@ static void help_exec(bool priv) {
     printf("  enable      Enter privileged mode\n");
     printf("  list        List running instances\n");
     printf("  logs        View logs for a run/profile target\n");
-    printf("  ping        Check daemon-less liveness of a run\n");
     printf("  run         Start an instance from a profile\n");
     printf("  show        Show running system information\n");
     printf("  inspect     Show structured details for a run/profile target\n");
@@ -890,7 +1119,7 @@ static int handle_exec(struct captive_session *s, int argc, char **argv) {
     }
     if (!strcmp(argv[0], "run")) return cmd_run(s, argc, argv);
     if (!strcmp(argv[0], "logs")) return hold_cmd_view_action(s->inv, s->user_store, s->system_store, s->program, argc - 1, argv + 1);
-    if (!strcmp(argv[0], "inspect") || !strcmp(argv[0], "ping")) {
+    if (!strcmp(argv[0], "inspect")) {
         if (argc != 2) {
             fprintf(stderr, "%% Usage: %s <target>\n", argv[0]);
             return 5;
@@ -949,12 +1178,17 @@ int hold_cmd_captive_action(const struct hold_invocation *inv,
     char line[4096];
     int last_rc = 0;
     bool interactive = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+    if (interactive) reset_terminal_input_modes();
     while (1) {
-        if (interactive) print_prompt(&s);
-        if (!fgets(line, sizeof(line), stdin)) break;
+        if (interactive) {
+            reset_terminal_input_modes();
+            if (!read_interactive_line(&s, line, sizeof(line))) break;
+        } else {
+            if (!fgets(line, sizeof(line), stdin)) break;
+        }
         if (!interactive && line[0] == '\0') continue;
         size_t len = strlen(line);
-        if (len > 0 && line[len - 1] != '\n' && !feof(stdin)) {
+        if (!interactive && len > 0 && line[len - 1] != '\n' && !feof(stdin)) {
             fprintf(stderr, "%% Input line too long\n");
             int ch;
             while ((ch = getchar()) != EOF && ch != '\n') {}
