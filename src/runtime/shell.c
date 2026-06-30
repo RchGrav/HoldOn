@@ -36,6 +36,7 @@ static void leave_raw(struct shell_raw_terminal *raw) {
     }
 }
 
+#if defined(__linux__)
 static void shell_close_stdio_to_devnull(void) {
     int fd = open("/dev/null", O_RDWR);
     if (fd < 0) return;
@@ -44,6 +45,7 @@ static void shell_close_stdio_to_devnull(void) {
     (void)dup2(fd, STDERR_FILENO);
     if (fd > STDERR_FILENO) close(fd);
 }
+#endif
 
 static int open_pty_master(char *slave_path, size_t slave_path_n) {
     int master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
