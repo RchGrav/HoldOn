@@ -733,6 +733,15 @@ hold inspect web
 - Options supplied to `hold profile` are persisted as profile defaults. They drive bare convenience starts, captive-CLI starts, grants, and generated IOS transcript output. The Docker-shaped `hold run` path still gives the current invocation's explicit switches priority for foreground/detach/interactivity/TTY behavior.
 - `-p`/`--publish` and `-v`/`--volume` are rejected here as well. Ports are observed from running host processes and host paths should be regular command arguments, not fake profile metadata.
 
+Persistent profile configuration tree:
+
+- A profile stores two different classes of data: the target command recipe and Hold's own execution/configuration options. Do not flatten them into one argv string.
+- The target command recipe is the executable plus the raw argv that will be passed to that executable.
+- Hold options captured during `hold run` profile creation or supplied to `hold profile` persist as structured profile configuration. They are not target argv.
+- Persistent option keys should use canonical long-switch/keyword names and live under category nodes such as `execution`, `environment`, `logging`, `restart`, `console`, `tty`, `interactive`, `detach`, `security`, and future grant/request-validation namespaces. Short switches are input conveniences only; they canonicalize before storage/export.
+- The IOS-style captive CLI is the namespace editor for this tree. It edits profile/config state through constrained commands and commits the result into canonical JSON storage. It is not decorative and it is not a separate product surface from profile authority; it is how operators safely inspect and mutate profile namespaces.
+- JSON formatting, key order, and pretty-vs-compact serialization are presentation details. For grant/capability authority, Hold parses the profile/grant object, normalizes it into the official semantic tree, and hashes canonical bytes. Semantic changes to any grant-relevant field invalidate the existing sudoers/capability digest.
+
 Examples:
 
 ```sh
