@@ -262,7 +262,7 @@ jobs:
         run: |
           install_tmp="$(mktemp -d)"
           trap 'rm -rf "$install_tmp"' EXIT
-          curl -LsSf --retry 5 --retry-delay 2 \
+          curl -LsSf --retry 5 --retry-delay 2 --retry-all-errors \
             "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ needs.version.outputs.tag }}/install.sh" |
             HOLD_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh
           installed_version="$("$install_tmp/bin/hold" --version)"
