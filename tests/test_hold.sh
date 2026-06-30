@@ -769,6 +769,12 @@ test_signal_refuses_tampered_live_group_identity() {
   shell_pgid=$(ps -o pgid= -p $$ | tr -d ' ')
   shell_sid=$(ps -o sid= -p $$ | tr -d ' ')
   [ -n "$shell_pgid" ] && [ -n "$shell_sid" ] || return 1
+  case "$shell_pgid:$shell_sid" in
+    *[!0-9:]*|0:*|1:*|*:0)
+      "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
+      skip "shell pgid/sid unavailable for live tamper check"
+      ;;
+  esac
   [ "$shell_pgid" != "$real_pgid" ] || { "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; skip "shell and target unexpectedly share pgid"; }
   rec=$(record_path "$id") || return 1
   cp "$rec" "$rec.bak" || return 1
