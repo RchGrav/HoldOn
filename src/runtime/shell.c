@@ -36,6 +36,15 @@ static void leave_raw(struct shell_raw_terminal *raw) {
     }
 }
 
+static void shell_close_stdio_to_devnull(void) {
+    int fd = open("/dev/null", O_RDWR);
+    if (fd < 0) return;
+    (void)dup2(fd, STDIN_FILENO);
+    (void)dup2(fd, STDOUT_FILENO);
+    (void)dup2(fd, STDERR_FILENO);
+    if (fd > STDERR_FILENO) close(fd);
+}
+
 static int open_pty_master(char *slave_path, size_t slave_path_n) {
     int master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (master < 0) return -1;
@@ -236,6 +245,7 @@ static int read_proc_cwd_path(pid_t pid, char *out, size_t n) {
 
 static void shell_background_logger(int master, const char *log_path, pid_t shell_pid, pid_t adopted_pgid, pid_t adopted_sid) {
     signal(SIGHUP, SIG_IGN);
+    shell_close_stdio_to_devnull();
     int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     if (fd < 0) _exit(1);
     while (1) {
@@ -253,7 +263,7 @@ static void shell_background_logger(int master, const char *log_path, pid_t shel
             char buf[4096];
             ssize_t n = read(master, buf, sizeof(buf));
             if (n > 0) {
-                hold_write_all(fd, buf, (size_t)n);
+                (void)hold_write_json_log_bytes_fd(fd, "stdout", buf, (size_t)n);
             } else if (n == 0 || (n < 0 && errno != EINTR)) {
                 break;
             }
@@ -267,6 +277,85 @@ static void shell_background_logger(int master, const char *log_path, pid_t shel
     close(fd);
     close(master);
     _exit(0);
+}
+
+static bool shell_id_available(const struct hold_store *store,
+                               const struct hold_store *avoid_public_store,
+                               const char *id) {
+    char path[HOLD_PATH_MAX];
+    if (!hold_valid_id(id)) return false;
+    if (hold_checked_snprintf(path, sizeof(path), "%s/%s.json", store->record_dir, id) != 0 ||
+        hold_path_exists(path)) {
+        return false;
+    }
+    if (hold_checked_snprintf(path, sizeof(path), "%s/%s.log", store->log_dir, id) != 0 ||
+        hold_path_exists(path)) {
+        return false;
+    }
+    if (store->public_dir[0] &&
+        (hold_checked_snprintf(path, sizeof(path), "%s/%s.json", store->public_dir, id) != 0 ||
+         hold_path_exists(path))) {
+        return false;
+    }
+    if (avoid_public_store && avoid_public_store->public_dir[0] &&
+        (hold_checked_snprintf(path, sizeof(path), "%s/%s.json", avoid_public_store->public_dir, id) != 0 ||
+         hold_path_exists(path))) {
+        return false;
+    }
+    return true;
+}
+
+static void shell_hash_field(struct sha256_ctx *ctx, const char *key, const char *value) {
+    hold_sha256_update_nul_field(ctx, key);
+    hold_sha256_update_nul_field(ctx, value ? value : "-");
+}
+
+static int shell_hashed_adopt_id(const struct hold_store *store,
+                                 const struct hold_store *avoid_public_store,
+                                 const char *exe_path,
+                                 char **argv,
+                                 int argc,
+                                 const char *cwd_path,
+                                 pid_t pid,
+                                 pid_t pgid,
+                                 int64_t start_unix_ns,
+                                 char out[ID_STR_LEN]) {
+    if (!store || !out) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (unsigned counter = 0; counter < 1024; counter++) {
+        struct sha256_ctx ctx;
+        unsigned char digest[32];
+        char tmp[64];
+        hold_sha256_init(&ctx);
+        shell_hash_field(&ctx, "scope", "hold-run-adopt-v1");
+        shell_hash_field(&ctx, "exe", exe_path);
+        shell_hash_field(&ctx, "cwd", cwd_path && *cwd_path ? cwd_path : "-");
+        snprintf(tmp, sizeof(tmp), "%lld", (long long)start_unix_ns);
+        shell_hash_field(&ctx, "created_ns", tmp);
+        snprintf(tmp, sizeof(tmp), "%ld", (long)pid);
+        shell_hash_field(&ctx, "pid", tmp);
+        snprintf(tmp, sizeof(tmp), "%ld", (long)pgid);
+        shell_hash_field(&ctx, "pgid", tmp);
+        snprintf(tmp, sizeof(tmp), "%d", argc);
+        shell_hash_field(&ctx, "argc", tmp);
+        for (int i = 0; i < argc; i++) {
+            snprintf(tmp, sizeof(tmp), "argv[%d]", i);
+            shell_hash_field(&ctx, tmp, argv ? argv[i] : NULL);
+        }
+        if (counter > 0) {
+            snprintf(tmp, sizeof(tmp), "%u", counter);
+            shell_hash_field(&ctx, "collision", tmp);
+        }
+        hold_sha256_final(&ctx, digest);
+        hold_hex_encode(digest, sizeof(digest), out, ID_STR_LEN);
+        if (shell_id_available(store, avoid_public_store, out)) {
+            return 0;
+        }
+    }
+    errno = EEXIST;
+    return -1;
 }
 
 static int adopt_foreground_group(const struct hold_invocation *inv,
@@ -328,8 +417,20 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
     if (store->kind == STORE_USER_LOCAL && hold_init_system_store(&system_hint) == 0) {
         avoid_public_store = &system_hint;
     }
-    char id[16], log_path[HOLD_PATH_MAX];
-    if (hold_gen_id_for_store(store, avoid_public_store, NULL, id, sizeof(id)) != 0 ||
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    int64_t start_unix_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    char id[ID_STR_LEN], log_path[HOLD_PATH_MAX];
+    if (shell_hashed_adopt_id(store,
+                              avoid_public_store,
+                              exe_path[0] ? exe_path : (observed_argv && argc > 0 ? observed_argv[0] : NULL),
+                              normalized_argv,
+                              argc,
+                              cwd_path,
+                              adopted_pid,
+                              fg_pgid,
+                              start_unix_ns,
+                              id) != 0 ||
         hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) != 0) {
         hold_free_argv_alloc(normalized_argv, argc);
         hold_free_argv_alloc(observed_argv, argc);
@@ -354,11 +455,12 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
     r.pid = adopted_pid;
     r.pgid = fg_pgid;
     r.sid = adopted_sid;
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    r.start_unix_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    r.start_unix_ns = start_unix_ns;
+    r.created_unix_ns = start_unix_ns;
     hold_format_rfc3339_utc_from_ns(r.start_unix_ns, r.started_at, sizeof(r.started_at));
     r.has_started_at = true;
+    hold_format_rfc3339_utc_from_ns(r.created_unix_ns, r.created_at, sizeof(r.created_at));
+    r.has_created_at = true;
     snprintf(r.state, sizeof(r.state), "running");
     r.has_state = true;
     r.uid = geteuid();
@@ -385,17 +487,19 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
         errno = saved;
         hold_die_errno("hold: failed to write adopted run record");
     }
-    printf("%s\n", r.id);
+    char display_id[ID_DISPLAY_HEX_LEN + 1];
+    hold_run_id_display(r.id, display_id);
+    printf("%s\n", display_id);
     hold_sig_note(inv,
                   "hold  adopted  %s   %s\n"
                   "         log      %s\n"
                   "         tail     hold tail %s\n"
                   "         stop     hold stop %s\n",
-                  r.id,
+                  display_id,
                   r.cmdline[0] ? r.cmdline : "?",
                   r.log_path,
-                  r.id,
-                  r.id);
+                  display_id,
+                  display_id);
     fflush(stdout);
     hold_free_argv_alloc(normalized_argv, argc);
     hold_free_argv_alloc(observed_argv, argc);

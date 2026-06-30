@@ -169,7 +169,7 @@ hold doctor                 -> explain stores, permissions, stale records
 Borrow Docker flag names where the concept maps cleanly:
 
 ```text
-hold -d --name web -p 8080:3000 -e NODE_ENV=production npm run start
+hold run -d --name web -e NODE_ENV=production -- npm run start
 hold -it --rm bash
 hold run -i pythonshell
 hold run -it web
@@ -185,10 +185,10 @@ Target flag meanings:
 - `-t` / `--tty`: allocate a pseudo-TTY for terminal behavior.
 - `-it`: stdin-open plus TTY; the normal shell/full-terminal experience. `Ctrl+P Ctrl+Q` within 500ms detaches and leaves it running under Hold.
 - `--detach-keys`: configure the detach sequence, Docker-style.
-- `--name <profile>`: create/label a profile from the normalized launch recipe.
+- `--name <name>`: assign a Docker-style run name, separate from explicit profile names.
 - `-e` / `--env`, `--env-file`: launch/profile environment.
-- `-p` / `--publish`: port metadata for display/readiness/open helpers; do not pretend to implement container networking for host processes.
-- `-v` / `--volume`: volume/path metadata for profile config and future backend support; do not pretend to remount host paths for normal host-process launches.
+- `-p` / `--publish`: unsupported/rejected. Hold does not publish or forward ports; it observes in-use listening ports from the host process and lists them in `hold ps`.
+- `-v` / `--volume`: unsupported/rejected. Hold does not mount/remap paths; pass host paths directly as argv/config, preferably absolute paths.
 - `--rm`: auto-remove run-id data/logs when the run exits.
 - `--restart`, `--restart-delay`: restart policy.
 - `--privileged`: explicit high-risk privileged/elevated mode.
@@ -196,7 +196,7 @@ Target flag meanings:
 ### Profile and configuration commands
 
 ```text
-hold --name web -d npm run start          # create/label profile from Docker-shaped launch
+hold profile web -d -- npm run start      # create/update explicit profile
 hold run -d web                           # launch profile detached
 hold run -it web                          # launch/re-enter interactive profile run
 hold inspect web                          # JSON/object inspection
@@ -473,7 +473,7 @@ Because filtering is dynamic, clearing should feel like editing text: Backspace 
 Important distinction:
 
 - **Search mode** highlights and jumps while keeping the full buffer.
-- **Filter mode** hides non-matching rows and shows match counts.
+- **Filter mode** hides non-matching rows. Static match counters should not appear in the default dynamic log viewer chrome.
 - **Type-to-filter mode** is the fast path: in views where text entry is otherwise meaningless, normal printable keystrokes immediately build the filter.
 
 This should work consistently for:

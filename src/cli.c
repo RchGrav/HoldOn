@@ -42,7 +42,7 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"prune", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold prune [target|all] [--all]", "prune"},
     {"rm", 1, 1, 0, "usage: hold rm [--force] <inactive-runid|profile>", "rm"},
     {"profiles", 0, 1, 0, "usage: hold profiles [-v]", "profiles"},
-    {"profile", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold profile <name> <show|start|run|create|set|export|rename|delete> [args...]\n       hold profile <run|start|save|show|export|import> [args...]", "profile"},
+    {"profile", 1, -1, HOLD_CLI_ALLOW_DDASH, "usage: hold profile <name> [profile-options] [--] <cmd> [args...]\n       hold profile <name> <show|start|run|create|set|export|rename|delete> [args...]\n       hold profile <run|start|save|show|export|import> [args...]", "profile"},
     {"export", 1, -1, 0, "usage: hold export <profile> [as <file>] [--format cli|json]", "export"},
     {"import", 1, -1, 0, "usage: hold import <file> [as <profile>] [--dry-run|--yes]", "import"},
     {"show", 1, 2, 0, "usage: hold show <runs|profiles|running|dormant|failed|stale> [name]", "show"},
@@ -87,13 +87,17 @@ static int help_profiles(void) {
     printf("hold help profiles\n\n"
            "Pin a run's exact command (resolved binary path + argv) under a reusable\n"
            "name.\n\n"
-           "  hold profile <name> create -- <cmd>  create/update a saved command recipe\n"
+           "  hold profile <name> [opts] -- <cmd> create/update a saved command recipe\n"
            "  hold profile save <id> as <name>   save a recent run as a profile\n"
            "  hold profiles [-v]           list visible profiles\n"
            "  hold export <name>           export a Cisco IOS-style transcript\n"
            "  hold export <name> as FILE   write transcript to FILE\n"
            "  hold import FILE as <name>   import/update a user-local profile\n"
-           "  hold run <name>              start a fresh run under that name\n\n"
+           "  hold run <name>              start a fresh run from that profile\n\n"
+           "Profile opts mirror the persistent subset of run opts: -d, -i, -t,\n"
+           "--env, --env-file, --restart, --restart-delay, --allow-multi,\n"
+           "and --log-destination syslog. Publish and volume flags are rejected\n"
+           "because Hold observes host listening ports and does not mount/remap paths.\n\n"
            "The name is also recorded on runs started as <name>, so later\n"
            "ps, logs, inspect, stop, kill, rm, and prune commands can use <name>.\n"
            "If the command behind <name> is updated later, future starts use the updated command; prior runs\n"
@@ -191,7 +195,7 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "kill")) {
         printf("usage: hold kill [--print] [--all] <target>...\n\nForce matching runs down with KILL.\n");
     } else if (!strcmp(action, "run")) {
-        printf("usage: hold run [run-options] <cmd|profile> [args...]\n\nDocker-shaped launch. Without -d, Hold starts the run and follows its log in the foreground.\nCommon options:\n  -d, --detach          run in the background and print the run ID\n  -i, --interactive     keep non-PTY stdin open\n  -t, --tty             allocate Hold's PTY/console path\n  -e, --env KEY=VALUE   set launch environment\n      --env-file FILE   load KEY=VALUE launch environment lines\n  -p, --publish SPEC    record published-port metadata\n  -v, --volume SPEC     record volume/path metadata\n      --rm              remove run record/log after exit\n      --restart POLICY  restart rule: no|always|unless-stopped|on-failure[:N]\n      --restart-delay N delay seconds between restart attempts\n      --force           start one additional instance of a running profile\n      --multi N         start N instances of a profile\n      --name PROFILE    create/label a profile from this launch recipe\n      --detach-keys SEQ set TTY detach keys (default ctrl-p,ctrl-q)\n      --privileged      request Hold's elevated/root-managed path\nUse -- before a command whose name conflicts with a Hold command or option.\n");
+        printf("usage: hold run [run-options] <cmd|profile> [args...]\n\nDocker-shaped launch. Without -d, Hold starts the run and follows its log in the foreground.\nCommon options:\n  -d, --detach          run in the background and print the run ID\n  -i, --interactive     keep non-PTY stdin open\n  -t, --tty             allocate Hold's PTY/console path\n  -e, --env KEY=VALUE   set launch environment\n      --env-file FILE   load KEY=VALUE launch environment lines\n  -p, --publish SPEC    unsupported: Hold observes in-use ports in `hold ps`\n  -v, --volume SPEC     unsupported: pass host paths directly; no mounts/remaps\n      --rm              remove run record/log after exit\n      --restart POLICY  restart rule: no|always|unless-stopped|on-failure[:N]\n      --restart-delay N delay seconds between restart attempts\n      --log-destination syslog  mirror JSON log lines to local syslog\n      --force           start one additional instance of a running profile\n      --multi N         start N instances of a profile\n      --name NAME       assign this run's container-style name\n      --detach-keys SEQ set TTY detach keys (default ctrl-p,ctrl-q)\n      --privileged      request Hold's elevated/root-managed path\nUse -- before a command whose name conflicts with a Hold command or option.\n");
     } else if (!strcmp(action, "tail") || !strcmp(action, "logs")) {
         if (!strcmp(action, "logs")) {
             printf("usage: hold logs <target> [--follow|-f] [--tail|-n N] [--plain|--interactive]\n\nOpen the log viewer for a run. In a TTY, type directly in the full-screen viewer to filter dynamically; Backspace relaxes the filter, Space excludes lines like the highlighted line, and Ctrl-R resets filters. Non-TTY output stays script-friendly.\n");
@@ -215,7 +219,7 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "import")) {
         printf("usage: hold import <file> [as <profile>] [--dry-run|--yes]\n\nImport a Cisco IOS-style profile transcript into canonical user-local profile storage. `as <profile>` overrides the transcript profile name; --dry-run validates without writing.\n");
     } else if (!strcmp(action, "profile")) {
-        printf("usage: hold profile <name> <show|start|run|create|set|export|rename|delete> [args...]\n       hold profile <run|start|save|show|export|import> [args...]\n\nWork with profile definitions and profile-backed runs. The name-first editor supports:\n  hold profile web create -- /usr/bin/python3 -m http.server 9000\n  hold profile web set command -- /usr/bin/python3 -m http.server 9000\n  hold profile web export [--format cli|json]\n  hold profile save <runid> as web [-v]\n  hold profiles [-v]\n  hold profile web rename api\n  hold profile api delete\nImport/export supports Cisco IOS-style transcripts:\n  enable\n  configure terminal\n  profile web\n  binary /usr/bin/python3\n  argv -m http.server 9000\n  commit\n  end\n  write\n");
+        printf("usage: hold profile <name> [profile-options] [--] <cmd> [args...]\n       hold profile <name> <show|start|run|create|set|export|rename|delete> [args...]\n       hold profile <run|start|save|show|export|import> [args...]\n\nWork with explicit profile definitions and profile-backed runs. The name-first editor supports:\n  hold profile web -- /usr/bin/python3 -m http.server 9000\n  hold profile web -d -e PORT=9000 --log-destination syslog -- /usr/bin/python3 -m http.server \"$PORT\"\n  hold profile web create -- /usr/bin/python3 -m http.server 9000\n  hold profile web set command -- /usr/bin/python3 -m http.server 9000\n  hold profile web export [--format cli|json]\n  hold profile save <runid> as web [-v]\n  hold profiles [-v]\n  hold profile web rename api\n  hold profile api delete\nImport/export supports Cisco IOS-style transcripts:\n  enable\n  configure terminal\n  profile web\n  binary /usr/bin/python3\n  argv -m http.server 9000\n  log-destination syslog\n  commit\n  end\n  write\n");
     } else if (!strcmp(action, "status")) {
         printf("usage: hold status [profile|target]\n\nShow runs, optionally narrowed by profile/target.\n");
     } else if (!strcmp(action, "inspect")) {

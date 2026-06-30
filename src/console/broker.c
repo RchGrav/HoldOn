@@ -306,7 +306,7 @@ void hold_run_console_broker(int parent_pipe,
             char buf[4096];
             ssize_t n = read(master, buf, sizeof(buf));
             if (n > 0) {
-                (void)hold_write_all(logfd, buf, (size_t)n);
+                (void)hold_write_json_log_bytes_fd(logfd, "stdout", buf, (size_t)n);
                 hold_console_replay_append(&replay, buf, (size_t)n);
                 if (client >= 0 && hold_write_all(client, buf, (size_t)n) != 0) {
                     close(client);

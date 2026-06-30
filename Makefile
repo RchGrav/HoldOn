@@ -69,8 +69,11 @@ hash-vector:
 	@./hash-vector
 
 viewer-filter-test:
-	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c
+	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logging.c src/core/json.c src/core/util.c
 	@./viewer-filter-test
+
+test-040: hold-dynamic
+	@HOLD_BIN=./hold-dynamic bash tests/test_040_dockerish.sh
 
 print-version:
 	@printf '%s\n' '$(VERSION)'
@@ -106,4 +109,4 @@ clean:
 	rm -f hold hold-dynamic hash-vector viewer-filter-test
 	rm -rf obj obj-test
 
-.PHONY: all clean test check ci lint hash-vector viewer-filter-test print-version review-build review-fixture demo demo-stop demo-status
+.PHONY: all clean test test-040 check ci lint hash-vector viewer-filter-test print-version review-build review-fixture demo demo-stop demo-status

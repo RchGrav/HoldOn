@@ -1,7 +1,7 @@
 # Review status
 
-Date: 2026-06-23
-Branch: `hold-0.4.0-redesign`
+Date: 2026-06-29
+Branch: `mund-0.4.0-redesign`
 Scope: release-readiness notes for the 0.4.0 documentation, branch alignment, and hardening plan.
 
 ## Current status
@@ -13,54 +13,74 @@ This file replaces an older review report whose test counts and file references 
 1. the full `hold` CLI/product direction in `docs/HOLD_0_4_UX_SPEC.md` is implemented and documented; and
 2. the hardening backlog in that same spec is implemented, tested, and reviewed.
 
-## Latest recovery/readiness pass
+## Latest release-cut planning pass
 
 Date: 2026-06-29
 
-The crash-recovery pass restored a test-green working tree and preserved the
-2026-06-28 direction/security findings as branch review artifacts:
+The current planning pass added [0.4 release cut and 0.4.x backlog](docs/0.4-release-cut.md) and [Dynamic log viewer design before 0.5](docs/future/viewer-fixes-before-0.5.md). These documents capture the completed 0.4 implementation slice, the proposed 0.4.0 cut line, and near-future pre-0.5 viewer work. The viewer redesign is intentionally documented for later instead of expanding the current oversized 0.4.0 implementation commit.
 
-- [0.4.0 direction and decisions](docs/0.4.0-direction-2026-06-28.md)
-- [0.4.0 security review](docs/security-review-2026-06-28.md)
-
-Current verification from this pass:
+Current focused verification from this pass:
 
 ```sh
-make test
-# summary: 157 passed, 0 failed, 0 skipped
-# viewer filter engine: PASS
-# profile-hash vector: PASS
-
-make lint
-# layer dependency direction: clean
+make -C /home/rich/sigmund hold-dynamic -j2
+make -C /home/rich/sigmund hold -j2
+make -C /home/rich/sigmund test-040
+make -C /home/rich/sigmund viewer-filter-test
+make -C /home/rich/sigmund hash-vector
+bash -n /home/rich/sigmund/tests/test_hold.sh
+bash -n /home/rich/sigmund/tests/test_040_dockerish.sh
+git -C /home/rich/sigmund diff --check
 ```
 
-This proves the current recovered branch is ready for the next implementation
-slice. It does **not** prove 0.4.0 release readiness.
+Result: all focused commands above passed. The static build emitted the known glibc `getpwuid` static-link warning.
+
+Historical full legacy-suite verification from the same branch, before the stale-test/focused-fix pass:
+
+```sh
+HOLD_TEST_TIMEOUT=20 make -C /home/rich/sigmund test
+# summary: 99 passed, 58 failed, 0 skipped
+```
+
+Those failures were triaged into stale legacy assertions, real product fixes, and release-script test harness issues. The later full-suite pass below supersedes this historical failure count.
+
+Latest viewer-design documentation pass:
+
+```sh
+make -C /home/rich/sigmund hold-dynamic -j2
+make -C /home/rich/sigmund viewer-filter-test
+make -C /home/rich/sigmund test-040
+bash -n /home/rich/sigmund/tests/test_hold.sh
+git -C /home/rich/sigmund diff --check
+# plus local markdown-link validation for the touched docs
+```
+
+Result: all commands above passed. This pass documented the before-0.5 viewer design and deliberately left the redesign out of the 0.4.0 implementation cut.
+
+Latest full-suite verification pass:
+
+```sh
+HOLD_TEST_TIMEOUT=25 make -C /home/rich/sigmund test 2>&1 | tee /home/rich/sigmund/.omx/logs/full-verify-make-test-20260629-rerun4.log
+git -C /home/rich/sigmund diff --check
+make -B -C /home/rich/sigmund hold hold-dynamic -j2
+```
+
+Result:
+
+- `tests/test_hold.sh`: `157 passed, 0 failed, 0 skipped`
+- `viewer-filter-test`: passed
+- `hash-vector`: `all 3 golden + 3 collision checks pass`
+- `tests/test_version_makefile.sh`: passed inside `make test` after suppressing inherited make directory chatter
+- `tests/test_release_installer.sh`: passed inside `make test`
+- `git diff --check`: passed
+- release rebuild restored `hold` as statically linked and `hold-dynamic` as dynamically linked; the static link emitted the known glibc `getpwuid` warning.
 
 Recommended next implementation tasks, in order:
 
-1. **Privilege hardening gate:** implement the trusted-execution-context layer
-   before shipping delegation: pinned cwd, root-owned binary/path-arg/ancestor
-   validation, sanitized/hash-covered env, and `O_NOFOLLOW`/fd-based log
-   handling. This is the highest-risk release blocker.
-2. **Profile schema expansion:** persist and hash cwd/env so the capability
-   digest matches the actual execution context.
-3. **Run identity/name and Docker-shaped listing:** replace the legacy
-   random 12-hex generator with creation-hash run/profile tracking IDs, store
-   full hashes, display the first 12 hex characters, persist generated
-   `adjective_noun` names from the same hash, and make `ps -a` match Docker's
-   table shape with `RUN ID`, `PROFILE`, `COMMAND`, `CREATED`, `STATUS`,
-   observed `PORTS`, and `NAMES`.
-4. **Public CLI contract completion:** finish the table-driven parser/help
-   agreement for the 0.4 shell surface, including the strict distinction
-   between Docker-shaped `hold run` and background-first bare `hold`, the
-   profile-over-executable selection rule, `--` conflict escape, and the
-   non-running `hold profile` creation twin; then remove or hide remaining
-   legacy primary verbs that conflict with the target command language.
-5. **Release evidence refresh:** after each implementation slice, update this
-   file with exact command/date/environment evidence instead of relying on
-   historical green runs.
+1. **Viewer freeze for 0.4.0:** keep the redesigned dynamic viewer as documented near-future work; do not add more viewer implementation to the current 0.4.0 cut.
+2. **Release cut cleanup:** review and split the oversized commit into coherent slices before tagging.
+3. **Grant/security gate:** either complete trusted global-profile grant checks or hide/label grant behavior as not supported in the 0.4.0 public surface.
+4. **Public docs/changelog:** draft the 0.4.0 changelog and migration notes now that the release test gate is green.
+5. **Before 0.5 viewer branch:** implement the documented sidecar-index/dynamic-viewer redesign as a separate branch/commit series.
 
 ## Latest alignment pass
 
@@ -137,11 +157,10 @@ grep -n "full .*product direction\|release criteria\|later minor\|implementation
 
 Result: local links in touched files resolved, static-artifact caveats were present in the expected docs, stale historical pass claims were absent, and 0.4.0 scope/alignment language was present.
 
-Latest implementation pass: `make test` was run on this branch after adding name-first profile command editing/CRUD and a shell profile submode and passed (104 shell tests, viewer filter engine, and profile-hash vectors). Earlier docs-only review notes above remain link/grep evidence only and should not be reused as runtime proof.
 
 ## Release-readiness checklist
 
-- [x] `make test` completes successfully on this branch for the 2026-06-23 Autopilot alignment pass.
+- [x] `make test` or an explicit 0.4.0 release suite completes successfully on the current branch. Latest full run on 2026-06-29: `157 passed, 0 failed, 0 skipped`, plus viewer/hash/version/release-installer targets passed.
 - [ ] CLI grammar, help text, parser behavior, and documentation agree for the 0.4.0 `hold` surface.
 - [ ] GNU static, GNU dynamic, and musl static install behavior is documented without overstating glibc static portability.
 - [ ] Console attach authorization is peer-credential checked before replaying output or forwarding input.
@@ -152,6 +171,8 @@ Latest implementation pass: `make test` was run on this branch after adding name
 
 ## Current caveats
 
-- This branch now includes both documentation alignment and initial profile-editing implementation slices.
-- The implementation test evidence in this file is limited to the 2026-06-23 run after the name-first profile command edit/CRUD and shell-submode work: `make test` passed with 104 shell tests plus viewer filter and profile-hash vectors. It does not certify the remaining 0.4.0 release-readiness checklist items.
+- This branch now includes a substantial 0.4 implementation slice plus release-cut planning docs.
+- Full `make test` passed on 2026-06-29 after stale assertions and focused product bugs were corrected.
+- The before-0.5 dynamic log viewer redesign remains intentionally unimplemented in this 0.4.0 cut; use `docs/future/viewer-fixes-before-0.5.md` as the source of truth.
+- Grant/global-profile hardening remains the main non-viewer caveat before declaring broader security completeness.
 - Any future reviewer who reruns `make test` should update this status with the exact command, date, environment, and result.

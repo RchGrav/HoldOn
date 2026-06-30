@@ -42,6 +42,7 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
     fprintf(f, "  \"pgid\": %ld,\n", (long)r->pgid);
     fprintf(f, "  \"sid\": %ld,\n", (long)r->sid);
     fprintf(f, "  \"start_unix_ns\": %" PRId64 ",\n", r->start_unix_ns);
+    fprintf(f, "  \"created_unix_ns\": %" PRId64 ",\n", r->created_unix_ns ? r->created_unix_ns : r->start_unix_ns);
     fprintf(f, "  \"argv\": ");
     hold_write_json_argv(f, argc, argv);
     fprintf(f, ",\n");
@@ -71,9 +72,19 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
         hold_json_escape(f, r->alias);
         fprintf(f, "\",\n");
     }
+    if (r->has_name) {
+        fprintf(f, "  \"name\": \"");
+        hold_json_escape(f, r->name);
+        fprintf(f, "\",\n");
+    }
     if (r->has_started_at) {
         fprintf(f, "  \"started_at\": \"");
         hold_json_escape(f, r->started_at);
+        fprintf(f, "\",\n");
+    }
+    if (r->has_created_at) {
+        fprintf(f, "  \"created_at\": \"");
+        hold_json_escape(f, r->created_at);
         fprintf(f, "\",\n");
     }
     if (r->has_ended_at) {
@@ -102,6 +113,11 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
         hold_json_escape(f, r->console_sock);
         fprintf(f, "\",\n");
     }
+    if (r->envc > 0 && r->env) {
+        fprintf(f, "  \"env\": ");
+        hold_write_json_argv(f, r->envc, r->env);
+        fprintf(f, ",\n");
+    }
     if (r->portc > 0 && r->ports) {
         fprintf(f, "  \"ports\": ");
         hold_write_json_argv(f, r->portc, r->ports);
@@ -119,6 +135,11 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
     }
     if (r->has_restart_delay) {
         fprintf(f, "  \"restart_delay_seconds\": %d,\n", r->restart_delay_seconds);
+    }
+    if (r->has_log_destination && r->log_destination[0]) {
+        fprintf(f, "  \"log_destination\": \"");
+        hold_json_escape(f, r->log_destination);
+        fprintf(f, "\",\n");
     }
     fprintf(f, "  \"uid\": %u,\n", r->uid);
     fprintf(f, "  \"gid\": %u,\n", r->gid);
@@ -223,9 +244,17 @@ int hold_write_public_index_atomic(const struct hold_store *store, const struct 
         hold_json_escape(f, r->alias);
         fprintf(f, "\",\n");
     }
+    if (r->has_name) {
+        fprintf(f, "  \"name\": \"");
+        hold_json_escape(f, r->name);
+        fprintf(f, "\",\n");
+    }
     fprintf(f, "  \"state_hint\": \"unknown\",\n");
     fprintf(f, "  \"started_at\": \"");
     hold_json_escape(f, r->has_started_at && r->started_at[0] ? r->started_at : "-");
+    fprintf(f, "\",\n");
+    fprintf(f, "  \"created_at\": \"");
+    hold_json_escape(f, r->has_created_at && r->created_at[0] ? r->created_at : (r->has_started_at && r->started_at[0] ? r->started_at : "-"));
     fprintf(f, "\"\n");
     fprintf(f, "}\n");
 
@@ -301,6 +330,9 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
         free(j);
         return -1;
     }
+    if (hold_json_get_i64(j, "created_unix_ns", &r->created_unix_ns) != 0) {
+        r->created_unix_ns = r->start_unix_ns;
+    }
     if (hold_json_get_i64(j, "uid", &tmp) != 0) {
         free(j);
         return -1;
@@ -328,6 +360,9 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     if (hold_json_get_str(j, "alias", r->alias, sizeof(r->alias)) == 0 && hold_valid_alias(r->alias)) {
         r->has_alias = true;
     }
+    if (hold_json_get_str(j, "name", r->name, sizeof(r->name)) == 0 && hold_valid_alias(r->name)) {
+        r->has_name = true;
+    }
     if (hold_json_get_str(j, "log_path", r->log_path, sizeof(r->log_path)) == 0) {
         r->has_log = true;
     }
@@ -336,6 +371,12 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     }
     if (hold_json_get_str(j, "started_at", r->started_at, sizeof(r->started_at)) == 0) {
         r->has_started_at = true;
+    }
+    if (hold_json_get_str(j, "created_at", r->created_at, sizeof(r->created_at)) == 0) {
+        r->has_created_at = true;
+    } else if (r->has_started_at) {
+        snprintf(r->created_at, sizeof(r->created_at), "%s", r->started_at);
+        r->has_created_at = true;
     }
     if (hold_json_get_str(j, "ended_at", r->ended_at, sizeof(r->ended_at)) == 0) {
         r->has_ended_at = true;
@@ -358,6 +399,18 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
         r->console_sock[0] == '/') {
         r->has_console = true;
     }
+    if (hold_json_get_env_alloc(j, &r->env, &r->envc) != 0) {
+        r->env = NULL;
+        r->envc = 0;
+    }
+    if (hold_json_get_ports_alloc(j, &r->ports, &r->portc) != 0) {
+        r->ports = NULL;
+        r->portc = 0;
+    }
+    if (hold_json_get_volumes_alloc(j, &r->volumes, &r->volumec) != 0) {
+        r->volumes = NULL;
+        r->volumec = 0;
+    }
     if (hold_json_get_str(j, "restart", r->restart_policy, sizeof(r->restart_policy)) == 0 &&
         r->restart_policy[0]) {
         r->has_restart_policy = true;
@@ -365,6 +418,10 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     if (hold_json_get_i64(j, "restart_delay_seconds", &tmp) == 0 && tmp >= 0 && tmp <= INT_MAX) {
         r->restart_delay_seconds = (int)tmp;
         r->has_restart_delay = true;
+    }
+    if (hold_json_get_str(j, "log_destination", r->log_destination, sizeof(r->log_destination)) == 0 &&
+        r->log_destination[0]) {
+        r->has_log_destination = true;
     }
     if (hold_json_get_u64(j, "proc_starttime_ticks", &r->proc_starttime_ticks) != 0 ||
         hold_json_get_u64(j, "exe_dev", &r->exe_dev) != 0 ||
@@ -399,11 +456,17 @@ int hold_load_public_index(const char *path, struct hold_public_index *pi) {
     if (hold_json_get_str(j, "alias", pi->alias, sizeof(pi->alias)) == 0 && hold_valid_alias(pi->alias)) {
         pi->has_alias = true;
     }
+    if (hold_json_get_str(j, "name", pi->name, sizeof(pi->name)) == 0 && hold_valid_alias(pi->name)) {
+        pi->has_name = true;
+    }
     if (hold_json_get_str(j, "state_hint", pi->state_hint, sizeof(pi->state_hint)) != 0) {
         snprintf(pi->state_hint, sizeof(pi->state_hint), "%s", "unknown");
     }
     if (hold_json_get_str(j, "started_at", pi->started_at, sizeof(pi->started_at)) != 0) {
         snprintf(pi->started_at, sizeof(pi->started_at), "%s", "-");
+    }
+    if (hold_json_get_str(j, "created_at", pi->created_at, sizeof(pi->created_at)) != 0) {
+        snprintf(pi->created_at, sizeof(pi->created_at), "%s", pi->started_at[0] ? pi->started_at : "-");
     }
     free(j);
     return 0;
@@ -423,14 +486,52 @@ int hold_load_public_index_by_id(const struct hold_store *store, const char *id,
     return 0;
 }
 
+static int resolve_record_file_id(const char *dir, const char *input, char *resolved, size_t n) {
+    if (!dir || !*dir || !input || !*input || !resolved || n == 0) {
+        return -1;
+    }
+    if (hold_valid_id(input)) {
+        char exact[HOLD_PATH_MAX];
+        if (hold_checked_snprintf(exact, sizeof(exact), "%s/%s.json", dir, input) == 0 &&
+            access(exact, F_OK) == 0) {
+            return hold_checked_snprintf(resolved, n, "%s", input);
+        }
+    }
+    if (!hold_valid_id_prefix(input)) {
+        return -1;
+    }
+    DIR *d = opendir(dir);
+    if (!d) {
+        return -1;
+    }
+    int matches = 0;
+    const struct dirent *e;
+    while ((e = readdir(d))) {
+        char file_id[ID_HEX_LEN + 1];
+        if (!hold_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
+            continue;
+        }
+        if (strncmp(file_id, input, strlen(input)) == 0) {
+            matches++;
+            if (hold_checked_snprintf(resolved, n, "%s", file_id) != 0) {
+                closedir(d);
+                return -1;
+            }
+        }
+    }
+    closedir(d);
+    return matches == 1 ? 0 : -1;
+}
+
 int hold_load_record_by_id(const char *dir, const char *id, struct hold_run_record *r, char *path, size_t n) {
-    if (!hold_valid_id(id)) {
+    char resolved[ID_HEX_LEN + 1];
+    if (resolve_record_file_id(dir, id, resolved, sizeof(resolved)) != 0) {
         return -1;
     }
-    if (hold_checked_snprintf(path, n, "%s/%s.json", dir, id) != 0) {
+    if (hold_checked_snprintf(path, n, "%s/%s.json", dir, resolved) != 0) {
         return -1;
     }
-    if (hold_load_record(path, r) != 0 || !hold_valid_record(r) || strcmp(r->id, id) != 0) {
+    if (hold_load_record(path, r) != 0 || !hold_valid_record(r) || strcmp(r->id, resolved) != 0) {
         return -1;
     }
     return 0;

@@ -3,11 +3,15 @@
 #include "hold/core.h"
 
 bool hold_valid_id(const char *id) {
-    size_t len = strlen(id);
-    if (len != ID_HEX_LEN) {
+    if (!id) {
         return false;
     }
-    if (strcmp(id, "000000000000") == 0 || strcmp(id, "ffffffffffff") == 0) {
+    size_t len = strlen(id);
+    if (len != ID_HEX_LEN && len != ID_LEGACY_HEX_LEN) {
+        return false;
+    }
+    if ((len == ID_LEGACY_HEX_LEN &&
+         (strcmp(id, "000000000000") == 0 || strcmp(id, "ffffffffffff") == 0))) {
         return false;
     }
     for (size_t i = 0; i < len; i++) {
@@ -33,6 +37,9 @@ bool hold_record_json_filename_id(const char *name, char *id, size_t n) {
 }
 
 bool hold_valid_id_prefix(const char *id) {
+    if (!id) {
+        return false;
+    }
     size_t len = strlen(id);
     if (len < 1 || len > ID_HEX_LEN) {
         return false;
@@ -75,7 +82,8 @@ bool hold_valid_alias(const char *alias) {
 }
 
 bool hold_valid_record(const struct hold_run_record *r) {
-    return r->pid > 0 && r->pgid > 1 && r->id[0] != '\0';
+    return r && r->pid > 0 && r->pgid > 1 && hold_valid_id(r->id) &&
+           (r->run_id[0] == '\0' || hold_valid_id(r->run_id));
 }
 
 int hold_parse_uid_env(const char *s, uid_t *out) {

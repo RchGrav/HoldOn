@@ -48,6 +48,16 @@ struct captive_session {
     struct captive_profile_stage profile;
 };
 
+static int reject_publish_config(void) {
+    fprintf(stderr, "%% Hold is not containerized and does not publish or forward ports; listening ports are observed automatically in hold ps\n");
+    return 5;
+}
+
+static int reject_volume_config(void) {
+    fprintf(stderr, "%% Hold is not containerized and does not mount or remap volumes; pass host paths directly as argv/config paths\n");
+    return 5;
+}
+
 static void stage_clear(struct captive_profile_stage *stage) {
     for (size_t i = 0; i < stage->arg_count; i++) free(stage->args[i]);
     for (size_t i = 0; i < stage->env_count; i++) free(stage->env[i]);
@@ -256,8 +266,8 @@ static void help_profile(void) {
     printf("  binary        Set the target executable\n");
     printf("  argv          Append base argv tokens\n");
     printf("  env           Set an environment variable\n");
-    printf("  publish       Record published port metadata\n");
-    printf("  volume        Record volume/path metadata\n");
+    printf("  publish       Unsupported: ports are observed in hold ps\n");
+    printf("  volume        Unsupported: pass host paths directly\n");
     printf("  alias         Define a profile-local alias (reserved)\n");
     printf("  param         Expose a validated optional parameter (reserved)\n");
     printf("  multi         Allow multiple concurrent instances\n");
@@ -381,21 +391,6 @@ static int profile_append_args(struct captive_profile_stage *stage, int argc, ch
         stage->arg_count++;
     }
     stage->dirty = true;
-    return 0;
-}
-
-static int profile_append_metadata(char **items, size_t *count, size_t max, const char *kind, int argc, char **argv) {
-    if (argc != 2 || !argv[1] || !argv[1][0]) {
-        fprintf(stderr, "%% Usage: %s <spec>\n", kind);
-        return 5;
-    }
-    if (*count >= max) {
-        fprintf(stderr, "%% Too many %s entries\n", kind);
-        return 5;
-    }
-    char *copy = strdup(argv[1]);
-    if (!copy) return 3;
-    items[(*count)++] = copy;
     return 0;
 }
 
@@ -648,7 +643,8 @@ static int profile_commit(struct captive_session *s) {
                                       stage->mode_detach,
                                       stage->allow_multi,
                                       stage->has_restart_policy ? stage->restart_policy : NULL,
-                                      stage->has_restart_delay ? stage->restart_delay_seconds : 0) != 0) {
+                                      stage->has_restart_delay ? stage->restart_delay_seconds : 0,
+                                      NULL) != 0) {
         free(argv);
         hold_die_errno("hold: failed to commit profile");
     }
@@ -688,11 +684,11 @@ static int handle_profile(struct captive_session *s, int argc, char **argv) {
             return 0;
         }
         if (!strcmp(argv[0], "publish")) {
-            printf("  WORD       Port metadata spec, e.g. 8080:3000\n");
+            printf("  unsupported: Hold does not publish/forward ports; use host networking and hold ps\n");
             return 0;
         }
         if (!strcmp(argv[0], "volume")) {
-            printf("  WORD       Volume/path metadata spec, e.g. /host:/name\n");
+            printf("  unsupported: Hold does not mount/remap paths; pass host paths directly\n");
             return 0;
         }
         if (!strcmp(argv[0], "param")) {
@@ -709,8 +705,8 @@ static int handle_profile(struct captive_session *s, int argc, char **argv) {
         }
         if (!strcmp(argv[0], "no")) {
             printf("  env         Remove an environment variable or all env\n");
-            printf("  publish     Remove published port metadata\n");
-            printf("  volume      Remove volume/path metadata\n");
+            printf("  publish     Clear legacy publish metadata\n");
+            printf("  volume      Clear legacy volume metadata\n");
             printf("  argv        Clear base argv tokens\n");
             printf("  interactive Disable stdin-open profile mode\n");
             printf("  tty         Disable pseudo-TTY profile mode\n");
@@ -724,8 +720,8 @@ static int handle_profile(struct captive_session *s, int argc, char **argv) {
         if (!strcmp(argv[0], "default")) {
             printf("  argv        Clear base argv tokens\n");
             printf("  env         Clear environment entries\n");
-            printf("  publish     Clear published port metadata\n");
-            printf("  volume      Clear volume/path metadata\n");
+            printf("  publish     Clear legacy publish metadata\n");
+            printf("  volume      Clear legacy volume metadata\n");
             printf("  interactive Reset stdin-open mode to default\n");
             printf("  tty         Reset pseudo-TTY mode to default\n");
             printf("  console     Alias for default tty\n");
@@ -748,14 +744,10 @@ static int handle_profile(struct captive_session *s, int argc, char **argv) {
     if (!strcmp(argv[0], "argv")) return profile_append_args(&s->profile, argc, argv);
     if (!strcmp(argv[0], "env")) return profile_set_env(&s->profile, argc, argv);
     if (!strcmp(argv[0], "publish")) {
-        int rc = profile_append_metadata(s->profile.ports, &s->profile.port_count, CAPTIVE_MAX_ARGS, "publish", argc, argv);
-        if (rc == 0) s->profile.dirty = true;
-        return rc;
+        return reject_publish_config();
     }
     if (!strcmp(argv[0], "volume")) {
-        int rc = profile_append_metadata(s->profile.volumes, &s->profile.volume_count, CAPTIVE_MAX_ARGS, "volume", argc, argv);
-        if (rc == 0) s->profile.dirty = true;
-        return rc;
+        return reject_volume_config();
     }
     if (!strcmp(argv[0], "restart")) return profile_set_restart(&s->profile, argc, argv);
     if (!strcmp(argv[0], "restart-delay") || !strcmp(argv[0], "restart_delay_seconds")) return profile_set_restart_delay(&s->profile, argc, argv);

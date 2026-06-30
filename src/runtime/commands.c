@@ -292,18 +292,6 @@ static int profile_export_transcript(FILE *out, const char *name, const struct h
         profile_shell_quote(out, eq + 1);
         fputc('\n', out);
     }
-    for (int i = 0; i < recipe->portc; i++) {
-        if (!recipe->ports || !recipe->ports[i] || !recipe->ports[i][0]) continue;
-        fputs("publish ", out);
-        profile_shell_quote(out, recipe->ports[i]);
-        fputc('\n', out);
-    }
-    for (int i = 0; i < recipe->volumec; i++) {
-        if (!recipe->volumes || !recipe->volumes[i] || !recipe->volumes[i][0]) continue;
-        fputs("volume ", out);
-        profile_shell_quote(out, recipe->volumes[i]);
-        fputc('\n', out);
-    }
     if (recipe->mode_interactive) fputs("interactive\n", out);
     if (recipe->mode_tty) fputs("tty\n", out);
     if (recipe->mode_detach) fputs("detach\n", out);
@@ -315,6 +303,11 @@ static int profile_export_transcript(FILE *out, const char *name, const struct h
     }
     if (recipe->has_restart_delay) {
         fprintf(out, "restart-delay %d\n", recipe->restart_delay_seconds);
+    }
+    if (recipe->has_log_destination && recipe->log_destination[0]) {
+        fputs("log-destination ", out);
+        profile_shell_quote(out, recipe->log_destination);
+        fputc('\n', out);
     }
     fputs("commit\nend\nwrite\n", out);
     return ferror(out) ? 3 : 0;
@@ -330,14 +323,6 @@ static int profile_export_json(FILE *out, const char *name, const struct hold_pr
     if (recipe->envc > 0 && recipe->env) {
         fputs(",\n  \"env\": ", out);
         hold_write_json_argv(out, recipe->envc, recipe->env);
-    }
-    if (recipe->portc > 0 && recipe->ports) {
-        fputs(",\n  \"ports\": ", out);
-        hold_write_json_argv(out, recipe->portc, recipe->ports);
-    }
-    if (recipe->volumec > 0 && recipe->volumes) {
-        fputs(",\n  \"volumes\": ", out);
-        hold_write_json_argv(out, recipe->volumec, recipe->volumes);
     }
     if (recipe->mode_interactive || recipe->mode_tty || recipe->mode_detach || recipe->allow_multi) {
         bool wrote = false;
@@ -366,6 +351,11 @@ static int profile_export_json(FILE *out, const char *name, const struct hold_pr
     }
     if (recipe->has_restart_delay) {
         fprintf(out, ",\n  \"restart_delay_seconds\": %d", recipe->restart_delay_seconds);
+    }
+    if (recipe->has_log_destination && recipe->log_destination[0]) {
+        fputs(",\n  \"log_destination\": \"", out);
+        hold_json_escape(out, recipe->log_destination);
+        fputs("\"", out);
     }
     fputs("\n}\n", out);
     return ferror(out) ? 3 : 0;
@@ -505,6 +495,7 @@ static int profile_import_json(const struct hold_store *store,
     bool allow_multi = false;
     char restart_policy[64] = {0};
     int restart_delay_seconds = 0;
+    char log_destination[32] = {0};
     int rc = 5;
     if (hold_json_get_str(j, "name", name, sizeof(name)) != 0 || !hold_valid_alias(name) ||
         hold_json_get_args_alloc(j, &argv, &argc) != 0 || argc <= 0) {
@@ -532,13 +523,21 @@ static int profile_import_json(const struct hold_store *store,
         hold_die_errno("hold: failed to normalize profile argv paths");
     }
     (void)hold_json_get_env_alloc(j, &env, &envc);
-    (void)hold_json_get_ports_alloc(j, &ports, &portc);
-    (void)hold_json_get_volumes_alloc(j, &volumes, &volumec);
+    const char *unsupported = NULL;
+    if (hold_json_find_key(j, "ports", &unsupported) == 0) {
+        fprintf(stderr, "hold: error: profile JSON uses unsupported ports metadata; Hold observes listening ports in hold ps instead\n");
+        goto out;
+    }
+    if (hold_json_find_key(j, "volumes", &unsupported) == 0) {
+        fprintf(stderr, "hold: error: profile JSON uses unsupported volumes metadata; pass host paths directly as argv/config paths\n");
+        goto out;
+    }
     (void)hold_json_get_bool(j, "interactive", &mode_interactive);
     (void)hold_json_get_bool(j, "tty", &mode_tty);
     (void)hold_json_get_bool(j, "detach", &mode_detach);
     (void)hold_json_get_bool(j, "multi", &allow_multi);
     (void)hold_json_get_str(j, "restart", restart_policy, sizeof(restart_policy));
+    (void)hold_json_get_str(j, "log_destination", log_destination, sizeof(log_destination));
     int64_t restart_delay_tmp = 0;
     if (hold_json_get_i64(j, "restart_delay_seconds", &restart_delay_tmp) == 0 && restart_delay_tmp >= 0 && restart_delay_tmp <= INT_MAX) {
         restart_delay_seconds = (int)restart_delay_tmp;
@@ -583,7 +582,8 @@ static int profile_import_json(const struct hold_store *store,
                                       mode_detach,
                                       allow_multi,
                                       restart_policy[0] ? restart_policy : NULL,
-                                      restart_delay_seconds) != 0) {
+                                      restart_delay_seconds,
+                                      log_destination[0] ? log_destination : NULL) != 0) {
         hold_die_errno("hold: failed to import profile");
     }
     rc = 0;
@@ -612,12 +612,19 @@ static int profile_write_command_recipe(const struct hold_store *store,
         fprintf(stderr, "hold: error: failed to resolve profile command '%s'\n", argv[0]);
         return 5;
     }
-    if (hold_normalize_existing_argv_paths_from_cwd(argv, argc, 1, NULL) != 0) {
+    char **normalized_argv = NULL;
+    if (hold_copy_argv(&normalized_argv, argc, argv) != 0) {
+        hold_die_errno("hold: failed to prepare profile argv");
+    }
+    if (hold_normalize_existing_argv_paths_from_cwd(normalized_argv, argc, 1, NULL) != 0) {
+        hold_free_argv_alloc(normalized_argv, argc);
         hold_die_errno("hold: failed to normalize profile argv paths");
     }
-    if (hold_alias_upsert_recipe(store, name, binary_path, argc, argv) != 0) {
+    if (hold_alias_upsert_recipe(store, name, binary_path, argc, normalized_argv) != 0) {
+        hold_free_argv_alloc(normalized_argv, argc);
         hold_die_errno("hold: failed to update profile");
     }
+    hold_free_argv_alloc(normalized_argv, argc);
     return 0;
 }
 
@@ -637,12 +644,13 @@ static int profile_write_full_recipe(const struct hold_store *store,
                                      bool mode_detach,
                                      bool allow_multi,
                                      const char *restart_policy,
-                                     int restart_delay_seconds) {
+                                     int restart_delay_seconds,
+                                     const char *log_destination) {
     if (!hold_valid_alias(name)) {
         fprintf(stderr, "hold: error: invalid profile name '%s'\n", name ? name : "");
         return 5;
     }
-    if (!binary || binary[0] != '/' || argc <= 0 || !argv || !argv[0] ||
+    if (!binary || !*binary || argc <= 0 || !argv || !argv[0] ||
         envc < 0 || (envc > 0 && !env) ||
         portc < 0 || (portc > 0 && !ports) ||
         volumec < 0 || (volumec > 0 && !volumes)) {
@@ -654,14 +662,19 @@ static int profile_write_full_recipe(const struct hold_store *store,
         fprintf(stderr, "hold: error: failed to resolve profile command '%s'\n", binary);
         return 5;
     }
-    if (hold_normalize_existing_argv_paths_from_cwd(argv, argc, 1, NULL) != 0) {
+    char **normalized_argv = NULL;
+    if (hold_copy_argv(&normalized_argv, argc, argv) != 0) {
+        hold_die_errno("hold: failed to prepare profile argv");
+    }
+    if (hold_normalize_existing_argv_paths_from_cwd(normalized_argv, argc, 1, NULL) != 0) {
+        hold_free_argv_alloc(normalized_argv, argc);
         hold_die_errno("hold: failed to normalize profile argv paths");
     }
     if (hold_alias_upsert_recipe_full(store,
                                       name,
                                       binary_path,
                                       argc,
-                                      argv,
+                                      normalized_argv,
                                       envc,
                                       env,
                                       portc,
@@ -673,9 +686,12 @@ static int profile_write_full_recipe(const struct hold_store *store,
                                       mode_detach,
                                       allow_multi,
                                       restart_policy,
-                                      restart_delay_seconds) != 0) {
+                                      restart_delay_seconds,
+                                      log_destination) != 0) {
+        hold_free_argv_alloc(normalized_argv, argc);
         hold_die_errno("hold: failed to update profile");
     }
+    hold_free_argv_alloc(normalized_argv, argc);
     return 0;
 }
 
@@ -705,10 +721,8 @@ static int profile_import_transcript(const struct hold_store *store,
     int env_cap = 0;
     char **ports = NULL;
     int portc = 0;
-    int port_cap = 0;
     char **volumes = NULL;
     int volumec = 0;
-    int volume_cap = 0;
     char **cmd_argv = NULL;
     int cmd_argc = 0;
     bool mode_interactive = false;
@@ -717,6 +731,7 @@ static int profile_import_transcript(const struct hold_store *store,
     bool allow_multi = false;
     char restart_policy[64] = {0};
     int restart_delay_seconds = 0;
+    char log_destination[32] = {0};
     bool saw_save = false;
     int rc = 5;
 
@@ -790,20 +805,14 @@ static int profile_import_transcript(const struct hold_store *store,
                 profile_free_tokens(tokens, ntokens);
                 goto out;
             }
-        } else if (!strcmp(tokens[0], "publish") && ntokens == 2) {
-            char *copy = strdup(tokens[1]);
-            if (!copy || profile_push_token(&ports, &portc, &port_cap, copy) != 0) {
-                free(copy);
-                profile_free_tokens(tokens, ntokens);
-                goto out;
-            }
-        } else if (!strcmp(tokens[0], "volume") && ntokens == 2) {
-            char *copy = strdup(tokens[1]);
-            if (!copy || profile_push_token(&volumes, &volumec, &volume_cap, copy) != 0) {
-                free(copy);
-                profile_free_tokens(tokens, ntokens);
-                goto out;
-            }
+        } else if (!strcmp(tokens[0], "publish")) {
+            fprintf(stderr, "hold: error: profile transcript uses unsupported publish metadata; Hold observes listening ports in hold ps instead\n");
+            profile_free_tokens(tokens, ntokens);
+            goto out;
+        } else if (!strcmp(tokens[0], "volume")) {
+            fprintf(stderr, "hold: error: profile transcript uses unsupported volume metadata; pass host paths directly as argv/config paths\n");
+            profile_free_tokens(tokens, ntokens);
+            goto out;
         } else if (!strcmp(tokens[0], "interactive") && ntokens == 1) {
             mode_interactive = true;
         } else if ((!strcmp(tokens[0], "tty") || !strcmp(tokens[0], "console")) && ntokens == 1) {
@@ -823,6 +832,8 @@ static int profile_import_transcript(const struct hold_store *store,
                 goto out;
             }
             restart_delay_seconds = (int)delay;
+        } else if ((!strcmp(tokens[0], "log-destination") || !strcmp(tokens[0], "log_destination")) && ntokens == 2) {
+            snprintf(log_destination, sizeof(log_destination), "%s", tokens[1]);
         } else if (!strcmp(tokens[0], "no") && ntokens == 2 && !strcmp(tokens[1], "interactive")) {
             mode_interactive = false;
         } else if (!strcmp(tokens[0], "no") && ntokens == 2 && (!strcmp(tokens[1], "tty") || !strcmp(tokens[1], "console"))) {
@@ -836,6 +847,9 @@ static int profile_import_transcript(const struct hold_store *store,
         } else if (!strcmp(tokens[0], "no") && ntokens == 2 && !strcmp(tokens[1], "restart")) {
             restart_policy[0] = '\0';
             restart_delay_seconds = 0;
+        } else if ((!strcmp(tokens[0], "no") || !strcmp(tokens[0], "default")) && ntokens == 2 &&
+                   (!strcmp(tokens[1], "log-destination") || !strcmp(tokens[1], "log_destination"))) {
+            log_destination[0] = '\0';
         } else if (!strcmp(tokens[0], "set") && ntokens >= 4 &&
                    !strcmp(tokens[1], "command") && !strcmp(tokens[2], "--")) {
             profile_free_tokens(cmd_argv, cmd_argc);
@@ -925,7 +939,7 @@ static int profile_import_transcript(const struct hold_store *store,
             printf("profile %s import dry-run ok\n", name);
             rc = 0;
         } else {
-            rc = profile_write_full_recipe(store, name, binary, argc, argv, envc, env, portc, ports, volumec, volumes, mode_interactive, mode_tty, mode_detach, allow_multi, restart_policy[0] ? restart_policy : NULL, restart_delay_seconds);
+            rc = profile_write_full_recipe(store, name, binary, argc, argv, envc, env, portc, ports, volumec, volumes, mode_interactive, mode_tty, mode_detach, allow_multi, restart_policy[0] ? restart_policy : NULL, restart_delay_seconds, log_destination[0] ? log_destination : NULL);
         }
         free(argv);
     }
@@ -1089,6 +1103,50 @@ int hold_cmd_profile_create_command(const struct hold_invocation *inv,
         return 5;
     }
     return profile_write_command_recipe(user_store, name, argc, argv);
+}
+
+int hold_cmd_profile_define_command(const struct hold_invocation *inv,
+                                      const struct hold_store *user_store,
+                                      const char *name,
+                                      int argc,
+                                      char **argv,
+                                      int envc,
+                                      char **env,
+                                      int volumec,
+                                      char **volumes,
+                                      bool mode_interactive,
+                                      bool mode_tty,
+                                      bool mode_detach,
+                                      bool allow_multi,
+                                      const char *restart_policy,
+                                      int restart_delay_seconds,
+                                      const char *log_destination) {
+    if (inv->euid_root) {
+        fprintf(stderr, "hold: error: profile editing is user-local; run it as the profile owner\n");
+        return 5;
+    }
+    if (argc <= 0 || !argv || !argv[0]) {
+        fprintf(stderr, "usage: hold profile <name> [profile-options] [--] <cmd> [args...]\n");
+        return 5;
+    }
+    return profile_write_full_recipe(user_store,
+                                     name,
+                                     argv[0],
+                                     argc,
+                                     argv,
+                                     envc,
+                                     env,
+                                     0,
+                                     NULL,
+                                     volumec,
+                                     volumes,
+                                     mode_interactive,
+                                     mode_tty,
+                                     mode_detach,
+                                     allow_multi,
+                                     restart_policy,
+                                     restart_delay_seconds,
+                                     log_destination);
 }
 
 int hold_cmd_profile_delete(const struct hold_invocation *inv,

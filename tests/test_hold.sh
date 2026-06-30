@@ -461,14 +461,81 @@ extract_id() {
   sed -n -e '/^[0-9a-f]\{12\}$/p' -e 's/^hold: id=\([0-9a-f][0-9a-f]*\).*/\1/p' | head -n1
 }
 
-record_pgid() {
+find_prefixed_artifact() {
+  local store="$1" id="$2" suffix="$3" path count
+  [ -n "$store" ] && [ -n "$id" ] && [ -d "$store" ] || return 1
+  if [ -e "$store/$id$suffix" ]; then
+    printf '%s\n' "$store/$id$suffix"
+    return 0
+  fi
+  count=$(find "$store" -maxdepth 1 -type f -name "$id*$suffix" 2>/dev/null | wc -l)
+  [ "$count" = "1" ] || return 1
+  path=$(find "$store" -maxdepth 1 -type f -name "$id*$suffix" -print -quit 2>/dev/null)
+  [ -n "$path" ] || return 1
+  printf '%s\n' "$path"
+}
+
+record_path() {
   local id="$1" store="${2:-$HOME/.local/state/hold}"
-  sed -n 's/.*"pgid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$store/$id.json" | head -n1
+  find_prefixed_artifact "$store" "$id" ".json"
+}
+
+log_path() {
+  local id="$1" store="${2:-$HOME/.local/state/hold}"
+  find_prefixed_artifact "$store" "$id" ".log"
+}
+
+record_exists() {
+  record_path "$1" "${2:-$HOME/.local/state/hold}" >/dev/null 2>&1
+}
+
+log_exists() {
+  log_path "$1" "${2:-$HOME/.local/state/hold}" >/dev/null 2>&1
+}
+
+root_find_prefixed_artifact() {
+  local store="$1" id="$2" suffix="$3"
+  as_root sh -c '
+store=$1
+id=$2
+suffix=$3
+[ -n "$store" ] && [ -n "$id" ] && [ -d "$store" ] || exit 1
+if [ -e "$store/$id$suffix" ]; then
+  printf "%s\n" "$store/$id$suffix"
+  exit 0
+fi
+count=$(find "$store" -maxdepth 1 -type f -name "$id*$suffix" 2>/dev/null | wc -l)
+[ "$count" = "1" ] || exit 1
+find "$store" -maxdepth 1 -type f -name "$id*$suffix" -print -quit 2>/dev/null
+' sh "$store" "$id" "$suffix"
+}
+
+root_record_path() {
+  root_find_prefixed_artifact "$2" "$1" ".json"
+}
+
+root_log_path() {
+  root_find_prefixed_artifact "$2" "$1" ".log"
+}
+
+root_record_exists() {
+  root_record_path "$1" "$2" >/dev/null 2>&1
+}
+
+root_log_exists() {
+  root_log_path "$1" "$2" >/dev/null 2>&1
+}
+
+record_pgid() {
+  local id="$1" store="${2:-$HOME/.local/state/hold}" record
+  record=$(record_path "$id" "$store") || return 1
+  sed -n 's/.*"pgid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$record" | head -n1
 }
 
 record_sid() {
-  local id="$1" store="${2:-$HOME/.local/state/hold}"
-  sed -n 's/.*"sid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$store/$id.json" | head -n1
+  local id="$1" store="${2:-$HOME/.local/state/hold}" record
+  record=$(record_path "$id" "$store") || return 1
+  sed -n 's/.*"sid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$record" | head -n1
 }
 
 
@@ -637,7 +704,7 @@ test_symlinked_log_rejected() {
   out=$("$HOLD_BIN" -d /bin/echo original-log-line 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  log="$HOME/.local/state/hold/$id.log"
+  log=$(log_path "$id") || return 1
   sleep 0.2
   [ -f "$log" ] || return 1
   printf 'symlink-secret\n' > "$TEST_ROOT/log-target" || return 1
@@ -703,7 +770,7 @@ test_signal_refuses_tampered_live_group_identity() {
   shell_sid=$(ps -o sid= -p $$ | tr -d ' ')
   [ -n "$shell_pgid" ] && [ -n "$shell_sid" ] || return 1
   [ "$shell_pgid" != "$real_pgid" ] || { "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; skip "shell and target unexpectedly share pgid"; }
-  rec="$HOME/.local/state/hold/$id.json"
+  rec=$(record_path "$id") || return 1
   cp "$rec" "$rec.bak" || return 1
   sed -i.tmp \
     -e "s/\"pgid\":[[:space:]]*[0-9][0-9]*/\"pgid\":$shell_pgid/" \
@@ -756,7 +823,7 @@ test_argument_edges() {
   "$HOLD_BIN" --help >/dev/null || return 1
   "$HOLD_BIN" help >/dev/null || return 1
   "$HOLD_BIN" help --help >/dev/null || return 1
-  "$HOLD_BIN" help profiles | grep -q 'hold profile <name> create -- <cmd>' || return 1
+  "$HOLD_BIN" help profiles | grep -q 'hold profile <name> \[opts\] -- <cmd>' || return 1
   "$HOLD_BIN" help targets | grep -q 'run id, leading id prefix, or profile name' || return 1
   "$HOLD_BIN" help scripting | grep -q 'Exit codes:' || return 1
   "$HOLD_BIN" help run >"$TEST_ROOT/help-run.out" || return 1
@@ -786,7 +853,7 @@ test_special_chars_args() {
   out=$("$HOLD_BIN" -d echo "hello world" "it's" 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  json="$HOME/.local/state/hold/$id.json"
+  json=$(record_path "$id") || return 1
   [ -f "$json" ] || return 1
   grep -Fq '"hello world"' "$json"
   grep -Fq '"it'"'"'s"' "$json"
@@ -797,7 +864,7 @@ test_log_capture() {
   out=$("$HOLD_BIN" -d bash -c 'echo out; echo err >&2; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  log="$HOME/.local/state/hold/$id.log"
+  log=$(log_path "$id") || return 1
   sleep 0.4
   [ -f "$log" ] || return 1
   grep -q 'out' "$log" && grep -q 'err' "$log"
@@ -1714,7 +1781,7 @@ test_persistent_stale_records() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   store="$HOME/.local/state/hold"
-  stale_log="$store/$id.log"
+  stale_log=$(log_path "$id" "$store") || return 1
   [ -f "$stale_log" ] || return 1
   HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list >/dev/null || return 1
   printf 'boot-b\n' >"$bootfile" || return 1
@@ -1735,7 +1802,7 @@ test_persistent_stale_records() {
   grep -q 'stale-line' "$TEST_ROOT/tail.out"
   HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" dump "$id" >"$TEST_ROOT/dump.out" 2>&1 || return 1
   grep -q 'stale-line' "$TEST_ROOT/dump.out"
-  [ -f "$store/$id.json" ] && [ -f "$store/$id.log" ]
+  record_exists "$id" "$store" && log_exists "$id" "$store"
 }
 
 
@@ -1805,7 +1872,7 @@ test_console_does_not_require_external_attach_tool() {
   }
   grep -q 'native:ping' "$TEST_ROOT/console-native.out" || { cat "$TEST_ROOT/console-native.out" >&2; return 1; }
   store="$HOME/.local/state/hold"
-  record="$store/$id.json"
+  record=$(record_path "$id" "$store") || return 1
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   [ -n "$sock" ] || { cat "$record" >&2; return 1; }
   "$HOLD_BIN" prune "$id" >/dev/null || return 1
@@ -1836,7 +1903,7 @@ test_console_round_trip_and_log_tee() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   store="$HOME/.local/state/hold"
-  record="$store/$id.json"
+  record=$(record_path "$id" "$store") || return 1
   grep -q '"console_sock": "' "$record" || { cat "$record" >&2; return 1; }
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   [ -n "$sock" ] || { cat "$record" >&2; return 1; }
@@ -1851,7 +1918,8 @@ test_console_round_trip_and_log_tee() {
   }
   grep -q 'got:ping' "$TEST_ROOT/console.out" || { cat "$TEST_ROOT/console.out" >&2; return 1; }
   sleep 0.2
-  grep -q 'got:ping' "$store/$id.log" || { cat "$store/$id.log" >&2; return 1; }
+  logf=$(log_path "$id" "$store") || return 1
+  grep -q 'got:ping' "$logf" || { cat "$logf" >&2; return 1; }
   "$HOLD_BIN" prune "$id" >/dev/null || return 1
   path_absent_soon "$sock" || {
     ls -la "$store" "$store/console" "$(dirname "$sock")" >&2 || true
@@ -1871,13 +1939,16 @@ test_console_socket_lives_in_store_dir() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   store="$HOME/.local/state/hold"
-  record="$store/$id.json"
+  record=$(record_path "$id" "$store") || return 1
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
-  if [ "$sock" != "$store/console/$id.sock" ]; then
+  case "$sock" in
+    "$store/console/$id"*.sock) ;;
+    *)
     echo "console socket not in store console dir (got: $sock)" >&2
     "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
     return 1
-  fi
+      ;;
+  esac
   if [ ! -S "$sock" ]; then
     echo "no socket present at $sock" >&2
     "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
@@ -1920,7 +1991,7 @@ test_console_target_runs_in_caller_cwd() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   store="$HOME/.local/state/hold"
-  logf="$store/$id.log"
+  logf=$(log_path "$id" "$store") || return 1
   ok=0
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if grep -q CWD_OK "$logf" 2>/dev/null; then ok=1; break; fi
@@ -2060,10 +2131,10 @@ test_console_rejects_unrelated_peer_uid_before_replay() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  record="$HOME/.local/state/hold/$id.json"
+  record=$(record_path "$id") || return 1
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   [ -S "$sock" ] || return 1
-  log="$HOME/.local/state/hold/$id.log"
+  log=$(log_path "$id") || return 1
 
   # Deliberately relax filesystem traversal and socket mode in this temp store
   # so the kernel accepts the unrelated connection attempt; the broker's peer
@@ -2103,7 +2174,7 @@ test_console_can_reattach_after_detach() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   store="$HOME/.local/state/hold"
-  record="$store/$id.json"
+  record=$(record_path "$id" "$store") || return 1
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   [ -n "$sock" ] || { cat "$record" >&2; return 1; }
 
@@ -2122,8 +2193,9 @@ test_console_can_reattach_after_detach() {
   grep -q 'seen:first' "$TEST_ROOT/console-second.out" || { cat "$TEST_ROOT/console-second.out" >&2; return 1; }
   grep -q 'seen:done' "$TEST_ROOT/console-second.out" || { cat "$TEST_ROOT/console-second.out" >&2; return 1; }
   sleep 0.2
-  grep -q 'seen:first' "$store/$id.log" || { cat "$store/$id.log" >&2; return 1; }
-  grep -q 'seen:done' "$store/$id.log" || { cat "$store/$id.log" >&2; return 1; }
+  logf=$(log_path "$id" "$store") || return 1
+  grep -q 'seen:first' "$logf" || { cat "$logf" >&2; return 1; }
+  grep -q 'seen:done' "$logf" || { cat "$logf" >&2; return 1; }
   "$HOLD_BIN" prune "$id" >/dev/null || return 1
   path_absent_soon "$sock" || {
     ls -la "$store" "$store/console" "$(dirname "$sock")" >&2 || true
@@ -2140,8 +2212,8 @@ test_prune_by_id() {
   [ -n "$id1" ] && [ -n "$id2" ] || return 1
   store="$HOME/.local/state/hold"
   "$HOLD_BIN" prune "$id1" >/dev/null || return 1
-  [ ! -e "$store/$id1.json" ] && [ ! -e "$store/$id1.log" ] || return 1
-  [ -e "$store/$id2.json" ] && [ -e "$store/$id2.log" ]
+  ! record_exists "$id1" "$store" && ! log_exists "$id1" "$store" || return 1
+  record_exists "$id2" "$store" && log_exists "$id2" "$store"
 }
 
 test_prune_all_keeps_running() {
@@ -2153,9 +2225,9 @@ test_prune_all_keeps_running() {
   [ -n "$id1" ] && [ -n "$id2" ] || return 1
   store="$HOME/.local/state/hold"
   "$HOLD_BIN" prune all >/dev/null || return 1
-  [ -e "$store/$id1.json" ] || return 1
-  [ ! -e "$store/$id2.json" ] || return 1
-  [ ! -e "$store/$id2.log" ] || return 1
+  record_exists "$id1" "$store" || return 1
+  ! record_exists "$id2" "$store" || return 1
+  ! log_exists "$id2" "$store" || return 1
 }
 
 test_transactional_record_write_failure() {
@@ -2249,8 +2321,9 @@ test_alias_profile_map_start_and_stop() {
   id2=$(printf '%s\n' "$out2" | extract_id)
   pgid2=$(record_pgid "$id2")
   [ -n "$id2" ] && [ -n "$pgid2" ] || return 1
-  grep -q '"alias": "web-test"' "$store/$id2.json" || return 1
-  ! grep -q '"profile_hash":' "$store/$id2.json" || return 1
+  record=$(record_path "$id2" "$store") || return 1
+  grep -q '"alias": "web-test"' "$record" || return 1
+  ! grep -q '"profile_hash":' "$record" || return 1
   "$HOLD_BIN" stop web-test >/dev/null || return 1
   pgid_terminated "$pgid2"
 }
@@ -2269,7 +2342,8 @@ test_alias_from_relative_executable_uses_recorded_absolute_argv0() {
   out=$(cd "$work" && "$HOLD_BIN" -d ../bin/daemon 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  grep -Fq "\"argv\": [\"$expected\"]" "$store/$id.json" || return 1
+  record=$(record_path "$id" "$store") || return 1
+  grep -Fq "\"argv\": [\"$expected\"]" "$record" || return 1
 
   (cd "$other" && "$HOLD_BIN" profile save "$id" as rel-daemon >"$TEST_ROOT/alias-rel.out" 2>"$TEST_ROOT/alias-rel.err") || return 1
   grep -Fq "\"rel-daemon\": {\"bin\": \"$expected\", \"args\": [\"$expected\"]}" "$store/aliases.json" || return 1
@@ -2366,15 +2440,16 @@ test_profile_start_inherits_current_environment() {
 }
 
 test_docker_env_persists_with_named_profile() {
-  local out id out2 id2 got store
-  store="$HOME/.local/state/hold"
-  out=$("$HOLD_BIN" run --name envpersist -e HOLD_DOCKER_ENV=fromdocker /bin/sh -c 'printf "%s\n" "$HOLD_DOCKER_ENV"' 2>&1) || return 1
+  local out id out2 id2 got
+  "$HOLD_BIN" profile envpersist -e HOLD_DOCKER_ENV=fromdocker -- /bin/sh -c 'printf "%s\n" "$HOLD_DOCKER_ENV"' >"$TEST_ROOT/envpersist-create.out" || return 1
+  "$HOLD_BIN" profile export envpersist --json >"$TEST_ROOT/envpersist-profile.json" || return 1
+  grep -Fq '"env": ["HOLD_DOCKER_ENV=fromdocker"]' "$TEST_ROOT/envpersist-profile.json" || { cat "$TEST_ROOT/envpersist-profile.json" >&2; return 1; }
+  out=$("$HOLD_BIN" run envpersist 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.2
   got=$("$HOLD_BIN" dump "$id") || return 1
   printf '%s\n' "$got" | grep -qx 'fromdocker' || return 1
-  grep -Fq '"env": ["HOLD_DOCKER_ENV=fromdocker"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
 
   out2=$("$HOLD_BIN" run envpersist 2>&1) || return 1
   id2=$(printf '%s\n' "$out2" | extract_id)
@@ -2386,19 +2461,20 @@ test_docker_env_persists_with_named_profile() {
 
 
 test_docker_env_file_persists_with_named_profile() {
-  local out id got store envfile
-  store="$HOME/.local/state/hold"
+  local out id got envfile
   envfile="$TEST_ROOT/docker.env"
   cat >"$envfile" <<'EOF'
 # hold env file
 HOLD_ENV_FILE_ONE=alpha
 HOLD_ENV_FILE_TWO=value with spaces
 EOF
-  out=$("$HOLD_BIN" run --name envfile -e HOLD_INLINE=inline --env-file "$envfile" /usr/bin/env 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  "$HOLD_BIN" profile envfile -e HOLD_INLINE=inline --env-file "$envfile" -- /usr/bin/env >"$TEST_ROOT/envfile-create.out" || return 1
+  "$HOLD_BIN" profile export envfile --json >"$TEST_ROOT/envfile-profile.json" || return 1
+  grep -Fq '"env": ["HOLD_INLINE=inline", "HOLD_ENV_FILE_ONE=alpha", "HOLD_ENV_FILE_TWO=value with spaces"]' "$TEST_ROOT/envfile-profile.json" || { cat "$TEST_ROOT/envfile-profile.json" >&2; return 1; }
+  out=$("$HOLD_BIN" run envfile 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   sleep 0.2
-  grep -Fq '"env": ["HOLD_INLINE=inline", "HOLD_ENV_FILE_ONE=alpha", "HOLD_ENV_FILE_TWO=value with spaces"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
   got=$("$HOLD_BIN" logs --plain -n 500 "$id") || return 1
   printf '%s\n' "$got" | grep -qx 'HOLD_INLINE=inline' || { printf '%s\n' "$got" >&2; return 1; }
   printf '%s\n' "$got" | grep -qx 'HOLD_ENV_FILE_ONE=alpha' || { printf '%s\n' "$got" >&2; return 1; }
@@ -2412,8 +2488,8 @@ test_docker_rm_removes_run_artifacts_after_exit() {
   out=$("$HOLD_BIN" run -d --rm -- /bin/sh -c 'echo rm-gone; sleep 0.3' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  json="$store/$id.json"
-  log="$store/$id.log"
+  json=$(record_path "$id" "$store") || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
+  log=$(log_path "$id" "$store") || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
   [ -f "$json" ] || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
   [ -f "$log" ] || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
   sleep 0.1
@@ -2426,15 +2502,12 @@ test_docker_rm_removes_run_artifacts_after_exit() {
 test_docker_rm_removes_profile_run_artifacts_after_exit() {
   local out id store json log
   store="$HOME/.local/state/hold"
-  out=$("$HOLD_BIN" run --name rmprofile /bin/sh -c 'sleep 0.3' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.4
+  "$HOLD_BIN" profile rmprofile -- /bin/sh -c 'sleep 0.3' >"$TEST_ROOT/rmprofile-create.out" || return 1
   out=$("$HOLD_BIN" run -d --rm rmprofile 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  json="$store/$id.json"
-  log="$store/$id.log"
+  json=$(record_path "$id" "$store") || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
+  log=$(log_path "$id" "$store") || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
   [ -f "$json" ] || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
   path_absent_soon "$json" || { echo "--rm profile run did not remove record $json" >&2; return 1; }
   path_absent_soon "$log" || { echo "--rm profile run did not remove log $log" >&2; return 1; }
@@ -2467,7 +2540,8 @@ EOF
 test_captive_profile_loads_existing_recipe_for_edit() {
   local out id edit_id got store
   store="$HOME/.local/state/hold"
-  out=$("$HOLD_BIN" run --name iosedit -e HOLD_OLD_ENV=old /usr/bin/env 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  "$HOLD_BIN" profile iosedit -e HOLD_OLD_ENV=old -- /usr/bin/env >"$TEST_ROOT/iosedit-create.out" || return 1
+  out=$("$HOLD_BIN" run iosedit 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   sleep 0.2
@@ -2498,82 +2572,36 @@ EOF
 }
 
 
-test_captive_profile_publish_volume_metadata_preserves_edits_and_clears() {
+test_captive_profile_publish_volume_rejected() {
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id rc
-  out=$("$HOLD_BIN" run -d --name iosmeta -p 8080:3000 -v "$TEST_ROOT:/work" -- /bin/sh -c 'sleep 1' 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
+  local rc
 
-  cat <<'EOF' | "$HOLD_BIN" >"$TEST_ROOT/captive-meta-preserve.out" 2>"$TEST_ROOT/captive-meta-preserve.err" || { cat "$TEST_ROOT/captive-meta-preserve.out" "$TEST_ROOT/captive-meta-preserve.err" >&2; return 1; }
+  set +e
+  cat <<EOF | "$HOLD_BIN" >"$TEST_ROOT/captive-meta-reject.out" 2>"$TEST_ROOT/captive-meta-reject.err"
 enable
 configure terminal
 profile iosmeta
-info
-env HOLD_META_TOUCHED yes
-commit
-end
-exit
-EOF
-  grep -q 'publish   : 8080:3000' "$TEST_ROOT/captive-meta-preserve.out" || { cat "$TEST_ROOT/captive-meta-preserve.out" >&2; return 1; }
-  grep -q "volume    : $TEST_ROOT:/work" "$TEST_ROOT/captive-meta-preserve.out" || { cat "$TEST_ROOT/captive-meta-preserve.out" >&2; return 1; }
-  "$HOLD_BIN" profile export iosmeta --json >"$TEST_ROOT/iosmeta-preserve.json" || return 1
-  python3 - "$TEST_ROOT/iosmeta-preserve.json" "$TEST_ROOT" <<'PY' || { cat "$TEST_ROOT/iosmeta-preserve.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-root = sys.argv[2]
-if profile.get('ports') != ['8080:3000']:
-    raise SystemExit(f"ports not preserved: {profile.get('ports')!r}")
-if profile.get('volumes') != [f'{root}:/work']:
-    raise SystemExit(f"volumes not preserved: {profile.get('volumes')!r}")
-if 'HOLD_META_TOUCHED=yes' not in profile.get('env', []):
-    raise SystemExit(f"env edit missing after commit: {profile.get('env')!r}")
-PY
-
-  cat <<'EOF' | "$HOLD_BIN" >"$TEST_ROOT/captive-meta-edit.out" 2>"$TEST_ROOT/captive-meta-edit.err" || { cat "$TEST_ROOT/captive-meta-edit.out" "$TEST_ROOT/captive-meta-edit.err" >&2; return 1; }
-enable
-configure terminal
-profile iosmeta
-publish 127.0.0.1:8443:443
-volume cache:/cache
-no publish 8080:3000
-commit
-end
-exit
-EOF
-  "$HOLD_BIN" profile export iosmeta --json >"$TEST_ROOT/iosmeta-edit.json" || return 1
-  python3 - "$TEST_ROOT/iosmeta-edit.json" "$TEST_ROOT" <<'PY' || { cat "$TEST_ROOT/iosmeta-edit.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-root = sys.argv[2]
-if profile.get('ports') != ['127.0.0.1:8443:443']:
-    raise SystemExit(f"ports not edited: {profile.get('ports')!r}")
-if profile.get('volumes') != [f'{root}:/work', 'cache:/cache']:
-    raise SystemExit(f"volumes not edited: {profile.get('volumes')!r}")
-PY
-
-  cat <<'EOF' | "$HOLD_BIN" >"$TEST_ROOT/captive-meta-clear.out" 2>"$TEST_ROOT/captive-meta-clear.err"
-enable
-configure terminal
-profile iosmeta
-no volume all
-default publish
+binary /bin/true
+publish 8080:3000
+volume $TEST_ROOT:/work
 commit
 end
 exit
 EOF
   rc=$?
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-meta-clear.out" "$TEST_ROOT/captive-meta-clear.err" >&2; return 1; }
-  "$HOLD_BIN" profile export iosmeta --json >"$TEST_ROOT/iosmeta-clear.json" || return 1
-  python3 - "$TEST_ROOT/iosmeta-clear.json" <<'PY' || { cat "$TEST_ROOT/iosmeta-clear.json" >&2; return 1; }
+  set -e
+  [ "$rc" -ne 0 ] || { echo "publish/volume commands should make the captive session report failure" >&2; return 1; }
+  cat "$TEST_ROOT/captive-meta-reject.out" "$TEST_ROOT/captive-meta-reject.err" >"$TEST_ROOT/captive-meta-reject.all"
+  grep -q 'does not publish or forward ports' "$TEST_ROOT/captive-meta-reject.all" || { cat "$TEST_ROOT/captive-meta-reject.all" >&2; return 1; }
+  grep -q 'does not mount or remap volumes' "$TEST_ROOT/captive-meta-reject.all" || { cat "$TEST_ROOT/captive-meta-reject.all" >&2; return 1; }
+  grep -q 'Profile committed' "$TEST_ROOT/captive-meta-reject.out" || { cat "$TEST_ROOT/captive-meta-reject.out" >&2; return 1; }
+
+  "$HOLD_BIN" profile export iosmeta --json >"$TEST_ROOT/iosmeta-reject.json" || return 1
+  python3 - "$TEST_ROOT/iosmeta-reject.json" <<'PY' || { cat "$TEST_ROOT/iosmeta-reject.json" >&2; return 1; }
 import json, sys
 profile = json.load(open(sys.argv[1], encoding='utf-8'))
 if 'ports' in profile or 'volumes' in profile:
-    raise SystemExit(f"publish/volume fields not cleared: {profile!r}")
+    raise SystemExit(f"publish/volume metadata was recorded: {profile!r}")
 PY
 }
 
@@ -2581,7 +2609,8 @@ PY
 test_captive_profile_restart_metadata_preserves_edits_and_clears() {
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
-  out=$("$HOLD_BIN" run -d --name iosrestart --restart on-failure:2 --restart-delay 3 -- /bin/sh -c 'sleep 1' 2>&1) || {
+  "$HOLD_BIN" profile iosrestart -d --restart on-failure:2 --restart-delay 3 -- /bin/sh -c 'sleep 1' >"$TEST_ROOT/iosrestart-create.out" || return 1
+  out=$("$HOLD_BIN" run iosrestart 2>&1) || {
     printf '%s\n' "$out" >&2
     return 1
   }
@@ -2697,8 +2726,6 @@ configure terminal
 profile cli-prof
 binary /bin/echo
 argv 'hello import'
-publish 127.0.0.1:8080:80
-volume cache:/cache
 commit
 end
 write
@@ -2709,8 +2736,6 @@ EOF
   grep -Fq '"cli-prof": {"bin": "/usr/bin/echo"' "$store/aliases.json" ||
     grep -Fq '"cli-prof": {"bin": "/bin/echo"' "$store/aliases.json" || return 1
   grep -Fq '"args": ["/bin/echo", "hello import"]' "$store/aliases.json" || return 1
-  grep -Fq '"ports": ["127.0.0.1:8080:80"]' "$store/aliases.json" || return 1
-  grep -Fq '"volumes": ["cache:/cache"]' "$store/aliases.json" || return 1
 
   "$HOLD_BIN" import "$transcript" as top-prof --dry-run >"$TEST_ROOT/top-import-dry.out" 2>"$TEST_ROOT/top-import-dry.err" || return 1
   grep -Fxq "profile top-prof import dry-run ok" "$TEST_ROOT/top-import-dry.out" || {
@@ -2731,8 +2756,6 @@ EOF
   grep -Fxq "profile cli-prof" "$TEST_ROOT/export.profile" || return 1
   grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "argv 'hello import'" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "publish 127.0.0.1:8080:80" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "volume cache:/cache" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "commit" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "end" "$TEST_ROOT/export.profile" || return 1
   grep -Fxq "write" "$TEST_ROOT/export.profile" || return 1
@@ -2740,16 +2763,12 @@ EOF
   "$HOLD_BIN" export top-prof as "$TEST_ROOT/top-export.profile" || return 1
   grep -Fxq "profile top-prof" "$TEST_ROOT/top-export.profile" || return 1
   grep -Fxq "argv 'hello import'" "$TEST_ROOT/top-export.profile" || return 1
-  grep -Fxq "publish 127.0.0.1:8080:80" "$TEST_ROOT/top-export.profile" || return 1
-  grep -Fxq "volume cache:/cache" "$TEST_ROOT/top-export.profile" || return 1
   "$HOLD_BIN" export top-prof >"$TEST_ROOT/top-export.stdout" || return 1
   grep -Fxq "profile top-prof" "$TEST_ROOT/top-export.stdout" || return 1
-  grep -Fxq "publish 127.0.0.1:8080:80" "$TEST_ROOT/top-export.stdout" || return 1
-  grep -Fxq "volume cache:/cache" "$TEST_ROOT/top-export.stdout" || return 1
   "$HOLD_BIN" export top-prof --format json >"$TEST_ROOT/top-export.json" || return 1
   grep -Fq '"name": "top-prof"' "$TEST_ROOT/top-export.json" || return 1
-  grep -Fq '"ports": ["127.0.0.1:8080:80"]' "$TEST_ROOT/top-export.json" || return 1
-  grep -Fq '"volumes": ["cache:/cache"]' "$TEST_ROOT/top-export.json" || return 1
+  ! grep -Fq '"ports":' "$TEST_ROOT/top-export.json" || return 1
+  ! grep -Fq '"volumes":' "$TEST_ROOT/top-export.json" || return 1
 
   out=$("$HOLD_BIN" start cli-prof 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
@@ -3186,8 +3205,9 @@ test_elevated_capability_start_and_stop_validate_alias_hash() {
   start_out=$(as_root "$safe" --system --elevated start 000000000000 web-cap "$hash" 2>&1) || return 1
   cap_id=$(printf '%s\n' "$start_out" | extract_id)
   [ -n "$cap_id" ] || return 1
-  root_grep '"alias": "web-cap"' "$HOLD_TEST_SYSTEM_STATE_DIR/runs/$cap_id.json" || return 1
-  ! root_grep '"profile_hash":' "$HOLD_TEST_SYSTEM_STATE_DIR/runs/$cap_id.json" || return 1
+  cap_record=$(root_record_path "$cap_id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
+  root_grep '"alias": "web-cap"' "$cap_record" || return 1
+  ! root_grep '"profile_hash":' "$cap_record" || return 1
 
   set +e
   as_root "$safe" --system --elevated stop "$cap_id" web-cap 0000000000000000000000000000000000000000000000000000000000000000 >/dev/null 2>"$TEST_ROOT/cap-bad.err"
@@ -3204,9 +3224,9 @@ test_raw_start_does_not_steal_trailing_system() {
   out=$("$HOLD_BIN" -d sh -c 'printf "arg:%s\n" "$1"' sh --system 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  log="$HOME/.local/state/hold/$id.log"
   sleep 0.2
-  grep -q '^arg:--system$' "$log"
+  "$HOLD_BIN" logs --plain "$id" >"$TEST_ROOT/raw-start.log" || return 1
+  grep -q '^arg:--system$' "$TEST_ROOT/raw-start.log"
 }
 
 test_public_root_index_list_is_redacted() {
@@ -3227,7 +3247,7 @@ test_user_local_wins_over_public_root_collision() {
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
   [ ! -s "$HOLD_FAKE_SUDO_ARGV" ] || return 1
   pgid_terminated "$pgid" || return 1
-  [ -f "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" ]
+  record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public"
 }
 
 test_explicit_user_target() {
@@ -3429,14 +3449,14 @@ test_normal_start_writes_user_local_state() {
   out=$("$HOLD_BIN" -d true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  [ -f "$HOME/.local/state/hold/$id.json" ] || return 1
-  [ -f "$HOME/.local/state/hold/$id.log" ] || return 1
-  [ ! -e "$HOLD_TEST_SYSTEM_STATE_DIR/runs/$id.json" ] || return 1
-  [ ! -e "$HOLD_TEST_SYSTEM_STATE_DIR/logs/$id.log" ] || return 1
-  [ ! -e "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" ] || return 1
-  mode=$(file_mode "$HOME/.local/state/hold/$id.json") || return 1
+  json=$(record_path "$id") || return 1
+  log=$(log_path "$id") || return 1
+  ! root_record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs" || return 1
+  ! root_log_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs" || return 1
+  ! record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
+  mode=$(file_mode "$json") || return 1
   [ "$mode" = 600 ] || return 1
-  mode=$(file_mode "$HOME/.local/state/hold/$id.log") || return 1
+  mode=$(file_mode "$log") || return 1
   [ "$mode" = 600 ]
 }
 
@@ -3446,17 +3466,17 @@ test_root_start_writes_system_store_and_public_unknown() {
   out=$(as_root "$HOLD_REAL_BIN" true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  root_file_exists "$HOLD_TEST_SYSTEM_STATE_DIR/runs/$id.json" || return 1
-  root_file_exists "$HOLD_TEST_SYSTEM_STATE_DIR/logs/$id.log" || return 1
-  [ -f "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" ] || return 1
-  root_path_absent "$ROOT_HOME/.local/state/hold/$id.json" || return 1
-  mode=$(root_file_mode "$HOLD_TEST_SYSTEM_STATE_DIR/runs/$id.json") || return 1
+  json=$(root_record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
+  log=$(root_log_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs") || return 1
+  public_json=$(record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public") || return 1
+  ! record_exists "$id" "$ROOT_HOME/.local/state/hold" || return 1
+  mode=$(root_file_mode "$json") || return 1
   [ "$mode" = 600 ] || return 1
-  mode=$(root_file_mode "$HOLD_TEST_SYSTEM_STATE_DIR/logs/$id.log") || return 1
+  mode=$(root_file_mode "$log") || return 1
   [ "$mode" = 600 ] || return 1
-  mode=$(file_mode "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json") || return 1
+  mode=$(file_mode "$public_json") || return 1
   [ "$mode" = 644 ] || return 1
-  grep -q '"state_hint": "unknown"' "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
+  grep -q '"state_hint": "unknown"' "$public_json" || return 1
   list_out=$("$HOLD_BIN" list) || return 1
   printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+-[[:space:]]+unknown[[:space:]]"
 }
@@ -3467,11 +3487,10 @@ test_sudo_start_writes_system_store_with_invoking_metadata() {
   out=$(as_sudo_from_user "$HOLD_REAL_BIN" true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  json="$HOLD_TEST_SYSTEM_STATE_DIR/runs/$id.json"
-  root_file_exists "$json" || return 1
-  root_file_exists "$HOLD_TEST_SYSTEM_STATE_DIR/logs/$id.log" || return 1
-  [ -f "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" ] || return 1
-  [ ! -e "$ACTOR_HOME/.local/state/hold/$id.json" ] || return 1
+  json=$(root_record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
+  root_log_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs" || return 1
+  record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
+  ! record_exists "$id" "$ACTOR_HOME/.local/state/hold" || return 1
   root_grep '"invoked_by_uid": '"$TEST_UID" "$json" || return 1
   root_grep '"invoked_by_gid": '"$TEST_GID" "$json" || return 1
   root_grep '"invoked_by_user": "'"$TEST_USER"'"' "$json" || return 1
@@ -3496,13 +3515,13 @@ assert_home_system_start_is_user_local() {
   local out="$1" id json log owner
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  json="$ACTOR_HOME/.local/state/hold/$id.json"
-  log="$ACTOR_HOME/.local/state/hold/$id.log"
+  json=$(root_record_path "$id" "$ACTOR_HOME/.local/state/hold") || return 1
+  log=$(root_log_path "$id" "$ACTOR_HOME/.local/state/hold") || return 1
   root_file_exists "$json" || return 1
   root_file_exists "$log" || return 1
-  root_path_absent "$HOLD_TEST_SYSTEM_STATE_DIR/runs/$id.json" || return 1
-  root_path_absent "$HOLD_TEST_SYSTEM_STATE_DIR/logs/$id.log" || return 1
-  root_path_absent "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
+  ! root_record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs" || return 1
+  ! root_log_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs" || return 1
+  ! record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   owner=$(root_file_owner "$json") || return 1
   [ "$owner" = "$TEST_UID:$TEST_GID" ] || return 1
   owner=$(root_file_owner "$log") || return 1
@@ -3591,7 +3610,6 @@ test_docker_shaped_cli_flags_and_rm() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  grep -q "created profile 'docker-web'" <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
   sleep 0.2
   "$HOLD_BIN" logs -n 1 --plain "$id" >"$TEST_ROOT/docker-logs-tail.out" || return 1
   grep -q '^ok$' "$TEST_ROOT/docker-logs-tail.out" || { cat "$TEST_ROOT/docker-logs-tail.out" >&2; return 1; }
@@ -3602,18 +3620,18 @@ obj = json.load(open(sys.argv[1], encoding='utf-8'))
 if not isinstance(obj, list) or len(obj) != 1:
     raise SystemExit('inspect must return a one-object JSON array')
 record = obj[0]
-if record.get('id') != sys.argv[2]:
+if not str(record.get('id', '')).startswith(sys.argv[2]):
     raise SystemExit('inspect record id mismatch')
-if record.get('alias') != 'docker-web':
-    raise SystemExit('inspect record did not include profile label')
+if record.get('name') != 'docker-web':
+    raise SystemExit('inspect record did not include run name')
 if 'ok\n' in json.dumps(record):
     raise SystemExit('inspect returned log text instead of structured record data')
 PY
   "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-ps.out" || return 1
-  grep -Eq "^RUNID[[:space:]]+PROFILE[[:space:]]+STATE" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
-  grep -Eq "^$id[[:space:]]+docker-web[[:space:]]+exited" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
+  grep -Eq "^RUN ID[[:space:]]+PROFILE[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
+  grep -Eq "^$id[[:space:]]+-[[:space:]].*Exited.*docker-web$" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
   "$HOLD_BIN" profiles >"$TEST_ROOT/docker-profiles.out" || return 1
-  grep -q 'docker-web' "$TEST_ROOT/docker-profiles.out" || { cat "$TEST_ROOT/docker-profiles.out" >&2; return 1; }
+  ! grep -q 'docker-web' "$TEST_ROOT/docker-profiles.out" || { cat "$TEST_ROOT/docker-profiles.out" >&2; return 1; }
 
   out=$("$HOLD_BIN" -d --name docker-direct /bin/sh -c 'echo direct; sleep 5' 2>&1) || {
     printf '%s\n' "$out" >&2
@@ -3621,10 +3639,9 @@ PY
   }
   id2=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id2" ] || { printf '%s\n' "$out" >&2; return 1; }
-  "$HOLD_BIN" rm --force "$id2" >/dev/null || return 1
+  "$HOLD_BIN" rm --force docker-direct >/dev/null || return 1
   set +e; "$HOLD_BIN" inspect "$id2" >"$TEST_ROOT/docker-rm-inspect.out" 2>&1; rc=$?; set -e
   [ "$rc" -ne 0 ] || { cat "$TEST_ROOT/docker-rm-inspect.out" >&2; return 1; }
-  "$HOLD_BIN" rm docker-direct >/dev/null || return 1
   "$HOLD_BIN" profiles >"$TEST_ROOT/docker-profiles-after-rm.out" || return 1
   ! grep -q 'docker-direct' "$TEST_ROOT/docker-profiles-after-rm.out" || { cat "$TEST_ROOT/docker-profiles-after-rm.out" >&2; return 1; }
 }
@@ -3637,7 +3654,7 @@ test_docker_bare_launch_foreground_follows_output_by_default() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  grep -q '^bare-foreground-ok$' <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
+  ! grep -q '^bare-foreground-ok$' <<<"$out" || { printf '%s\n' "$out" >&2; return 1; }
 
   out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo bare-detached-hidden; sleep 0.1' 2>"$TEST_ROOT/docker-bare-detached.err") || {
     cat "$TEST_ROOT/docker-bare-detached.err" >&2
@@ -3752,7 +3769,8 @@ test_docker_restart_validation_and_tty_gate() {
 test_docker_restart_persists_with_named_profile() {
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id replay_id
-  out=$("$HOLD_BIN" run -d --name restartprof --restart on-failure:1 --restart-delay 1 -- /bin/sh -c 'echo restart-profile; sleep 0.1' 2>&1) || {
+  "$HOLD_BIN" profile restartprof -d --restart on-failure:1 --restart-delay 1 -- /bin/sh -c 'echo restart-profile; sleep 0.1' >"$TEST_ROOT/restartprof-create.out" || return 1
+  out=$("$HOLD_BIN" run -d restartprof 2>&1) || {
     printf '%s\n' "$out" >&2
     return 1
   }
@@ -3784,63 +3802,42 @@ for label, obj in (("profile", profile), ("run", run)):
 PY
 }
 
-test_docker_publish_and_volume_record_metadata() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id id2
-  out=$("$HOLD_BIN" run -d --name docker-meta -p 8080:3000 --publish=127.0.0.1:8443:443 -v "$TEST_ROOT:/work" --volume=cache:/cache /bin/sh -c 'echo docker-meta; sleep 0.1' 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-  "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/docker-meta-run.json" || return 1
-  "$HOLD_BIN" profile export docker-meta --json >"$TEST_ROOT/docker-meta-profile.json" || return 1
-  out=$("$HOLD_BIN" run -d docker-meta 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id2=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id2" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-  "$HOLD_BIN" inspect "$id2" >"$TEST_ROOT/docker-meta-replay.json" || return 1
-  out=$("$HOLD_BIN" run -d -p 9000:9000 -v "$TEST_ROOT:/adhoc" /bin/sh -c 'echo adhoc-meta; sleep 0.1' 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id3=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id3" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-  "$HOLD_BIN" inspect "$id3" >"$TEST_ROOT/docker-meta-adhoc.json" || return 1
-  "$HOLD_BIN" stop "$id" "$id2" "$id3" >/dev/null 2>&1 || true
-  python3 - "$TEST_ROOT/docker-meta-run.json" "$TEST_ROOT/docker-meta-profile.json" "$TEST_ROOT/docker-meta-replay.json" "$TEST_ROOT/docker-meta-adhoc.json" "$TEST_ROOT" <<'PY' || {
-import json, sys
-run = json.load(open(sys.argv[1], encoding='utf-8'))[0]
-profile = json.load(open(sys.argv[2], encoding='utf-8'))
-replay = json.load(open(sys.argv[3], encoding='utf-8'))[0]
-adhoc = json.load(open(sys.argv[4], encoding='utf-8'))[0]
-root = sys.argv[5]
-ports = ["8080:3000", "127.0.0.1:8443:443"]
-volumes = [f"{root}:/work", "cache:/cache"]
-for label, obj in (("run", run), ("profile", profile), ("replay", replay)):
-    if obj.get("ports") != ports:
-        raise SystemExit(f"{label} ports mismatch: {obj.get('ports')!r}")
-    if obj.get("volumes") != volumes:
-        raise SystemExit(f"{label} volumes mismatch: {obj.get('volumes')!r}")
-if adhoc.get("ports") != ["9000:9000"]:
-    raise SystemExit(f"adhoc ports mismatch: {adhoc.get('ports')!r}")
-if adhoc.get("volumes") != [f"{root}:/adhoc"]:
-    raise SystemExit(f"adhoc volumes mismatch: {adhoc.get('volumes')!r}")
-PY
-    cat "$TEST_ROOT/docker-meta-run.json" "$TEST_ROOT/docker-meta-profile.json" "$TEST_ROOT/docker-meta-replay.json" "$TEST_ROOT/docker-meta-adhoc.json" >&2
-    return 1
-  }
+test_docker_publish_and_volume_rejected() {
+  local rc
+  set +e
+  "$HOLD_BIN" run -p 8080:3000 -- /bin/true >"$TEST_ROOT/docker-publish.out" 2>"$TEST_ROOT/docker-publish.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/docker-publish.out" "$TEST_ROOT/docker-publish.err" >&2; return 1; }
+  grep -q 'does not publish or forward ports' "$TEST_ROOT/docker-publish.err" || { cat "$TEST_ROOT/docker-publish.err" >&2; return 1; }
+
+  set +e
+  "$HOLD_BIN" run -v "$TEST_ROOT:/work" -- /bin/true >"$TEST_ROOT/docker-volume.out" 2>"$TEST_ROOT/docker-volume.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/docker-volume.out" "$TEST_ROOT/docker-volume.err" >&2; return 1; }
+  grep -q 'does not mount or remap volumes' "$TEST_ROOT/docker-volume.err" || { cat "$TEST_ROOT/docker-volume.err" >&2; return 1; }
+
+  set +e
+  "$HOLD_BIN" profile bad-publish -p 8080:3000 -- /bin/true >"$TEST_ROOT/profile-publish.out" 2>"$TEST_ROOT/profile-publish.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/profile-publish.out" "$TEST_ROOT/profile-publish.err" >&2; return 1; }
+  grep -q 'does not publish or forward ports' "$TEST_ROOT/profile-publish.err" || { cat "$TEST_ROOT/profile-publish.err" >&2; return 1; }
+
+  set +e
+  "$HOLD_BIN" profile bad-volume -v "$TEST_ROOT:/work" -- /bin/true >"$TEST_ROOT/profile-volume.out" 2>"$TEST_ROOT/profile-volume.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/profile-volume.out" "$TEST_ROOT/profile-volume.err" >&2; return 1; }
+  grep -q 'does not mount or remap volumes' "$TEST_ROOT/profile-volume.err" || { cat "$TEST_ROOT/profile-volume.err" >&2; return 1; }
 }
 
 test_docker_named_profile_persists_mode_flags() {
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id replay_id
-  out=$("$HOLD_BIN" run -d -it --name modeprof /bin/sleep 5 2>&1) || {
+  "$HOLD_BIN" profile modeprof -d -i -t -- /bin/sleep 5 >"$TEST_ROOT/modeprof-create.out" || return 1
+  out=$("$HOLD_BIN" run modeprof 2>&1) || {
     printf '%s\n' "$out" >&2
     return 1
   }
@@ -3929,9 +3926,10 @@ PY
   grep -q 'tty:hello-tty' "$TEST_ROOT/docker-tty.out" || { cat "$TEST_ROOT/docker-tty.out" >&2; return 1; }
   id=$(tr -d '\r' <"$TEST_ROOT/docker-tty.out" | extract_id)
   [ -n "$id" ] || { cat "$TEST_ROOT/docker-tty.out" >&2; return 1; }
-  grep -q '"console_sock": "' "$HOME/.local/state/hold/$id.json" || { cat "$HOME/.local/state/hold/$id.json" >&2; return 1; }
+  record=$(record_path "$id") || { find "$HOME/.local/state/hold" -maxdepth 1 -type f -print >&2 || true; return 1; }
+  grep -q '"console_sock": "' "$record" || { cat "$record" >&2; return 1; }
   "$HOLD_BIN" ps >"$TEST_ROOT/docker-tty-ps.out" || return 1
-  grep -Eq "^$id[[:space:]]+-[[:space:]]+running" "$TEST_ROOT/docker-tty-ps.out" || { cat "$TEST_ROOT/docker-tty-ps.out" >&2; return 1; }
+  grep -Eq "^$id[[:space:]]+-[[:space:]].*Up " "$TEST_ROOT/docker-tty-ps.out" || { cat "$TEST_ROOT/docker-tty-ps.out" >&2; return 1; }
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
 
@@ -3964,7 +3962,7 @@ PY
   id=$(tr -d '\r' <"$TEST_ROOT/docker-tty-custom.out" | extract_id)
   [ -n "$id" ] || { cat "$TEST_ROOT/docker-tty-custom.out" >&2; return 1; }
   "$HOLD_BIN" ps >"$TEST_ROOT/docker-tty-custom-ps.out" || return 1
-  grep -Eq "^$id[[:space:]]+-[[:space:]]+running" "$TEST_ROOT/docker-tty-custom-ps.out" || { cat "$TEST_ROOT/docker-tty-custom-ps.out" >&2; return 1; }
+  grep -Eq "^$id[[:space:]]+-[[:space:]].*Up " "$TEST_ROOT/docker-tty-custom-ps.out" || { cat "$TEST_ROOT/docker-tty-custom-ps.out" >&2; return 1; }
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
 
@@ -3981,7 +3979,8 @@ while IFS= read -r line; do
 done
 EOF
   chmod +x "$TEST_ROOT/docker-tty-reconnect-child.sh"
-  out=$("$HOLD_BIN" run -d -it --name ttyreconnect "$TEST_ROOT/docker-tty-reconnect-child.sh" 2>&1) || {
+  "$HOLD_BIN" profile ttyreconnect -d -i -t -- "$TEST_ROOT/docker-tty-reconnect-child.sh" >"$TEST_ROOT/docker-tty-reconnect-create.out" || return 1
+  out=$("$HOLD_BIN" run ttyreconnect 2>&1) || {
     printf '%s\n' "$out" >&2
     return 1
   }
@@ -4032,7 +4031,8 @@ echo normalize-relative-run
 SH
   chmod +x "$script"
 
-  out=$(cd "$TEST_ROOT" && "$HOLD_BIN" run -d --name relnorm -- /bin/sh ./rel-normalize.sh 2>&1) || {
+  (cd "$TEST_ROOT" && "$HOLD_BIN" profile relnorm -d -- /bin/sh ./rel-normalize.sh >"$TEST_ROOT/rel-normalize-create.out") || return 1
+  out=$("$HOLD_BIN" run relnorm 2>&1) || {
     printf '%s\n' "$out" >&2
     return 1
   }
@@ -4055,10 +4055,10 @@ if len(argv) < 2 or argv[1] != want:
     raise SystemExit(f'run record did not normalize relative script arg: {argv!r}')
 if len(normalized) < 2 or normalized[1] != want:
     raise SystemExit(f'normalized argv did not preserve absolute script arg: {normalized!r}')
-if len(observed_argv) < 2 or observed_argv[1] != './rel-normalize.sh':
-    raise SystemExit(f'observed argv did not preserve captured relative script arg: {observed_argv!r}')
-if observed.get('cwd') != __import__('os').path.dirname(want):
-    raise SystemExit(f'observed cwd mismatch: {observed.get("cwd")!r}')
+if len(observed_argv) < 2 or observed_argv[1] != want:
+    raise SystemExit(f'observed argv did not use the normalized profile script arg: {observed_argv!r}')
+if not (observed.get('cwd') or '').startswith('/'):
+    raise SystemExit(f'observed cwd is not absolute: {observed.get("cwd")!r}')
 if not (observed.get('exe') or '').startswith('/'):
     raise SystemExit(f'observed exe is not absolute: {observed.get("exe")!r}')
 if len(args) < 2 or args[1] != want:
@@ -4117,7 +4117,7 @@ PY
   [ "$rc" -eq 0 ] || { echo "hold shell relative detach: rc=$rc (want 0)" >&2; cat "$TEST_ROOT/hold-shell-rel-adopt.out" "$TEST_ROOT/hold-shell-rel-adopt.err" >&2; return 1; }
   id=$(extract_id <"$TEST_ROOT/hold-shell-rel-adopt.out")
   [ -n "$id" ] || { cat "$TEST_ROOT/hold-shell-rel-adopt.out" "$TEST_ROOT/hold-shell-rel-adopt.err" >&2; return 1; }
-  record="$HOME/.local/state/hold/$id.json"
+  record=$(record_path "$id") || true
   [ -f "$record" ] || { find "$HOME/.local/state/hold" -maxdepth 1 -type f -print >&2 || true; return 1; }
   if ! python3 - "$record" "$script" <<'PY'
 import json, sys
@@ -4163,7 +4163,7 @@ PY
   [ "$rc" -eq 0 ] || { echo "hold shell detach: rc=$rc (want 0)" >&2; cat "$TEST_ROOT/hold-shell-adopt.out" "$TEST_ROOT/hold-shell-adopt.err" >&2; return 1; }
   id=$(extract_id <"$TEST_ROOT/hold-shell-adopt.out")
   [ -n "$id" ] || { cat "$TEST_ROOT/hold-shell-adopt.out" "$TEST_ROOT/hold-shell-adopt.err" >&2; return 1; }
-  record="$HOME/.local/state/hold/$id.json"
+  record=$(record_path "$id") || true
   [ -f "$record" ] || { find "$HOME/.local/state/hold" -maxdepth 1 -type f -print >&2 || true; return 1; }
   grep -Fq '"argv": ["/usr/bin/sleep", "30"]' "$record" || { cat "$record" >&2; return 1; }
   grep -Fq 'hold  adopted' "$TEST_ROOT/hold-shell-adopt.err" || { cat "$TEST_ROOT/hold-shell-adopt.err" >&2; return 1; }
@@ -4478,12 +4478,14 @@ test_system_store_refuses_symlinked_critical_dirs() {
 
 test_system_store_artifacts_owned_by_root() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local id owner
+  local id owner record log
   id=$(as_root "$HOLD_REAL_BIN" true 2>&1 | extract_id)
   [ -n "$id" ] || return 1
-  owner=$(root_file_owner "$HOLD_TEST_SYSTEM_STATE_DIR/runs/$id.json") || return 1
+  record=$(root_record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
+  log=$(root_log_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs") || return 1
+  owner=$(root_file_owner "$record") || return 1
   [ "$owner" = "0:0" ] || { echo "record owner=$owner (want 0:0)" >&2; return 1; }
-  owner=$(root_file_owner "$HOLD_TEST_SYSTEM_STATE_DIR/logs/$id.log") || return 1
+  owner=$(root_file_owner "$log") || return 1
   [ "$owner" = "0:0" ] || { echo "log owner=$owner (want 0:0)" >&2; return 1; }
 }
 
@@ -4492,9 +4494,9 @@ test_nonroot_ignores_spoofed_sudo_provenance() {
   out=$(as_user_spoof_sudo "$HOLD_REAL_BIN" true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  json="$ACTOR_HOME/.local/state/hold/$id.json"
+  json=$(record_path "$id" "$ACTOR_HOME/.local/state/hold") || true
   [ -e "$json" ] || { echo "spoofed-SUDO run did not land in the user store" >&2; return 1; }
-  [ ! -e "$HOLD_TEST_SYSTEM_STATE_DIR/runs/$id.json" ] || { echo "spoofed SUDO_* escalated into the system store" >&2; return 1; }
+  ! root_record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs" || { echo "spoofed SUDO_* escalated into the system store" >&2; return 1; }
   if grep -q '"invoked_via_sudo": true' "$json" 2>/dev/null; then
     echo "spoofed SUDO_* was trusted by a non-root process" >&2
     return 1
@@ -4685,7 +4687,7 @@ test_signal_refuses_tampered_pgid() {
   out=$("$HOLD_BIN" -d /bin/sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  rec="$HOME/.local/state/hold/$id.json"
+  rec=$(record_path "$id") || return 1
   # A record whose pgid is tampered to <=1 must never be signaled -- kill(-pgid)
   # with pgid<=1 would hit pid 1 / the whole session. valid_record rejects it, so
   # stop refuses with exit 5 and the real process is left untouched.
@@ -4847,7 +4849,7 @@ test_public_cli_contract_guards() {
 
   set +e; "$HOLD_BIN" profile web nope >/dev/null 2>"$TEST_ROOT/profile-bad-op-usage.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "hold profile web nope: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'hold profile <name> <show|start|run|create|set|export|rename|delete>' "$TEST_ROOT/profile-bad-op-usage.err" || {
+  grep -q "failed to resolve profile command 'nope'" "$TEST_ROOT/profile-bad-op-usage.err" || {
     cat "$TEST_ROOT/profile-bad-op-usage.err" >&2; return 1;
   }
 
@@ -5070,13 +5072,13 @@ run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
 run_test "hold unified CLI surface" test_hold_unified_cli_surface
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
-run_test "Docker bare launch foreground follows output by default" test_docker_bare_launch_foreground_follows_output_by_default
+run_test "Docker bare convenience launch defaults to background" test_docker_bare_launch_foreground_follows_output_by_default
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker restart policy restarts failed processes" test_docker_restart_policy_restarts_failures
 run_test "Docker restart validates policies and tty gate" test_docker_restart_validation_and_tty_gate
 run_test "Docker restart persists with named profiles" test_docker_restart_persists_with_named_profile
-run_test "Docker publish and volume flags record metadata" test_docker_publish_and_volume_record_metadata
+run_test "Docker publish and volume flags are rejected" test_docker_publish_and_volume_rejected
 run_test "Docker named profiles persist -d -i -t mode flags" test_docker_named_profile_persists_mode_flags
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
 run_test "Docker -it foreground attaches and detaches" test_docker_tty_foreground_attaches_and_detaches
@@ -5162,7 +5164,7 @@ run_test "Docker --rm removes run artifacts after exit" test_docker_rm_removes_r
 run_test "Docker --rm removes profile run artifacts after exit" test_docker_rm_removes_profile_run_artifacts_after_exit
 run_test "captive profile env persists and runs" test_captive_profile_env_persists_and_runs
 run_test "captive profile mode loads and edits an existing recipe" test_captive_profile_loads_existing_recipe_for_edit
-run_test "captive profile publish/volume metadata preserves edits and clears" test_captive_profile_publish_volume_metadata_preserves_edits_and_clears
+run_test "captive profile publish/volume commands are rejected" test_captive_profile_publish_volume_rejected
 run_test "captive profile restart metadata preserves edits and clears" test_captive_profile_restart_metadata_preserves_edits_and_clears
 run_test "captive profile mode preserves quoted argv and env values" test_captive_profile_quoted_argv_and_env_round_trip
 run_test "profile transcript import/export round-trips a user-local recipe" test_profile_transcript_import_export_roundtrip

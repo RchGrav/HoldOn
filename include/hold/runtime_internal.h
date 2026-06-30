@@ -7,7 +7,7 @@
 #include "hold/runtime.h"
 
 struct alias_match {
-    char id[16];
+    char id[ID_STR_LEN];
     enum run_state state;
     char started_at[64];
 };

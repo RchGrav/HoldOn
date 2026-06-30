@@ -83,7 +83,8 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
                                    bool mode_detach,
                                    bool allow_multi,
                                    const char *restart_policy,
-                                   int restart_delay_seconds);
+                                   int restart_delay_seconds,
+                                   const char *log_destination);
 int hold_alias_delete(const struct hold_store *store, const char *alias, bool *deleted);
 int hold_alias_rename(const struct hold_store *store, const char *old_alias, const char *new_alias);
 int hold_load_record(const char *path, struct hold_run_record *r);

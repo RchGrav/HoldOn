@@ -25,6 +25,66 @@ static void handle_tail_sigint(int signo) {
     g_tail_interrupted = 1;
 }
 
+struct decoded_log_stream {
+    char *line;
+    size_t len;
+    size_t cap;
+};
+
+static void decoded_log_stream_free(struct decoded_log_stream *s) {
+    if (!s) return;
+    free(s->line);
+    s->line = NULL;
+    s->len = 0;
+    s->cap = 0;
+}
+
+static int decoded_log_stream_emit(struct decoded_log_stream *s) {
+    if (!s || s->len == 0) return 0;
+    char *line = malloc(s->len + 1);
+    if (!line) return -1;
+    memcpy(line, s->line, s->len);
+    line[s->len] = '\0';
+    char *decoded = NULL;
+    int rc = hold_decode_json_log_line(line, &decoded);
+    free(line);
+    if (rc < 0) {
+        free(decoded);
+        return -1;
+    }
+    size_t n = strlen(decoded);
+    int write_rc = n == 0 ? 0 : hold_write_all(STDOUT_FILENO, decoded, n);
+    free(decoded);
+    s->len = 0;
+    return write_rc;
+}
+
+static int decoded_log_stream_write(struct decoded_log_stream *s, const char *buf, size_t n) {
+    if (!s || (!buf && n > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (size_t i = 0; i < n; i++) {
+        if (s->len + 1 >= s->cap) {
+            size_t next_cap = s->cap ? s->cap * 2 : 4096;
+            while (next_cap <= s->len + 1) next_cap *= 2;
+            char *next = realloc(s->line, next_cap);
+            if (!next) return -1;
+            s->line = next;
+            s->cap = next_cap;
+        }
+        s->line[s->len++] = buf[i];
+        if (buf[i] == '\n' && decoded_log_stream_emit(s) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int decoded_log_stream_flush(struct decoded_log_stream *s) {
+    return decoded_log_stream_emit(s);
+}
+
 static int validate_signal_target(const char *id,
                                   const struct hold_run_record *r,
                                   bool require_live,
@@ -119,11 +179,13 @@ int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, boo
     g_tail_interrupted = 0;
 
     char buf[4096];
+    struct decoded_log_stream decoder = {0};
     int sleep_polls = 0;
     while (!g_tail_interrupted) {
         ssize_t n = read(fd, buf, sizeof(buf));
         if (n > 0) {
-            if (hold_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
+            if (decoded_log_stream_write(&decoder, buf, (size_t)n) != 0) {
+                decoded_log_stream_free(&decoder);
                 close(fd);
                 sigaction(SIGINT, &old_sa, NULL);
                 hold_die_errno("hold: failed writing tailed output");
@@ -134,6 +196,7 @@ int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, boo
             if (errno == EINTR) {
                 continue;
             }
+            decoded_log_stream_free(&decoder);
             close(fd);
             sigaction(SIGINT, &old_sa, NULL);
             hold_die_errno("hold: failed while tailing log");
@@ -152,6 +215,13 @@ int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, boo
         }
     }
 
+    if (decoded_log_stream_flush(&decoder) != 0) {
+        decoded_log_stream_free(&decoder);
+        close(fd);
+        sigaction(SIGINT, &old_sa, NULL);
+        hold_die_errno("hold: failed writing tailed output");
+    }
+    decoded_log_stream_free(&decoder);
     close(fd);
     sigaction(SIGINT, &old_sa, NULL);
     return 0;
@@ -382,6 +452,7 @@ int hold_cmd_dump_action(const struct hold_invocation *inv,
         hold_die_errno("hold: failed to open log for dump");
     }
     char buf[4096];
+    struct decoded_log_stream decoder = {0};
     while (1) {
         ssize_t n = read(fd, buf, sizeof(buf));
         if (n == 0) {
@@ -389,16 +460,25 @@ int hold_cmd_dump_action(const struct hold_invocation *inv,
         }
         if (n < 0) {
             if (errno == EINTR) continue;
+            decoded_log_stream_free(&decoder);
             close(fd);
             free(targets);
             hold_die_errno("hold: failed while dumping log");
         }
-        if (hold_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
+        if (decoded_log_stream_write(&decoder, buf, (size_t)n) != 0) {
+            decoded_log_stream_free(&decoder);
             close(fd);
             free(targets);
             hold_die_errno("hold: failed writing dumped output");
         }
     }
+    if (decoded_log_stream_flush(&decoder) != 0) {
+        decoded_log_stream_free(&decoder);
+        close(fd);
+        free(targets);
+        hold_die_errno("hold: failed writing dumped output");
+    }
+    decoded_log_stream_free(&decoder);
     close(fd);
     free(targets);
     return 0;

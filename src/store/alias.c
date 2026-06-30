@@ -45,6 +45,10 @@ static int parse_alias_recipe_object(const char *j, struct hold_alias *entry) {
         entry->volumes = NULL;
         entry->volumec = 0;
     }
+    if (hold_json_get_str(j, "log_destination", entry->log_destination, sizeof(entry->log_destination)) == 0 &&
+        entry->log_destination[0]) {
+        entry->has_log_destination = true;
+    }
     (void)hold_json_get_bool(j, "interactive", &entry->mode_interactive);
     (void)hold_json_get_bool(j, "tty", &entry->mode_tty);
     (void)hold_json_get_bool(j, "detach", &entry->mode_detach);
@@ -267,6 +271,11 @@ static int write_aliases_atomic(const struct hold_store *store, const struct hol
             if (entries[i].has_restart_delay) {
                 fprintf(f, ", \"restart_delay_seconds\": %d", entries[i].restart_delay_seconds);
             }
+            if (entries[i].has_log_destination && entries[i].log_destination[0]) {
+                fprintf(f, ", \"log_destination\": \"");
+                hold_json_escape(f, entries[i].log_destination);
+                fprintf(f, "\"");
+            }
             fprintf(f, "}%s\n", i + 1 == count ? "" : ",");
         }
     }
@@ -382,6 +391,10 @@ int hold_alias_lookup_recipe(const struct hold_store *store, const char *alias, 
                 }
                 recipe->restart_delay_seconds = entries[i].restart_delay_seconds;
                 recipe->has_restart_delay = entries[i].has_restart_delay;
+                if (entries[i].has_log_destination && entries[i].log_destination[0]) {
+                    snprintf(recipe->log_destination, sizeof(recipe->log_destination), "%s", entries[i].log_destination);
+                    recipe->has_log_destination = true;
+                }
                 rc = 0;
             }
             break;
@@ -410,7 +423,7 @@ int hold_alias_upsert_recipe_env(const struct hold_store *store,
                                    char **argv,
                                    int envc,
                                    char **env) {
-    return hold_alias_upsert_recipe_full(store, alias, binary_path, argc, argv, envc, env, 0, NULL, 0, NULL, false, false, false, false, NULL, 0);
+    return hold_alias_upsert_recipe_full(store, alias, binary_path, argc, argv, envc, env, 0, NULL, 0, NULL, false, false, false, false, NULL, 0, NULL);
 }
 
 int hold_alias_upsert_recipe_full(const struct hold_store *store,
@@ -429,12 +442,14 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
                                    bool mode_detach,
                                    bool allow_multi,
                                    const char *restart_policy,
-                                   int restart_delay_seconds) {
+                                   int restart_delay_seconds,
+                                   const char *log_destination) {
     if (!hold_valid_alias(alias) || !binary_path || binary_path[0] != '/' || argc <= 0 || !argv ||
         envc < 0 || (envc > 0 && !env) ||
         portc < 0 || (portc > 0 && !ports) ||
         volumec < 0 || (volumec > 0 && !volumes) ||
-        restart_delay_seconds < 0) {
+        restart_delay_seconds < 0 ||
+        (log_destination && strcmp(log_destination, "syslog") != 0)) {
         errno = EINVAL;
         return -1;
     }
@@ -481,6 +496,12 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
             }
             entries[i].restart_delay_seconds = entries[i].has_restart_policy ? restart_delay_seconds : 0;
             entries[i].has_restart_delay = entries[i].has_restart_policy && restart_delay_seconds > 0;
+            entries[i].log_destination[0] = '\0';
+            entries[i].has_log_destination = false;
+            if (log_destination && *log_destination) {
+                snprintf(entries[i].log_destination, sizeof(entries[i].log_destination), "%s", log_destination);
+                entries[i].has_log_destination = true;
+            }
             entries[i].has_recipe = true;
             entries[i].has_hash = false;
             entries[i].hash[0] = '\0';
@@ -519,6 +540,10 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
     }
     entries[count].restart_delay_seconds = entries[count].has_restart_policy ? restart_delay_seconds : 0;
     entries[count].has_restart_delay = entries[count].has_restart_policy && restart_delay_seconds > 0;
+    if (log_destination && *log_destination) {
+        snprintf(entries[count].log_destination, sizeof(entries[count].log_destination), "%s", log_destination);
+        entries[count].has_log_destination = true;
+    }
     entries[count].has_recipe = true;
     count++;
     int rc = write_aliases_atomic(store, entries, count);

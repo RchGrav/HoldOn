@@ -615,8 +615,8 @@ Launch:
   hold [run-options] -- <cmd> [args...]          # force executable/profile conflict resolver
 
 Profile creation:
-  hold profile [run-options] --name <profile> <cmd> [args...]
-  hold profile [run-options] --name <profile> -- <cmd> [args...]
+  hold profile <name> [profile-options] <cmd> [args...]
+  hold profile <name> [profile-options] -- <cmd> [args...]
 
 Listing and inspection:
   hold ps                                      # active run IDs, Docker-shaped
@@ -689,9 +689,9 @@ Launch flags:
 | `-it` | `--interactive --tty` | Combine stdin-open plus Hold's PTY/console capability: the normal terminal/shell experience. For profiles, `hold run -it <profile>` starts the profile attached when inactive, or reconnects to the singular active interactive/TTY run for that profile. The detach key sequence leaves the run alive under Hold. |
 | `-e KEY=VALUE` | `--env KEY=VALUE` | Set environment variables for the launch/profile. |
 | — | `--env-file FILE` | Load environment variables from a file. |
-| `-p SPEC` | `--publish SPEC` | Record published-port metadata for display, readiness/open helpers, and profile config. Hold is not a container runtime, so this must not falsely claim network namespace port forwarding unless a future backend actually implements it. |
-| `-v SPEC` | `--volume SPEC` | Record volume/path metadata for profile config and future backend support. Hold host-process launches already see the host filesystem, so this is not isolation or remounting by itself. |
-| — | `--name PROFILE` | Create/label a profile from the normalized launch recipe and associate the new run with that profile. |
+| `-p SPEC` | `--publish SPEC` | Reject as unsupported. Hold is not a container runtime and does not publish/forward ports; `hold ps` reports listening ports observed from the host process. Do not record publish metadata to simulate Docker networking. |
+| `-v SPEC` | `--volume SPEC` | Reject as unsupported. Hold host-process launches already see the host filesystem and Hold does not mount/remap paths; pass host paths directly (prefer absolute paths) or save them in the command/profile argv. Do not record volume metadata to simulate Docker mounts. |
+| — | `--name NAME` | Assign the run's Docker-style name. Run names are selectors like Docker container names; they are distinct from explicit profile names. |
 | — | `--detach-keys SEQ` | Set the key sequence used to detach from an attached TTY without killing the run. Default should follow Docker familiarity: `Ctrl+P Ctrl+Q`, unless platform constraints require a documented alternative. |
 | — | `--rm` | Remove run-id data/logs when the run stops; useful for tests and ephemeral commands. |
 | — | `--restart POLICY` | Set restart behavior: `no`, `always`, `unless-stopped`, or `on-failure[:max-retries]`. |
@@ -701,7 +701,7 @@ Launch flags:
 Examples:
 
 ```sh
-hold --name web -p 8080:3000 -e NODE_ENV=production npm run start
+hold run --name web -e NODE_ENV=production -- npm run start
 hold python
 hold -it --rm bash
 hold run -d web
@@ -722,21 +722,22 @@ hold inspect web
 
 `--name` rule:
 
-- If the profile name does not exist, create a profile from the normalized launch recipe and label the first run with that profile.
-- If the profile name exists and the launch recipe matches, treat it as a profile launch.
-- If the profile name exists and the recipe differs, refuse and suggest `hold run <profile>`, Cisco IOS captive configuration (`hold`, `enable`, `configure terminal`, `profile <name>`), or an explicit replacement flow. Do not silently mutate a profile from a launch command.
+- `--name NAME` names the run, not the profile. This mirrors Docker's container-name selector shape: later `ps`, `logs`, `inspect`, `stop`, `kill`, `rm`, and restart-style operations may use the run name the same way they may use the displayed run ID.
+- Profile names live in the profile namespace and are explicit. They are never generated and are created/updated with `hold profile <name> ...`, profile import, or the captive configuration CLI.
+- If a token could be a profile or executable, prefer the profile. Use `--` to force executable parsing only when a conflict needs resolving.
 
 `profile` creation twin:
 
-- `hold profile ...` accepts the same launch/profile-shaping switches as `hold run ...`, but it does not start a process. It writes a profile from the normalized recipe and saved options.
-- `--name <profile>` is required for the non-running profile-creation form so the command remains unambiguous and scriptable.
-- Options supplied to `hold profile` are persisted as profile defaults/metadata. They drive bare convenience starts, captive-CLI starts, grants, and generated IOS transcript output. The Docker-shaped `hold run` path still gives the current invocation's explicit switches priority for foreground/detach/interactivity/TTY behavior.
+- `hold profile <name> [opts] -- <cmd> [args...]` accepts the persistent subset of launch/profile-shaping switches, but it does not start a process. It writes a profile from the normalized recipe and saved options.
+- The profile name is positional and explicit, not generated and not supplied through `--name`.
+- Options supplied to `hold profile` are persisted as profile defaults. They drive bare convenience starts, captive-CLI starts, grants, and generated IOS transcript output. The Docker-shaped `hold run` path still gives the current invocation's explicit switches priority for foreground/detach/interactivity/TTY behavior.
+- `-p`/`--publish` and `-v`/`--volume` are rejected here as well. Ports are observed from running host processes and host paths should be regular command arguments, not fake profile metadata.
 
 Examples:
 
 ```sh
-hold profile --name web -d -p 8080:3000 -e NODE_ENV=production npm run start
-hold profile --name shell -it -- bash
+hold profile web -d -e NODE_ENV=production -- npm run start
+hold profile shell -it -- bash
 hold web                 # convenience start using profile defaults
 hold run -d web          # Docker-shaped start with explicit detach
 hold run -- web          # force executable named web
@@ -757,9 +758,10 @@ future explicit multi-log mode is designed.
 
 This is the user-facing quick reference for Docker-shaped flags. The wording is
 intentionally familiar to Docker users, but each flag must map to a real Hold
-capability or recorded Hold metadata. Hold runs host processes/profiles; `-p`,
-`-v`, and `--privileged` must not imply container isolation unless a later
-backend actually provides it.
+capability. Hold runs host processes/profiles; `-p`, `-v`, and `--privileged`
+must not imply container isolation unless a later backend actually provides it.
+When Hold lacks the Docker capability, reject the flag instead of recording
+metadata that only looks like Docker behavior.
 
 Quick lookup:
 
@@ -769,6 +771,8 @@ Quick lookup:
 | `-i` | `--interactive` | Keep stdin open for sending raw data/commands. | Interactive shells, debugging |
 | `-t` | `--tty` | Allocate Hold's PTY/console path under Docker-shaped spelling. | Interactive terminal sessions |
 | `-e` | `--env` | Pass environment variables into the process/profile. | Configuration management |
+| `-p` | `--publish` | Unsupported/rejected: Hold does not publish or forward ports; `hold ps` observes listening ports. | Use host process networking directly |
+| `-v` | `--volume` | Unsupported/rejected: Hold does not mount/remap paths; pass host paths directly, preferably absolute. | Host paths as normal argv/config |
 | `-n` | `--tail` | Limit log history output. | Log inspection with `hold logs` |
 | `-f` | `--follow` | Keep log streams open and watch live. | Real-time monitoring with `hold logs` |
 | — | `--detach-keys` | Change the escape sequence used to leave a TTY without killing the run. | Custom TTY exit behavior |
@@ -858,14 +862,14 @@ help or docs.
 Common combinations:
 
 ```sh
-# Typical web app setup
-hold run -d -p 8080:3000 -e NODE_ENV=production web
+# Typical web app setup; bind/listen in the app, then Hold observes ports in ps
+hold run -d -e NODE_ENV=production web
 
 # Interactive debugging session
-hold run -it --rm -v $(pwd):/code debug-shell
+hold run -it --rm debug-shell /home/me/project
 
 # Persistent service with auto-restart
-hold run -d --restart always -v db_data:/data database
+hold run -d --restart always database --data-dir /var/lib/mydb
 
 # Log monitoring
 hold logs -f -n 100 web
@@ -877,7 +881,7 @@ Quick reference by use case:
 | --- | --- |
 | Run a service in background | `-d` |
 | Interactive shell | `-it` |
-| Persist path/volume metadata | `-v /host:/name` |
+| Pass host paths | regular argv/config paths, preferably absolute |
 | Configure runtime | `-e KEY=VALUE` |
 | Temporary test | `--rm` |
 | Auto-restart on crash | `--restart always` |
@@ -1338,10 +1342,12 @@ Backspace to an empty query restores the full view immediately. A dedicated clea
 
 Current branch v1 evidence: `hold logs <target>` routes to the viewer engine; `--plain` forces script-style output and `--interactive` fails closed when no TTY is available. The intended live-log UX is dynamic and full-screen: `hold logs <target>` / `hold logs <target> --follow` opens the viewer, printable keys update the top filter field per keystroke, Backspace relaxes the filter, and matching live output appears without restarting the command. CLI prefilter flags are not part of the product UX; seeded filters may exist only as internal regression/debug hooks. Non-TTY follow streams until the recorded run exits; TTY follow refreshes while running and marks the view exited when the run ends. The v1 keys are printable type-to-filter, Backspace, Space to exclude lines similar to the highlighted line, Ctrl-R to reset filters/exclusions, Ctrl-H for bottom-strip help, Ctrl-I for process info, arrows/`j`/`k`, PgUp/PgDn, and `q`.
 
+Pre-0.5 correction: the v1 default above is not the desired stable contract. Planned viewer work is recorded in [Dynamic log viewer design before 0.5](future/viewer-fixes-before-0.5.md): `hold logs`, `hold logs -f`, and `hold logs -n` should stay plain/script-friendly by default, while full-screen dynamic logs should require `hold logs --dynamic <target>` or `hold logs --dyn <target>`. That follow-up also owns polished header/footer chrome, center-out filtering, source controls, and timestamp presentation (`Ctrl-T` for timestamp mode, `Ctrl-U` for local/UTC) without adding noisy counters to the default viewer.
+
 ### 6.1 Search vs filter
 
 - Search mode highlights/jumps to matches but keeps the full buffer.
-- Filter mode hides non-matching rows and shows match counts.
+- Filter mode hides non-matching rows. Older drafts allowed match counts, but the pre-0.5 dynamic log viewer should not show default counters unless a future explicit info/debug view needs them.
 - Type-to-filter mode is the fast path when printable text has no other meaning in the current viewer.
 
 This viewer applies to:
@@ -1581,7 +1587,7 @@ Default behavior is local and immediate.
 
 For growing logs:
 
-- v1 implementation: `hold logs <target>` and `hold logs <target> --follow` route through the viewer engine for a dynamic TTY filter field. The human design is type-to-filter after the full-screen viewer is open; CLI prefiltering is not a public workflow. Non-TTY `hold logs <target>` remains script-friendly.
+- v1 implementation: `hold logs <target>` and `hold logs <target> --follow` route through the viewer engine for a dynamic TTY filter field. The pre-0.5 correction is to make dynamic viewing explicit through `--dynamic`/`--dyn` and keep normal `hold logs` output plain/script-friendly.
 - active live filters are anchored at the tail by default; PgUp moves to older matching windows, and PgDn walks back toward the live edge;
 - when the user is browsing older matches, new log data does not yank the viewport to EOF; follow ticks filter bounded appended slices and keep a separate scan-progress cursor, so sparse matches in large bursts are deferred across ticks rather than skipped; the header reports `newer below` only after a new matching row is found;
 - `--debug-stats` includes `scan_gen`, which increments only when the filter engine refills the visible cache;

@@ -16,47 +16,17 @@ static bool parse_docker_run_flag(const char *arg,
                                   bool *tty,
                                   bool *privileged);
 static int append_env_assignment(const char *arg, char ***env_out, int *envc_out);
-static int append_metadata_value(const char *kind, const char *arg, char ***values_out, int *count_out);
+static int reject_publish_option(void);
+static int reject_volume_option(void);
 static int parse_restart_policy_arg(const char *arg, char out[64]);
 static int parse_restart_delay_arg(const char *arg, int *out);
 static bool restart_policy_arg_enabled(const char *arg);
 static int append_env_file(const char *path, char ***env_out, int *envc_out);
 static int configure_detach_keys_option(const char *value);
-static int run_recipe_matches_profile(const struct hold_store *store,
-                                      const char *name,
-                                      int argc,
-                                      char **argv,
-                                      int envc,
-                                      char **env,
-                                      int portc,
-                                      char **ports,
-                                      int volumec,
-                                      char **volumes,
-                                      bool mode_interactive,
-                                      bool mode_tty,
-                                      bool mode_detach,
-                                      bool allow_multi,
-                                      const char *restart_policy,
-                                      int restart_delay_seconds,
-                                      bool *matched);
-static int ensure_named_run_profile(const struct hold_invocation *inv,
-                                    const struct hold_store *store,
-                                    const char *name,
-                                    int argc,
-                                    char **argv,
-                                    int envc,
-                                    char **env,
-                                    int portc,
-                                    char **ports,
-                                    int volumec,
-                                    char **volumes,
-                                    bool mode_interactive,
-                                    bool mode_tty,
-                                    bool mode_detach,
-                                    bool allow_multi,
-                                    const char *restart_policy,
-                                    int restart_delay_seconds);
 static bool token_names_existing_profile(const struct hold_store *user_store,
+                                         const struct hold_store *system_store,
+                                         const char *token);
+static bool token_names_detached_profile(const struct hold_store *user_store,
                                          const struct hold_store *system_store,
                                          const char *token);
 static bool is_legacy_run_namespace_verb(const char *arg);
@@ -256,22 +226,16 @@ static int append_env_assignment(const char *arg, char ***env_out, int *envc_out
     return 0;
 }
 
-static int append_metadata_value(const char *kind, const char *arg, char ***values_out, int *count_out) {
-    if (!arg || !*arg) {
-        fprintf(stderr, "hold: error: %s requires a non-empty value\n", kind);
-        return 5;
-    }
-    char *copy = strdup(arg);
-    if (!copy) return 3;
-    char **next = realloc(*values_out, ((size_t)*count_out + 1) * sizeof(*next));
-    if (!next) {
-        free(copy);
-        return 3;
-    }
-    next[*count_out] = copy;
-    *values_out = next;
-    (*count_out)++;
-    return 0;
+static int reject_publish_option(void) {
+    fprintf(stderr,
+            "hold: error: Hold is not containerized and does not publish or forward ports; listening ports are observed automatically and shown in `hold ps`\n");
+    return 5;
+}
+
+static int reject_volume_option(void) {
+    fprintf(stderr,
+            "hold: error: Hold is not containerized and does not mount or remap volumes; pass host paths directly (prefer absolute paths) or save them in the profile command argv\n");
+    return 5;
 }
 
 static int append_env_file(const char *path, char ***env_out, int *envc_out) {
@@ -312,143 +276,6 @@ static int append_env_file(const char *path, char ***env_out, int *envc_out) {
     return rc;
 }
 
-static int run_recipe_matches_profile(const struct hold_store *store,
-                                      const char *name,
-                                      int argc,
-                                      char **argv,
-                                      int envc,
-                                      char **env,
-                                      int portc,
-                                      char **ports,
-                                      int volumec,
-                                      char **volumes,
-                                      bool mode_interactive,
-                                      bool mode_tty,
-                                      bool mode_detach,
-                                      bool allow_multi,
-                                      const char *restart_policy,
-                                      int restart_delay_seconds,
-                                      bool *matched) {
-    *matched = false;
-    struct hold_profile recipe;
-    if (hold_alias_lookup_recipe(store, name, &recipe) != 0) {
-        return 0;
-    }
-    char binary_path[HOLD_PATH_MAX];
-    if (argc <= 0 || hold_resolve_binary_path(argv[0], binary_path, sizeof(binary_path)) != 0) {
-        hold_free_profile(&recipe);
-        return -1;
-    }
-    char **normalized_argv = NULL;
-    if (hold_copy_argv(&normalized_argv, argc, argv) != 0) {
-        hold_free_profile(&recipe);
-        return -1;
-    }
-    if (hold_normalize_existing_argv_paths_from_cwd(normalized_argv, argc, 1, NULL) != 0) {
-        hold_free_argv_alloc(normalized_argv, argc);
-        hold_free_profile(&recipe);
-        return -1;
-    }
-    const char *want_restart = restart_policy_arg_enabled(restart_policy) ? restart_policy : NULL;
-    const char *have_restart = recipe.has_restart_policy && restart_policy_arg_enabled(recipe.restart_policy) ? recipe.restart_policy : NULL;
-    bool same = recipe.argc == argc &&
-                recipe.envc == envc &&
-                recipe.portc == portc &&
-                recipe.volumec == volumec &&
-                recipe.mode_interactive == mode_interactive &&
-                recipe.mode_tty == mode_tty &&
-                recipe.mode_detach == mode_detach &&
-                recipe.allow_multi == allow_multi &&
-                ((have_restart == NULL && want_restart == NULL) ||
-                 (have_restart && want_restart && !strcmp(have_restart, want_restart))) &&
-                ((want_restart == NULL && !recipe.has_restart_delay) ||
-                 (want_restart != NULL && recipe.restart_delay_seconds == restart_delay_seconds)) &&
-                !strcmp(recipe.binary_path, binary_path);
-    for (int i = 0; same && i < argc; i++) {
-        same = !strcmp(recipe.argv[i], normalized_argv[i]);
-    }
-    for (int i = 0; same && i < envc; i++) {
-        same = recipe.env && env && !strcmp(recipe.env[i], env[i]);
-    }
-    for (int i = 0; same && i < portc; i++) {
-        same = recipe.ports && ports && !strcmp(recipe.ports[i], ports[i]);
-    }
-    for (int i = 0; same && i < volumec; i++) {
-        same = recipe.volumes && volumes && !strcmp(recipe.volumes[i], volumes[i]);
-    }
-    hold_free_argv_alloc(normalized_argv, argc);
-    *matched = same;
-    hold_free_profile(&recipe);
-    return 1;
-}
-
-static int ensure_named_run_profile(const struct hold_invocation *inv,
-                                    const struct hold_store *store,
-                                    const char *name,
-                                    int argc,
-                                    char **argv,
-                                    int envc,
-                                    char **env,
-                                    int portc,
-                                    char **ports,
-                                    int volumec,
-                                    char **volumes,
-                                    bool mode_interactive,
-                                    bool mode_tty,
-                                    bool mode_detach,
-                                    bool allow_multi,
-                                    const char *restart_policy,
-                                    int restart_delay_seconds) {
-    if (!name) return 0;
-    if (!hold_valid_alias(name)) {
-        fprintf(stderr, "hold: error: invalid profile name '%s'\n", name);
-        return 5;
-    }
-    if (argc <= 0 || !argv || !argv[0]) {
-        fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
-        return 5;
-    }
-    if (inv->euid_root && store->kind == STORE_USER_LOCAL) {
-        fprintf(stderr, "hold: error: create user-local profiles as that user\n");
-        return 5;
-    }
-    if (hold_alias_exists_in_store(store, name)) {
-        bool matched = false;
-        int rc = run_recipe_matches_profile(store, name, argc, argv, envc, env, portc, ports, volumec, volumes, mode_interactive, mode_tty, mode_detach, allow_multi, restart_policy, restart_delay_seconds, &matched);
-        if (rc < 0) return 5;
-        if (!matched) {
-            fprintf(stderr,
-                    "hold: error: profile '%s' already exists with a different launch recipe; use `hold run %s` or edit it in configuration mode\n",
-                    name,
-                    name);
-            return 5;
-        }
-        return 0;
-    }
-    char binary_path[HOLD_PATH_MAX];
-    if (hold_resolve_binary_path(argv[0], binary_path, sizeof(binary_path)) != 0) {
-        if (errno == ENOENT) {
-            fprintf(stderr, "hold: cannot start '%s': command not found\n", argv[0]);
-        } else {
-            fprintf(stderr, "hold: cannot start '%s': %s\n", argv[0], strerror(errno));
-        }
-        return 1;
-    }
-    char **profile_argv = NULL;
-    if (hold_copy_argv(&profile_argv, argc, argv) != 0 ||
-        hold_normalize_existing_argv_paths_from_cwd(profile_argv, argc, 1, NULL) != 0) {
-        hold_free_argv_alloc(profile_argv, argc);
-        return 3;
-    }
-    if (hold_alias_upsert_recipe_full(store, name, binary_path, argc, profile_argv, envc, env, portc, ports, volumec, volumes, mode_interactive, mode_tty, mode_detach, allow_multi, restart_policy, restart_delay_seconds) != 0) {
-        hold_free_argv_alloc(profile_argv, argc);
-        hold_die_errno("hold: failed to write profile");
-    }
-    hold_free_argv_alloc(profile_argv, argc);
-    hold_sig_note(inv, "hold: created profile '%s'\n", name);
-    return 0;
-}
-
 static bool token_names_existing_profile(const struct hold_store *user_store,
                                          const struct hold_store *system_store,
                                          const char *token) {
@@ -457,6 +284,33 @@ static bool token_names_existing_profile(const struct hold_store *user_store,
     if (!hold_valid_alias(token)) return false;
     if (user_store && hold_alias_exists_in_store(user_store, token)) return true;
     if (system_store && hold_alias_exists_in_store(system_store, token)) return true;
+    return false;
+}
+
+static bool token_names_detached_profile(const struct hold_store *user_store,
+                                         const struct hold_store *system_store,
+                                         const char *token) {
+    const char *atom = NULL;
+    enum id_token_scope scope = hold_parse_id_token(token, &atom);
+    if (scope == ID_TOKEN_INVALID || !atom || !hold_valid_alias(atom)) {
+        return false;
+    }
+    struct hold_profile recipe;
+    if ((scope == ID_TOKEN_PLAIN || scope == ID_TOKEN_USER) && user_store && user_store->base[0] &&
+        hold_alias_lookup_recipe(user_store, atom, &recipe) == 0) {
+        bool detached = recipe.mode_detach;
+        hold_free_profile(&recipe);
+        return detached;
+    }
+    if ((scope == ID_TOKEN_PLAIN || scope == ID_TOKEN_SYSTEM) && system_store && system_store->base[0]) {
+        char hash[PROFILE_HASH_STR_LEN];
+        if (hold_resolve_public_profile_token(system_store, atom, hash) == 1 &&
+            hold_load_profile_by_hash(system_store, hash, &recipe) == 0) {
+            bool detached = recipe.mode_detach;
+            hold_free_profile(&recipe);
+            return detached;
+        }
+    }
     return false;
 }
 
@@ -516,6 +370,7 @@ int main(int argc, char **argv) {
     char docker_restart_policy[64] = {0};
     int docker_restart_delay_seconds = 0;
     bool docker_restart_delay_seen = false;
+    const char *docker_log_destination = NULL;
     int multi_count = 1;
 
     while (argi < argc) {
@@ -571,36 +426,28 @@ int main(int argc, char **argv) {
             continue;
         }
         if (!strcmp(argv[argi], "-p") || !strcmp(argv[argi], "--publish")) {
-            if (argi + 1 >= argc) {
-                fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
-                return 5;
-            }
-            int meta_rc = append_metadata_value("--publish/-p", argv[argi + 1], &docker_ports, &docker_portc);
-            if (meta_rc != 0) { hold_free_argv_alloc(docker_env, docker_envc); hold_free_argv_alloc(docker_ports, docker_portc); hold_free_argv_alloc(docker_volumes, docker_volumec); return meta_rc; }
-            argi += 2;
-            continue;
+            hold_free_argv_alloc(docker_env, docker_envc);
+            hold_free_argv_alloc(docker_ports, docker_portc);
+            hold_free_argv_alloc(docker_volumes, docker_volumec);
+            return reject_publish_option();
         }
-        if (!strncmp(argv[argi], "--publish=", 10)) {
-            int meta_rc = append_metadata_value("--publish", argv[argi] + 10, &docker_ports, &docker_portc);
-            if (meta_rc != 0) { hold_free_argv_alloc(docker_env, docker_envc); hold_free_argv_alloc(docker_ports, docker_portc); hold_free_argv_alloc(docker_volumes, docker_volumec); return meta_rc; }
-            argi++;
-            continue;
+        if (!strcmp(argv[argi], "-P") || !strcmp(argv[argi], "--publish-all") || !strncmp(argv[argi], "--publish=", 10)) {
+            hold_free_argv_alloc(docker_env, docker_envc);
+            hold_free_argv_alloc(docker_ports, docker_portc);
+            hold_free_argv_alloc(docker_volumes, docker_volumec);
+            return reject_publish_option();
         }
         if (!strcmp(argv[argi], "-v") || !strcmp(argv[argi], "--volume")) {
-            if (argi + 1 >= argc) {
-                fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
-                return 5;
-            }
-            int meta_rc = append_metadata_value("--volume/-v", argv[argi + 1], &docker_volumes, &docker_volumec);
-            if (meta_rc != 0) { hold_free_argv_alloc(docker_env, docker_envc); hold_free_argv_alloc(docker_ports, docker_portc); hold_free_argv_alloc(docker_volumes, docker_volumec); return meta_rc; }
-            argi += 2;
-            continue;
+            hold_free_argv_alloc(docker_env, docker_envc);
+            hold_free_argv_alloc(docker_ports, docker_portc);
+            hold_free_argv_alloc(docker_volumes, docker_volumec);
+            return reject_volume_option();
         }
         if (!strncmp(argv[argi], "--volume=", 9)) {
-            int meta_rc = append_metadata_value("--volume", argv[argi] + 9, &docker_volumes, &docker_volumec);
-            if (meta_rc != 0) { hold_free_argv_alloc(docker_env, docker_envc); hold_free_argv_alloc(docker_ports, docker_portc); hold_free_argv_alloc(docker_volumes, docker_volumec); return meta_rc; }
-            argi++;
-            continue;
+            hold_free_argv_alloc(docker_env, docker_envc);
+            hold_free_argv_alloc(docker_ports, docker_portc);
+            hold_free_argv_alloc(docker_volumes, docker_volumec);
+            return reject_volume_option();
         }
         if (!strcmp(argv[argi], "--detach-keys")) {
             if (argi + 1 >= argc) {
@@ -654,6 +501,30 @@ int main(int argc, char **argv) {
         }
         if (!strcmp(argv[argi], "--rm")) {
             docker_rm = true;
+            argi++;
+            continue;
+        }
+        if (!strcmp(argv[argi], "--log-destination")) {
+            if (argi + 1 >= argc) {
+                fprintf(stderr, "hold: error: --log-destination requires a destination\n");
+                return 5;
+            }
+            docker_log_destination = argv[argi + 1];
+            if (strcmp(docker_log_destination, "syslog") && strcmp(docker_log_destination, "json-file") && strcmp(docker_log_destination, "local")) {
+                fprintf(stderr, "hold: error: unsupported log destination '%s'\n", docker_log_destination);
+                return 5;
+            }
+            if (!strcmp(docker_log_destination, "json-file") || !strcmp(docker_log_destination, "local")) docker_log_destination = NULL;
+            argi += 2;
+            continue;
+        }
+        if (!strncmp(argv[argi], "--log-destination=", 18)) {
+            docker_log_destination = argv[argi] + 18;
+            if (strcmp(docker_log_destination, "syslog") && strcmp(docker_log_destination, "json-file") && strcmp(docker_log_destination, "local")) {
+                fprintf(stderr, "hold: error: unsupported log destination '%s'\n", docker_log_destination);
+                return 5;
+            }
+            if (!strcmp(docker_log_destination, "json-file") || !strcmp(docker_log_destination, "local")) docker_log_destination = NULL;
             argi++;
             continue;
         }
@@ -828,62 +699,30 @@ int main(int argc, char **argv) {
                 continue;
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
-                (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--publish"))) {
-                if (i + 1 >= argc) {
-                    fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
-                    free(cmd_argv);
-                    return 5;
-                }
-                int meta_rc = append_metadata_value("--publish/-p", argv[++i], &docker_ports, &docker_portc);
-                if (meta_rc != 0) {
-                    free(cmd_argv);
-                    hold_free_argv_alloc(docker_env, docker_envc);
-                    hold_free_argv_alloc(docker_ports, docker_portc);
-                    hold_free_argv_alloc(docker_volumes, docker_volumec);
-                    return meta_rc;
-                }
-                continue;
-            }
-            if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
-                !strncmp(argv[i], "--publish=", 10)) {
-                int meta_rc = append_metadata_value("--publish", argv[i] + 10, &docker_ports, &docker_portc);
-                if (meta_rc != 0) {
-                    free(cmd_argv);
-                    hold_free_argv_alloc(docker_env, docker_envc);
-                    hold_free_argv_alloc(docker_ports, docker_portc);
-                    hold_free_argv_alloc(docker_volumes, docker_volumec);
-                    return meta_rc;
-                }
-                continue;
+                (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--publish") ||
+                 !strcmp(argv[i], "-P") || !strcmp(argv[i], "--publish-all") ||
+                 !strncmp(argv[i], "--publish=", 10))) {
+                free(cmd_argv);
+                hold_free_argv_alloc(docker_env, docker_envc);
+                hold_free_argv_alloc(docker_ports, docker_portc);
+                hold_free_argv_alloc(docker_volumes, docker_volumec);
+                return reject_publish_option();
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
                 (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--volume"))) {
-                if (i + 1 >= argc) {
-                    fprintf(stderr, "usage: hold run [run-options] <cmd|profile> [args...]\n");
-                    free(cmd_argv);
-                    return 5;
-                }
-                int meta_rc = append_metadata_value("--volume/-v", argv[++i], &docker_volumes, &docker_volumec);
-                if (meta_rc != 0) {
-                    free(cmd_argv);
-                    hold_free_argv_alloc(docker_env, docker_envc);
-                    hold_free_argv_alloc(docker_ports, docker_portc);
-                    hold_free_argv_alloc(docker_volumes, docker_volumec);
-                    return meta_rc;
-                }
-                continue;
+                free(cmd_argv);
+                hold_free_argv_alloc(docker_env, docker_envc);
+                hold_free_argv_alloc(docker_ports, docker_portc);
+                hold_free_argv_alloc(docker_volumes, docker_volumec);
+                return reject_volume_option();
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
                 !strncmp(argv[i], "--volume=", 9)) {
-                int meta_rc = append_metadata_value("--volume", argv[i] + 9, &docker_volumes, &docker_volumec);
-                if (meta_rc != 0) {
-                    free(cmd_argv);
-                    hold_free_argv_alloc(docker_env, docker_envc);
-                    hold_free_argv_alloc(docker_ports, docker_portc);
-                    hold_free_argv_alloc(docker_volumes, docker_volumec);
-                    return meta_rc;
-                }
-                continue;
+                free(cmd_argv);
+                hold_free_argv_alloc(docker_env, docker_envc);
+                hold_free_argv_alloc(docker_ports, docker_portc);
+                hold_free_argv_alloc(docker_volumes, docker_volumec);
+                return reject_volume_option();
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
                 !strcmp(argv[i], "--detach-keys")) {
@@ -976,6 +815,33 @@ int main(int argc, char **argv) {
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) && !strcmp(argv[i], "--rm")) {
                 docker_rm = true;
+                continue;
+            }
+            if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
+                !strcmp(argv[i], "--log-destination")) {
+                if (i + 1 >= argc) {
+                    fprintf(stderr, "hold: error: --log-destination requires a destination\n");
+                    free(cmd_argv);
+                    return 5;
+                }
+                docker_log_destination = argv[++i];
+                if (strcmp(docker_log_destination, "syslog") && strcmp(docker_log_destination, "json-file") && strcmp(docker_log_destination, "local")) {
+                    fprintf(stderr, "hold: error: unsupported log destination '%s'\n", docker_log_destination);
+                    free(cmd_argv);
+                    return 5;
+                }
+                if (!strcmp(docker_log_destination, "json-file") || !strcmp(docker_log_destination, "local")) docker_log_destination = NULL;
+                continue;
+            }
+            if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) &&
+                !strncmp(argv[i], "--log-destination=", 18)) {
+                docker_log_destination = argv[i] + 18;
+                if (strcmp(docker_log_destination, "syslog") && strcmp(docker_log_destination, "json-file") && strcmp(docker_log_destination, "local")) {
+                    fprintf(stderr, "hold: error: unsupported log destination '%s'\n", docker_log_destination);
+                    free(cmd_argv);
+                    return 5;
+                }
+                if (!strcmp(docker_log_destination, "json-file") || !strcmp(docker_log_destination, "local")) docker_log_destination = NULL;
                 continue;
             }
             if (!literal_owned_arg && (!strcmp(command, "start") || !strcmp(command, "run")) && !strcmp(argv[i], "--console")) {
@@ -1096,7 +962,11 @@ int main(int argc, char **argv) {
         hold_die_errno("hold: failed to resolve invocation context");
     }
     inv.quiet = quiet;
-    if (((owned && !strcmp(command, "run")) || !owned) && !docker_detach && (!console_mode || docker_tty)) {
+    bool run_tail_implicit = false;
+    if ((owned && !strcmp(command, "run")) && !docker_detach && (!console_mode || docker_tty)) {
+        if (!tail) {
+            run_tail_implicit = true;
+        }
         tail = true;
     }
     if (docker_detach) {
@@ -1111,10 +981,11 @@ int main(int argc, char **argv) {
         return 3;
     }
 
+    bool docker_ps_command = owned && !strcmp(command, "ps");
     if (owned && !strcmp(command, "logs")) {
         command = "__view";
     }
-    if (owned && !strcmp(command, "ps")) command = "list";
+    if (docker_ps_command) command = "list";
     if (owned && !strcmp(command, "status")) command = "list";
     if (owned && !strcmp(command, "clean")) command = "prune";
 
@@ -1230,29 +1101,47 @@ int main(int argc, char **argv) {
             hold_die_errno("hold: failed to init start storage");
         }
         int rc;
-        if (docker_name) {
-            rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv,
-                                          docker_envc, docker_env,
-                                          docker_portc, docker_ports,
-                                          docker_volumec, docker_volumes,
-                                          docker_interactive, docker_tty, docker_detach,
-                                          false,
-                                          docker_restart_policy[0] ? docker_restart_policy : NULL,
-                                          docker_restart_delay_seconds);
-            if (rc == 0) {
-                rc = hold_perform_start_with_metadata_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin,
-                                                              cmd_argc, cmd_argv, NULL, docker_name,
-                                                              docker_envc, docker_env,
-                                                              docker_portc, docker_ports,
-                                                              docker_volumec, docker_volumes,
-                                                              docker_restart_policy[0] ? docker_restart_policy : NULL,
-                                                              docker_restart_delay_seconds);
-            }
-        } else if (saw_owned_delimiter || docker_envc > 0 || docker_portc > 0 || docker_volumec > 0) {
-            if (!saw_owned_delimiter && cmd_argc == 1 && token_names_existing_profile(&user_store, &system_store, cmd_argv[0])) {
+        bool run_tail = tail;
+        if (run_tail_implicit && !console_mode && !interactive_stdin && cmd_argc == 1 &&
+            token_names_detached_profile(&user_store, &system_store, cmd_argv[0])) {
+            run_tail = false;
+        }
+        if (docker_name && !saw_owned_delimiter && docker_envc == 0 && docker_portc == 0 && docker_volumec == 0) {
+            rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, argv[0], &start_store,
+                                                    run_tail, console_mode, docker_rm, interactive_stdin,
+                                                    multi, multi_count,
+                                                    docker_restart_policy[0] ? docker_restart_policy : NULL,
+                                                    docker_restart_delay_seconds,
+                                                    docker_name,
+                                                    docker_log_destination,
+                                                    false,
+                                                    cmd_argc, cmd_argv);
+        } else if (docker_name) {
+            rc = hold_perform_start_with_metadata_name_options(&inv, &start_store, run_tail, console_mode, docker_rm, interactive_stdin,
+                                                               cmd_argc, cmd_argv, NULL, NULL, docker_name,
+                                                               docker_envc, docker_env,
+                                                               docker_portc, docker_ports,
+                                                               docker_volumec, docker_volumes,
+                                                               docker_restart_policy[0] ? docker_restart_policy : NULL,
+                                                               docker_restart_delay_seconds,
+                                                               docker_log_destination);
+        } else if (saw_owned_delimiter || docker_envc > 0 || docker_portc > 0 || docker_volumec > 0 || docker_log_destination) {
+            if (!saw_owned_delimiter && cmd_argc == 1 && token_names_existing_profile(&user_store, &system_store, cmd_argv[0]) &&
+                (docker_envc > 0 || docker_portc > 0 || docker_volumec > 0)) {
                 fprintf(stderr,
-                        "hold: error: -e/-p/-v runtime overrides for existing profiles are not supported yet; edit the profile or use --name when creating it\n");
+                        "hold: error: -e runtime overrides for existing profiles are not supported yet; edit the profile or use -- to force an executable\n");
                 rc = 5;
+            } else if (!saw_owned_delimiter && cmd_argc == 1 && token_names_existing_profile(&user_store, &system_store, cmd_argv[0]) &&
+                       docker_log_destination) {
+                rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, argv[0], &start_store,
+                                                        run_tail, console_mode, docker_rm, interactive_stdin,
+                                                        multi, multi_count,
+                                                        docker_restart_policy[0] ? docker_restart_policy : NULL,
+                                                        docker_restart_delay_seconds,
+                                                        NULL,
+                                                        docker_log_destination,
+                                                        false,
+                                                        cmd_argc, cmd_argv);
             } else if (!saw_owned_delimiter && multi) {
                 fprintf(stderr, "hold: error: --multi applies only to profile starts\n");
                 rc = 5;
@@ -1268,16 +1157,25 @@ int main(int argc, char **argv) {
                     start_argc = 3;
                     start_argv = shell_argv;
                 }
-                rc = hold_perform_start_with_metadata_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin,
-                                                              start_argc, start_argv, NULL, NULL,
+                rc = hold_perform_start_with_metadata_name_options(&inv, &start_store, run_tail, console_mode, docker_rm, interactive_stdin,
+                                                              start_argc, start_argv, NULL, NULL, NULL,
                                                               docker_envc, docker_env,
                                                               docker_portc, docker_ports,
                                                               docker_volumec, docker_volumes,
                                                               docker_restart_policy[0] ? docker_restart_policy : NULL,
-                                                              docker_restart_delay_seconds);
+                                                              docker_restart_delay_seconds,
+                                                              docker_log_destination);
             }
         } else {
-            rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, tail, console_mode, docker_rm, interactive_stdin, multi, multi_count, docker_restart_policy[0] ? docker_restart_policy : NULL, docker_restart_delay_seconds, cmd_argc, cmd_argv);
+            rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, argv[0], &start_store,
+                                                    run_tail, console_mode, docker_rm, interactive_stdin,
+                                                    multi, multi_count,
+                                                    docker_restart_policy[0] ? docker_restart_policy : NULL,
+                                                    docker_restart_delay_seconds,
+                                                    NULL,
+                                                    docker_log_destination,
+                                                    false,
+                                                    cmd_argc, cmd_argv);
         }
         free(cmd_argv);
         hold_free_argv_alloc(docker_env, docker_envc);
@@ -1309,6 +1207,35 @@ int main(int argc, char **argv) {
     }
 
     if (!owned) {
+        if (!force_raw && cmd_argc == 1 && token_names_existing_profile(&user_store, &system_store, cmd_argv[0])) {
+            struct hold_store start_store;
+            if (hold_ensure_start_store_for_command(&inv, requested_system, true, "start", cmd_argc, cmd_argv, &start_store) != 0) {
+                if ((inv.euid_root || requested_system) &&
+                    hold_start_target_is_within_invoking_home(&inv, true, "start", cmd_argc, cmd_argv)) {
+                    hold_die_errno("hold: failed to init invoking-user storage");
+                }
+                hold_die_errno("hold: failed to init start storage");
+            }
+            int rc = hold_cmd_start_action_options(&inv,
+                                                   &user_store,
+                                                   &system_store,
+                                                   argv[0],
+                                                   &start_store,
+                                                   tail,
+                                                   console_mode,
+                                                   docker_rm,
+                                                   interactive_stdin,
+                                                   multi,
+                                                   multi_count,
+                                                   docker_restart_policy[0] ? docker_restart_policy : NULL,
+                                                   docker_restart_delay_seconds,
+                                                   cmd_argc,
+                                                   cmd_argv);
+            hold_free_argv_alloc(docker_env, docker_envc);
+            hold_free_argv_alloc(docker_ports, docker_portc);
+            hold_free_argv_alloc(docker_volumes, docker_volumec);
+            return rc;
+        }
         struct hold_store start_store;
         if (hold_ensure_start_store_for_command(&inv, requested_system, false, NULL, cmd_argc, cmd_argv, &start_store) != 0) {
             if ((inv.euid_root || requested_system) &&
@@ -1318,27 +1245,14 @@ int main(int argc, char **argv) {
             hold_die_errno("hold: failed to init start storage");
         }
         if (docker_name) {
-            int rc = ensure_named_run_profile(&inv, &start_store, docker_name, cmd_argc, cmd_argv,
-                                              docker_envc, docker_env,
-                                              docker_portc, docker_ports,
-                                              docker_volumec, docker_volumes,
-                                              docker_interactive, docker_tty, docker_detach,
-                                              false,
-                                              docker_restart_policy[0] ? docker_restart_policy : NULL,
-                                              docker_restart_delay_seconds);
-            if (rc != 0) {
-                hold_free_argv_alloc(docker_env, docker_envc);
-                hold_free_argv_alloc(docker_ports, docker_portc);
-                hold_free_argv_alloc(docker_volumes, docker_volumec);
-                return rc;
-            }
-            rc = hold_perform_start_with_metadata_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin,
-                                                          cmd_argc, cmd_argv, NULL, docker_name,
-                                                          docker_envc, docker_env,
-                                                          docker_portc, docker_ports,
-                                                          docker_volumec, docker_volumes,
-                                                          docker_restart_policy[0] ? docker_restart_policy : NULL,
-                                                          docker_restart_delay_seconds);
+            int rc = hold_perform_start_with_metadata_name_options(&inv, &start_store, tail, console_mode, docker_rm, interactive_stdin,
+                                                                    cmd_argc, cmd_argv, NULL, NULL, docker_name,
+                                                                    docker_envc, docker_env,
+                                                                    docker_portc, docker_ports,
+                                                                    docker_volumec, docker_volumes,
+                                                                    docker_restart_policy[0] ? docker_restart_policy : NULL,
+                                                                    docker_restart_delay_seconds,
+                                                                    docker_log_destination);
             hold_free_argv_alloc(docker_env, docker_envc);
             hold_free_argv_alloc(docker_ports, docker_portc);
             hold_free_argv_alloc(docker_volumes, docker_volumec);
@@ -1501,6 +1415,208 @@ int main(int argc, char **argv) {
                 free(cmd_argv);
                 return rc;
             }
+            if (strcmp(op, "run") && strcmp(op, "start")) {
+                bool p_detach = false, p_interactive = false, p_tty = false, p_privileged = false;
+                bool p_allow_multi = false;
+                char **p_env = NULL;
+                int p_envc = 0;
+                char **p_volumes = NULL;
+                int p_volumec = 0;
+                char p_restart_policy[64] = {0};
+                int p_restart_delay_seconds = 0;
+                bool p_restart_delay_seen = false;
+                const char *p_log_destination = NULL;
+                int pi = 1;
+                int parse_rc = 0;
+                for (; pi < cmd_argc; pi++) {
+                    const char *a = cmd_argv[pi];
+                    if (!strcmp(a, "--")) {
+                        pi++;
+                        break;
+                    }
+                    if (parse_docker_run_flag(a, &p_detach, &p_interactive, &p_tty, &p_privileged)) {
+                        if (p_privileged) {
+                            fprintf(stderr, "hold: error: --privileged does not apply to user-local profile definitions\n");
+                            parse_rc = 5;
+                            break;
+                        }
+                        continue;
+                    }
+                    if (!strcmp(a, "--name")) {
+                        fprintf(stderr, "hold: error: profile names are positional: hold profile <name> ...\n");
+                        parse_rc = 5;
+                        break;
+                    }
+                    if (!strcmp(a, "-e") || !strcmp(a, "--env")) {
+                        if (pi + 1 >= cmd_argc) {
+                            fprintf(stderr, "hold: error: --env/-e requires KEY=VALUE\n");
+                            parse_rc = 5;
+                            break;
+                        }
+                        parse_rc = append_env_assignment(cmd_argv[++pi], &p_env, &p_envc);
+                        if (parse_rc != 0) break;
+                        continue;
+                    }
+                    if (!strncmp(a, "--env=", 6)) {
+                        parse_rc = append_env_assignment(a + 6, &p_env, &p_envc);
+                        if (parse_rc != 0) break;
+                        continue;
+                    }
+                    if (!strcmp(a, "--env-file")) {
+                        if (pi + 1 >= cmd_argc) {
+                            fprintf(stderr, "hold: error: --env-file requires a path\n");
+                            parse_rc = 5;
+                            break;
+                        }
+                        parse_rc = append_env_file(cmd_argv[++pi], &p_env, &p_envc);
+                        if (parse_rc != 0) break;
+                        continue;
+                    }
+                    if (!strncmp(a, "--env-file=", 11)) {
+                        parse_rc = append_env_file(a + 11, &p_env, &p_envc);
+                        if (parse_rc != 0) break;
+                        continue;
+                    }
+                    if (!strcmp(a, "-p") || !strcmp(a, "--publish") ||
+                        !strcmp(a, "-P") || !strcmp(a, "--publish-all") ||
+                        !strncmp(a, "--publish=", 10)) {
+                        parse_rc = reject_publish_option();
+                        break;
+                    }
+                    if (!strcmp(a, "-v") || !strcmp(a, "--volume")) {
+                        parse_rc = reject_volume_option();
+                        break;
+                    }
+                    if (!strncmp(a, "--volume=", 9)) {
+                        parse_rc = reject_volume_option();
+                        break;
+                    }
+                    if (!strcmp(a, "--restart")) {
+                        if (pi + 1 >= cmd_argc) {
+                            fprintf(stderr, "hold: error: --restart requires a policy\n");
+                            parse_rc = 5;
+                            break;
+                        }
+                        parse_rc = parse_restart_policy_arg(cmd_argv[++pi], p_restart_policy);
+                        if (parse_rc != 0) break;
+                        continue;
+                    }
+                    if (!strncmp(a, "--restart=", 10)) {
+                        parse_rc = parse_restart_policy_arg(a + 10, p_restart_policy);
+                        if (parse_rc != 0) break;
+                        continue;
+                    }
+                    if (!strcmp(a, "--restart-delay")) {
+                        if (pi + 1 >= cmd_argc) {
+                            fprintf(stderr, "hold: error: --restart-delay requires seconds\n");
+                            parse_rc = 5;
+                            break;
+                        }
+                        parse_rc = parse_restart_delay_arg(cmd_argv[++pi], &p_restart_delay_seconds);
+                        p_restart_delay_seen = parse_rc == 0;
+                        if (parse_rc != 0) break;
+                        continue;
+                    }
+                    if (!strncmp(a, "--restart-delay=", 16)) {
+                        parse_rc = parse_restart_delay_arg(a + 16, &p_restart_delay_seconds);
+                        p_restart_delay_seen = parse_rc == 0;
+                        if (parse_rc != 0) break;
+                        continue;
+                    }
+                    if (!strcmp(a, "--log-destination")) {
+                        if (pi + 1 >= cmd_argc) {
+                            fprintf(stderr, "hold: error: --log-destination requires a destination\n");
+                            parse_rc = 5;
+                            break;
+                        }
+                        p_log_destination = cmd_argv[++pi];
+                        if (strcmp(p_log_destination, "syslog") && strcmp(p_log_destination, "json-file") && strcmp(p_log_destination, "local")) {
+                            fprintf(stderr, "hold: error: unsupported log destination '%s'\n", p_log_destination);
+                            parse_rc = 5;
+                            break;
+                        }
+                        if (!strcmp(p_log_destination, "json-file") || !strcmp(p_log_destination, "local")) p_log_destination = NULL;
+                        continue;
+                    }
+                    if (!strncmp(a, "--log-destination=", 18)) {
+                        p_log_destination = a + 18;
+                        if (strcmp(p_log_destination, "syslog") && strcmp(p_log_destination, "json-file") && strcmp(p_log_destination, "local")) {
+                            fprintf(stderr, "hold: error: unsupported log destination '%s'\n", p_log_destination);
+                            parse_rc = 5;
+                            break;
+                        }
+                        if (!strcmp(p_log_destination, "json-file") || !strcmp(p_log_destination, "local")) p_log_destination = NULL;
+                        continue;
+                    }
+                    if (!strcmp(a, "--allow-multi")) {
+                        p_allow_multi = true;
+                        continue;
+                    }
+                    if (!strcmp(a, "--multi")) {
+                        p_allow_multi = true;
+                        if (pi + 1 < cmd_argc) {
+                            int ignored = 0;
+                            if (hold_parse_positive_count(cmd_argv[pi + 1], &ignored)) {
+                                pi++;
+                            }
+                        }
+                        continue;
+                    }
+                    if (!strncmp(a, "--multi=", 8)) {
+                        int ignored = 0;
+                        if (!hold_parse_positive_count(a + 8, &ignored)) {
+                            fprintf(stderr, "hold: error: invalid --multi count '%s'\n", a + 8);
+                            parse_rc = 5;
+                            break;
+                        }
+                        p_allow_multi = true;
+                        continue;
+                    }
+                    if (!strcmp(a, "--rm") || !strcmp(a, "--detach-keys") || !strncmp(a, "--detach-keys=", 14)) {
+                        fprintf(stderr, "hold: error: %s is a run-time option and is not stored by profile definitions yet\n", a);
+                        parse_rc = 5;
+                        break;
+                    }
+                    if (a[0] == '-') {
+                        fprintf(stderr, "hold: error: unsupported profile option '%s'\n", a);
+                        parse_rc = 5;
+                        break;
+                    }
+                    break;
+                }
+                if (parse_rc == 0 && p_restart_delay_seen && !restart_policy_arg_enabled(p_restart_policy)) {
+                    fprintf(stderr, "hold: error: --restart-delay requires --restart with an active policy\n");
+                    parse_rc = 5;
+                }
+                int rc = parse_rc;
+                if (rc == 0) {
+                    if (pi >= cmd_argc) {
+                        fprintf(stderr, "usage: hold profile <name> [profile-options] [--] <cmd> [args...]\n");
+                        rc = 5;
+                    } else {
+                        rc = hold_cmd_profile_define_command(&inv,
+                                                             &user_store,
+                                                             name,
+                                                             cmd_argc - pi,
+                                                             cmd_argv + pi,
+                                                             p_envc,
+                                                             p_env,
+                                                             p_volumec,
+                                                             p_volumes,
+                                                             p_interactive,
+                                                             p_tty,
+                                                             p_detach,
+                                                             p_allow_multi,
+                                                             p_restart_policy[0] ? p_restart_policy : NULL,
+                                                             p_restart_delay_seconds,
+                                                             p_log_destination);
+                    }
+                }
+                hold_free_argv_alloc(p_env, p_envc);
+                hold_free_argv_alloc(p_volumes, p_volumec);
+                free(cmd_argv);
+                return rc;
+            }
             if ((!strcmp(op, "run") || !strcmp(op, "start")) && cmd_argc >= 2) {
                 char **rewritten = calloc((size_t)cmd_argc, sizeof(*rewritten));
                 if (!rewritten) {
@@ -1614,6 +1730,17 @@ int main(int argc, char **argv) {
 
     if (!strcmp(command, "list")) {
         int rc;
+        if (docker_ps_command) {
+            if (cmd_argc != 0) {
+                fprintf(stderr, "usage: hold ps [-a|--all]\n");
+                free(cmd_argv);
+                return 5;
+            }
+            rc = inv.euid_root ? hold_cmd_ps_system(&system_store, all)
+                               : hold_cmd_ps_normal(&user_store, &system_store, all);
+            free(cmd_argv);
+            return rc;
+        }
         if (cmd_argc > 1) {
             fprintf(stderr, "usage: hold list [profile]\n");
             free(cmd_argv);

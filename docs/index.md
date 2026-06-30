@@ -171,6 +171,7 @@ Every subsystem page links back here, names the quickstart step it explains, res
 
 - [Current implementation specification](SPEC.md)
 - [Hold 0.4 UX and CLI implementation plan](HOLD_0_4_UX_SPEC.md)
+- [0.4 release cut and 0.4.x backlog](0.4-release-cut.md)
 - [0.4.0 branch alignment and follow-up matrix](0.4.0-alignment.md)
 - [0.4.0 direction and decisions, 2026-06-28](0.4.0-direction-2026-06-28.md)
 - [0.4.0 security review, 2026-06-28](security-review-2026-06-28.md)

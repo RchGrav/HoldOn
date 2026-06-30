@@ -68,6 +68,10 @@ int hold_sha256_file_hex(const char *path, char out[PROFILE_HASH_STR_LEN]);
 void hold_format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n);
 void hold_format_relative_age(int64_t start_unix_ns, char *out, size_t n);
 bool hold_valid_runid_selector(const char *sel);
+int hold_write_json_log_entry_fd(int fd, const char *stream, const char *data, size_t n);
+int hold_write_json_log_bytes_fd(int fd, const char *stream, const char *data, size_t n);
+int hold_decode_json_log_line(const char *line, char **out);
+const char *hold_run_id_display(const char *id, char out[ID_DISPLAY_HEX_LEN + 1]);
 bool hold_valid_target_atom(const char *id);
 
 #endif /* HOLD_CORE_H */

@@ -9,14 +9,16 @@
 
 struct hold_run_record {
     int version;
-    char id[16];
-    char run_id[16];
+    char id[ID_STR_LEN];
+    char run_id[ID_STR_LEN];
     char alias[ALIAS_MAX_LEN + 1];
+    char name[ALIAS_MAX_LEN + 1];
     char console_sock[HOLD_PATH_MAX];
     pid_t pid;
     pid_t pgid;
     pid_t sid;
     int64_t start_unix_ns;
+    int64_t created_unix_ns;
     uid_t uid;
     gid_t gid;
     char log_path[HOLD_PATH_MAX];
@@ -26,6 +28,7 @@ struct hold_run_record {
     uint64_t exe_ino;
     char cmdline[HOLD_PATH_MAX];
     char started_at[64];
+    char created_at[64];
     char ended_at[64];
     char state[16];
     int exit_code;
@@ -45,7 +48,11 @@ struct hold_run_record {
     bool has_launch_error;
     bool has_invocation;
     bool has_alias;
+    bool has_name;
+    bool has_created_at;
     bool has_console;
+    int envc;
+    char **env;
     int portc;
     char **ports;
     int volumec;
@@ -59,6 +66,8 @@ struct hold_run_record {
     int restart_delay_seconds;
     bool has_restart_policy;
     bool has_restart_delay;
+    char log_destination[32];
+    bool has_log_destination;
 };
 
 enum run_state { STATE_RUNNING, STATE_EXITED, STATE_STALE, STATE_FAILED, STATE_UNKNOWN };
@@ -101,13 +110,16 @@ struct hold_resolved_target {
 };
 
 struct hold_public_index {
-    char id[16];
+    char id[ID_STR_LEN];
     char alias[ALIAS_MAX_LEN + 1];
+    char name[ALIAS_MAX_LEN + 1];
     bool root_managed;
     bool requires_elevation;
     bool has_alias;
+    bool has_name;
     char state_hint[16];
     char started_at[64];
+    char created_at[64];
 };
 
 struct hold_profile {
@@ -129,6 +141,8 @@ struct hold_profile {
     int restart_delay_seconds;
     bool has_restart_policy;
     bool has_restart_delay;
+    char log_destination[32];
+    bool has_log_destination;
 };
 
 struct hold_alias {
@@ -151,6 +165,8 @@ struct hold_alias {
     int restart_delay_seconds;
     bool has_restart_policy;
     bool has_restart_delay;
+    char log_destination[32];
+    bool has_log_destination;
     bool has_hash;
     bool has_recipe;
 };
