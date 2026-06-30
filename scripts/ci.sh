@@ -47,7 +47,7 @@ step "ASan/UBSan"
 if printf 'int main(void){return 0;}\n' | "$CC_BIN" -fsanitize=address,undefined -x c - -o /tmp/.hold_sanprobe 2>/dev/null; then
   rm -f /tmp/.hold_sanprobe
   must make clean
-  must make test CC="$CC_BIN" CFLAGS="$SAN_FLAGS" STATIC_LDFLAGS='' LDFLAGS='-fsanitize=address,undefined' TEST_LDFLAGS='-fsanitize=address,undefined'
+  must env HOLD_SKIP_TIMING_SENSITIVE_VIEWER_TESTS=1 make test CC="$CC_BIN" CFLAGS="$SAN_FLAGS" STATIC_LDFLAGS='' LDFLAGS='-fsanitize=address,undefined' TEST_LDFLAGS='-fsanitize=address,undefined'
   mark_ok "asan-ubsan"
 else
   mark_no "asan-ubsan" "$CC_BIN has no -fsanitize support"

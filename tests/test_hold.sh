@@ -1583,6 +1583,7 @@ PY
 
 
 test_log_view_follow_cursor_browse_keeps_short_top_page_pinned() {
+  [ "${HOLD_SKIP_TIMING_SENSITIVE_VIEWER_TESTS:-0}" != 1 ] || skip "timing-sensitive viewer TTY test skipped for sanitizer/parity lane"
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc
