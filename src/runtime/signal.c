@@ -239,46 +239,57 @@ int hold_do_signal_action(const struct hold_store *store, const char *id, int si
     enum signal_validation_state signal_state = SIGNAL_TARGET_RUNNING;
     int validation_rc = validate_signal_target(id, &r, false, &signal_state);
     if (validation_rc != 0) {
+        hold_free_run_record(&r);
         return validation_rc;
     }
     if (signal_state == SIGNAL_TARGET_EXITED) {
         if (already_done) {
             *already_done = true;
         }
+        hold_free_run_record(&r);
         return 0;
     }
 
     if (kill(-r.pgid, sig) != 0) {
         if (errno == EPERM) {
+            hold_free_run_record(&r);
             return 3;
         }
         if (errno == ESRCH) {
             if (already_done) {
                 *already_done = true;
             }
+            hold_free_run_record(&r);
             return 0;
         }
+        hold_free_run_record(&r);
         return 4;
     }
 
     if (graceful) {
         if (hold_wait_target_group_gone(&r, STOP_TIMEOUT_MS)) {
             hold_report_session_escapees(&r);
+            hold_free_run_record(&r);
             return 0;
         }
         if (kill(-r.pgid, SIGKILL) != 0 && errno != ESRCH) {
             if (errno == EPERM) {
+                hold_free_run_record(&r);
                 return 3;
             }
+            hold_free_run_record(&r);
             return 4;
         }
         if (hold_wait_target_group_gone(&r, 1000)) {
             hold_report_session_escapees(&r);
+            hold_free_run_record(&r);
             return 0;
         }
+        hold_free_run_record(&r);
         return 4;
     }
     hold_report_session_escapees(&r);
+    hold_free_run_record(&r);
     return 0;
 }
 
@@ -291,9 +302,11 @@ static int do_print_signal_command(const struct hold_store *store, const char *i
     enum signal_validation_state signal_state = SIGNAL_TARGET_RUNNING;
     int validation_rc = validate_signal_target(id, &r, true, &signal_state);
     if (validation_rc != 0) {
+        hold_free_run_record(&r);
         return validation_rc;
     }
     printf("kill -%s -- -%ld\n", sig == SIGKILL ? "KILL" : "TERM", (long)r.pgid);
+    hold_free_run_record(&r);
     return 0;
 }
 
@@ -401,6 +414,7 @@ int hold_cmd_tail_action(const struct hold_invocation *inv,
     }
     if (!r.has_log) {
         fprintf(stderr, "hold: record has no log path: %s\n", target.id);
+        hold_free_run_record(&r);
         free(targets);
         return 5;
     }
@@ -408,6 +422,7 @@ int hold_cmd_tail_action(const struct hold_invocation *inv,
     bool have_boot = hold_current_boot_id(boot, sizeof(boot));
     enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
     rc = hold_tail_log_until_exit(&r, st == STATE_RUNNING, st == STATE_RUNNING);
+    hold_free_run_record(&r);
     free(targets);
     return rc;
 }
@@ -443,11 +458,13 @@ int hold_cmd_dump_action(const struct hold_invocation *inv,
     }
     if (!r.has_log) {
         fprintf(stderr, "hold: record has no log path: %s\n", target.id);
+        hold_free_run_record(&r);
         free(targets);
         return 5;
     }
     int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
+        hold_free_run_record(&r);
         free(targets);
         hold_die_errno("hold: failed to open log for dump");
     }
@@ -462,12 +479,14 @@ int hold_cmd_dump_action(const struct hold_invocation *inv,
             if (errno == EINTR) continue;
             decoded_log_stream_free(&decoder);
             close(fd);
+            hold_free_run_record(&r);
             free(targets);
             hold_die_errno("hold: failed while dumping log");
         }
         if (decoded_log_stream_write(&decoder, buf, (size_t)n) != 0) {
             decoded_log_stream_free(&decoder);
             close(fd);
+            hold_free_run_record(&r);
             free(targets);
             hold_die_errno("hold: failed writing dumped output");
         }
@@ -475,11 +494,13 @@ int hold_cmd_dump_action(const struct hold_invocation *inv,
     if (decoded_log_stream_flush(&decoder) != 0) {
         decoded_log_stream_free(&decoder);
         close(fd);
+        hold_free_run_record(&r);
         free(targets);
         hold_die_errno("hold: failed writing dumped output");
     }
     decoded_log_stream_free(&decoder);
     close(fd);
+    hold_free_run_record(&r);
     free(targets);
     return 0;
 }
@@ -710,9 +731,12 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
         return 5;
     }
     if (write_file_as_json_array_object(path) != 0) {
+        hold_free_run_record(&r);
         free(targets);
+        targets = NULL;
         hold_die_errno("hold: failed to inspect run record");
     }
+    hold_free_run_record(&r);
     free(targets);
     return 0;
 }
@@ -819,11 +843,13 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
     }
     if (!r.has_log) {
         fprintf(stderr, "hold: record has no log path: %s\n", target.id);
+        hold_free_run_record(&r);
         free(targets);
         return 5;
     }
     int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
+        hold_free_run_record(&r);
         free(targets);
         hold_die_errno("hold: failed to open log");
     }
@@ -849,6 +875,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         rc = hold_log_viewer_tty_fd(fd, target_token, &opts, follow ? &follow_opts : NULL, &viewer_context, debug_stats);
         if (rc != 0) {
             close(fd);
+            hold_free_run_record(&r);
             free(targets);
             hold_die_errno("hold: failed while viewing log");
         }
@@ -861,6 +888,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         struct hold_log_filter_result result;
         if (hold_log_filter_fd(fd, &opts, &result) != 0) {
             close(fd);
+            hold_free_run_record(&r);
             free(targets);
             hold_die_errno("hold: failed while filtering log");
         }
@@ -868,6 +896,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         hold_log_filter_result_free(&result);
     }
     close(fd);
+    hold_free_run_record(&r);
     free(targets);
     return rc;
 }

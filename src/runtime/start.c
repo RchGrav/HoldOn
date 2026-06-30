@@ -300,8 +300,12 @@ static int restart_existing_run(const struct hold_invocation *inv,
     int argc = 0;
     int rc = 0;
     if (hold_read_owned_file_no_symlink(record_path, &j) != 0 ||
-        hold_json_get_argv_alloc(j, &argv, &argc) != 0 ||
-        argc <= 0 || !argv || !argv[0]) {
+        hold_json_get_argv_alloc(j, &argv, &argc) != 0) {
+        fprintf(stderr, "hold: error: failed to load restart argv for %s\n", id);
+        rc = 5;
+        goto out;
+    }
+    if (argc <= 0 || !argv || !argv[0]) {
         fprintf(stderr, "hold: error: failed to load restart argv for %s\n", id);
         rc = 5;
         goto out;

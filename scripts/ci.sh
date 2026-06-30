@@ -18,6 +18,7 @@ cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 WERROR="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
 SAN_FLAGS="-std=c11 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined"
 CC_BIN="${CC:-cc}"
+export HOLD_TEST_TIMEOUT="${HOLD_TEST_TIMEOUT:-60}"
 
 fails=0
 ran=""

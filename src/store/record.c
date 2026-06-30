@@ -4,6 +4,23 @@
 #include "hold/core.h"
 #include "hold/platform.h"
 
+
+void hold_free_run_record(struct hold_run_record *r) {
+    if (!r) return;
+    hold_free_argv_alloc(r->env, r->envc);
+    hold_free_argv_alloc(r->ports, r->portc);
+    hold_free_argv_alloc(r->volumes, r->volumec);
+    hold_free_argv_alloc(r->observed_argv, r->observed_argc);
+    r->env = NULL;
+    r->ports = NULL;
+    r->volumes = NULL;
+    r->observed_argv = NULL;
+    r->envc = 0;
+    r->portc = 0;
+    r->volumec = 0;
+    r->observed_argc = 0;
+}
+
 int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, int argc, char **argv, char *out_json_path, size_t out_n) {
     char tmp[HOLD_PATH_MAX], fin[HOLD_PATH_MAX], reserve[HOLD_PATH_MAX];
     int rc = -1;

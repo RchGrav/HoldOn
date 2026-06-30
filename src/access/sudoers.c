@@ -910,6 +910,7 @@ int hold_cmd_grant_revoke_action(const struct hold_invocation *inv,
         }
         if (hold_read_owned_file_no_symlink(old_public_path, &old_public) != 0 && errno != ENOENT) {
             free(old_private);
+            old_private = NULL;
             hold_die_errno("hold: failed to snapshot public grant");
         }
     }
@@ -919,6 +920,8 @@ int hold_cmd_grant_revoke_action(const struct hold_invocation *inv,
             if (unlink_sudoers_template_file(sudoers_path) != 0) {
                 free(old_private);
                 free(old_public);
+                old_private = NULL;
+                old_public = NULL;
                 hold_die_errno("hold: failed to remove managed sudoers file");
             }
             (void)unlink_subject_grant_copy(system_store, subject, target_label);
@@ -951,6 +954,8 @@ int hold_cmd_grant_revoke_action(const struct hold_invocation *inv,
             if (unlink_sudoers_template_file(sudoers_path) != 0) {
                 free(old_private);
                 free(old_public);
+                old_private = NULL;
+                old_public = NULL;
                 hold_die_errno("hold: failed to remove managed sudoers file");
             }
             (void)unlink_subject_grant_copy(system_store, subject, target_label);
@@ -990,6 +995,8 @@ int hold_cmd_grant_revoke_action(const struct hold_invocation *inv,
         } else if (errno != ENOENT) {
             free(old_private);
             free(old_public);
+            old_private = NULL;
+            old_public = NULL;
             hold_die_errno("hold: failed to read managed sudoers file");
         }
         for (int i = 0; i < GRANT_ACTION_COUNT; i++) {
@@ -1007,6 +1014,8 @@ int hold_cmd_grant_revoke_action(const struct hold_invocation *inv,
         }
         free(old_private);
         free(old_public);
+        old_private = NULL;
+        old_public = NULL;
         hold_die_errno("hold: failed to update managed sudoers file");
     }
     hold_sig_note(inv, "hold: granted sudoers entries for %s %s\n", subject, grant_hash);

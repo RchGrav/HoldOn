@@ -280,13 +280,18 @@ int hold_collect_private_alias_matches(const struct hold_store *store,
             return -1;
         }
         struct hold_run_record r;
-        if (hold_load_record(path, &r) != 0 || !hold_valid_record(&r) ||
+        if (hold_load_record(path, &r) != 0) {
+            continue;
+        }
+        if (!hold_valid_record(&r) ||
             strcmp(r.id, file_id) != 0 || !r.has_alias || strcmp(r.alias, alias) != 0) {
+            hold_free_run_record(&r);
             continue;
         }
         list->alias_known = true;
         enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
         if (!hold_record_matches_alias_intent(command, &r, st)) {
+            hold_free_run_record(&r);
             continue;
         }
         char started_at[64];
@@ -296,9 +301,11 @@ int hold_collect_private_alias_matches(const struct hold_store *store,
             hold_format_rfc3339_utc_from_ns(r.start_unix_ns, started_at, sizeof(started_at));
         }
         if (append_alias_match(list, &r, st, started_at) != 0) {
+            hold_free_run_record(&r);
             closedir(d);
             return -1;
         }
+        hold_free_run_record(&r);
     }
     closedir(d);
     return 0;

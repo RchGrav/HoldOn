@@ -33,7 +33,7 @@ case "${1:-}" in
                    out_host="$(cd "$out_host" && pwd)"
                    inner_cmd='bash scripts/release_build.sh /out' ;;
   --)              shift; inner_cmd="$*" ;;
-  '')              inner_cmd='bash scripts/ci.sh' ;;
+  '')              inner_cmd='chown -R ci:ci /work/hold && exec sudo -u ci -H bash scripts/ci.sh' ;;
   *)               inner_cmd="$*" ;;
 esac
 

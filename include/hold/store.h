@@ -88,6 +88,7 @@ int hold_alias_upsert_recipe_full(const struct hold_store *store,
 int hold_alias_delete(const struct hold_store *store, const char *alias, bool *deleted);
 int hold_alias_rename(const struct hold_store *store, const char *old_alias, const char *new_alias);
 int hold_load_record(const char *path, struct hold_run_record *r);
+void hold_free_run_record(struct hold_run_record *r);
 int hold_load_public_index(const char *path, struct hold_public_index *pi);
 int hold_load_public_index_by_id(const struct hold_store *store, const char *id, struct hold_public_index *pi);
 int hold_load_record_by_id(const char *dir, const char *id, struct hold_run_record *r, char *path, size_t n);
