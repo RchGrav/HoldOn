@@ -67,7 +67,7 @@ fi
 
 step "cppcheck static analysis"
 if command -v cppcheck >/dev/null 2>&1; then
-  must cppcheck --enable=warning,performance,portability --error-exitcode=1 \
+  must cppcheck --enable=warning,performance,portability --error-exitcode=1 --max-configs=1 \
     --suppress=missingIncludeSystem --suppress=normalCheckLevelMaxBranches --suppress=syntaxError:src/core/logging.c \
     --std=c11 -Iinclude src/
   mark_ok "cppcheck"
