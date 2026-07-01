@@ -7,6 +7,32 @@
  * (HOLD_PATH_MAX, PROFILE_HASH_STR_LEN, ALIAS_MAX_LEN, ...) used below. */
 #include "hold/config.h"
 
+struct hold_recipe {
+    char binary_path[HOLD_PATH_MAX];
+    int argc;
+    char **argv;
+    int envc;
+    char **env;
+    int portc;
+    char **ports;
+    int volumec;
+    char **volumes;
+    int cap_addc;
+    char **cap_add;
+    int cap_dropc;
+    char **cap_drop;
+    bool mode_interactive;
+    bool mode_tty;
+    bool mode_detach;
+    bool allow_multi;
+    char restart_policy[64];
+    int restart_delay_seconds;
+    bool has_restart_policy;
+    bool has_restart_delay;
+    char log_destination[32];
+    bool has_log_destination;
+};
+
 struct hold_run_record {
     int version;
     char id[ID_STR_LEN];
@@ -58,33 +84,12 @@ struct hold_run_record {
     bool tty;
     bool open_stdin;
     bool stdin_once;
-    int argc;
-    char **argv;
-    int envc;
-    char **env;
-    int portc;
-    char **ports;
-    int volumec;
-    char **volumes;
-    int cap_addc;
-    char **cap_add;
-    int cap_dropc;
-    char **cap_drop;
-    bool mode_interactive;
-    bool mode_tty;
-    bool mode_detach;
-    bool allow_multi;
+    struct hold_recipe recipe;
     bool has_observed;
     char observed_exe[HOLD_PATH_MAX];
     char observed_cwd[HOLD_PATH_MAX];
     int observed_argc;
     char **observed_argv;
-    char restart_policy[64];
-    int restart_delay_seconds;
-    bool has_restart_policy;
-    bool has_restart_delay;
-    char log_destination[32];
-    bool has_log_destination;
 };
 
 enum run_state { STATE_RUNNING, STATE_EXITED, STATE_STALE, STATE_FAILED, STATE_UNKNOWN };
@@ -153,57 +158,13 @@ struct hold_public_index {
 
 struct hold_profile {
     char hash[PROFILE_HASH_STR_LEN];
-    char binary_path[HOLD_PATH_MAX];
-    int argc;
-    char **argv;
-    int envc;
-    char **env;
-    int portc;
-    char **ports;
-    int volumec;
-    char **volumes;
-    int cap_addc;
-    char **cap_add;
-    int cap_dropc;
-    char **cap_drop;
-    bool mode_interactive;
-    bool mode_tty;
-    bool mode_detach;
-    bool allow_multi;
-    char restart_policy[64];
-    int restart_delay_seconds;
-    bool has_restart_policy;
-    bool has_restart_delay;
-    char log_destination[32];
-    bool has_log_destination;
+    struct hold_recipe recipe;
 };
 
 struct hold_alias {
     char name[ALIAS_MAX_LEN + 1];
     char hash[PROFILE_HASH_STR_LEN];
-    char binary_path[HOLD_PATH_MAX];
-    int argc;
-    char **argv;
-    int envc;
-    char **env;
-    int portc;
-    char **ports;
-    int volumec;
-    char **volumes;
-    int cap_addc;
-    char **cap_add;
-    int cap_dropc;
-    char **cap_drop;
-    bool mode_interactive;
-    bool mode_tty;
-    bool mode_detach;
-    bool allow_multi;
-    char restart_policy[64];
-    int restart_delay_seconds;
-    bool has_restart_policy;
-    bool has_restart_delay;
-    char log_destination[32];
-    bool has_log_destination;
+    struct hold_recipe recipe;
     bool has_hash;
     bool has_recipe;
 };

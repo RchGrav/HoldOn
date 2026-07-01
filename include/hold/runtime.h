@@ -11,98 +11,38 @@ bool hold_start_target_is_within_invoking_home(const struct hold_invocation *inv
                                                  const char *command,
                                                  int argc,
                                                  char **argv);
-int hold_perform_start(const struct hold_invocation *inv,
-                         const struct hold_store *store,
-                         bool tail,
-                         bool console_mode,
-                         int argc,
-                         char **argv,
-                         const char *exec_path,
-                         const char *run_alias);
-int hold_perform_start_with_env(const struct hold_invocation *inv,
-                                  const struct hold_store *store,
-                                  bool tail,
-                                  bool console_mode,
-                                  int argc,
-                                  char **argv,
-                                  const char *exec_path,
-                                  const char *run_alias,
-                                  int envc,
-                                  char **env);
-int hold_perform_start_with_env_options(const struct hold_invocation *inv,
-                                          const struct hold_store *store,
-                                          bool tail,
-                                          bool console_mode,
-                                          bool auto_remove,
-                                          bool interactive_stdin,
-                                          int argc,
-                                          char **argv,
-                                          const char *exec_path,
-                                          const char *run_alias,
-                                          int envc,
-                                          char **env);
-int hold_perform_start_with_metadata_options(const struct hold_invocation *inv,
-                                               const struct hold_store *store,
-                                               bool tail,
-                                               bool console_mode,
-                                               bool auto_remove,
-                                               bool interactive_stdin,
-                                               int argc,
-                                               char **argv,
-                                               const char *exec_path,
-                                               const char *run_alias,
-                                               int envc,
-                                               char **env,
-                                               int portc,
-                                               char **ports,
-                                               int volumec,
-                                               char **volumes,
-                                               const char *restart_policy,
-                                               int restart_delay_seconds);
-int hold_perform_start_with_metadata_name_options(const struct hold_invocation *inv,
-                                                   const struct hold_store *store,
-                                                   bool tail,
-                                                   bool console_mode,
-                                                   bool auto_remove,
-                                                   bool interactive_stdin,
-                                                   int argc,
-                                                   char **argv,
-                                                   const char *exec_path,
-                                                   const char *profile_alias,
-                                                   const char *run_name,
-                                                   int envc,
-                                                   char **env,
-                                                   int portc,
-                                                   char **ports,
-                                                   int volumec,
-                                                   char **volumes,
-                                                   const char *restart_policy,
-                                                   int restart_delay_seconds,
-                                                   const char *log_destination);
-int hold_perform_start_with_metadata_name_cap_options(const struct hold_invocation *inv,
-                                                       const struct hold_store *store,
-                                                       bool tail,
-                                                       bool console_mode,
-                                                       bool auto_remove,
-                                                       bool interactive_stdin,
-                                                       int argc,
-                                                       char **argv,
-                                                       const char *exec_path,
-                                                       const char *profile_alias,
-                                                       const char *run_name,
-                                                       int envc,
-                                                       char **env,
-                                                       int portc,
-                                                       char **ports,
-                                                       int volumec,
-                                                       char **volumes,
-                                                       int cap_addc,
-                                                       char **cap_add,
-                                                       int cap_dropc,
-                                                       char **cap_drop,
-                                                       const char *restart_policy,
-                                                       int restart_delay_seconds,
-                                                       const char *log_destination);
+struct hold_start_options {
+    bool tail;
+    bool console_mode;
+    bool auto_remove;
+    bool interactive_stdin;
+    int argc;
+    char **argv;
+    const char *exec_path;
+    const char *profile_alias;
+    const char *run_name;
+    int envc;
+    char **env;
+    int portc;
+    char **ports;
+    int volumec;
+    char **volumes;
+    int cap_addc;
+    char **cap_add;
+    int cap_dropc;
+    char **cap_drop;
+    const char *restart_policy;
+    int restart_delay_seconds;
+    const char *log_destination;
+    const char *existing_id;
+    const char *existing_log_path;
+    const char *existing_run_name;
+    int64_t existing_created_unix_ns;
+    const char *existing_created_at;
+};
+int hold_perform_start_options(const struct hold_invocation *inv,
+                                 const struct hold_store *store,
+                                 const struct hold_start_options *opts);
 int hold_cmd_list_normal(const struct hold_store *user_store,
                            const struct hold_store *system_store,
                            const char *alias_filter,

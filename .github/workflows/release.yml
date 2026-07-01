@@ -217,6 +217,8 @@ jobs:
   release:
     name: Publish GitHub Release
     if: github.ref_type == 'tag'
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
     needs:
       - version
       - test
@@ -230,6 +232,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Verify tag matches resolved version
+        run: test "${RELEASE_TAG}" = "${{ needs.version.outputs.tag }}"
+
       - uses: actions/download-artifact@v7
         with:
           pattern: '*'
@@ -237,10 +242,10 @@ jobs:
           merge-multiple: true
 
       - name: Prepare installer
-        run: bash ./.github/scripts/prepare_installer.sh "${{ needs.version.outputs.tag }}" dist
+        run: bash ./.github/scripts/prepare_installer.sh "${RELEASE_TAG}" dist
 
       - name: Prepare release notes
-        run: bash ./.github/scripts/release_notes_from_changelog.sh "${{ needs.version.outputs.tag }}" dist/RELEASE_NOTES.md
+        run: bash ./.github/scripts/release_notes_from_changelog.sh "${RELEASE_TAG}" dist/RELEASE_NOTES.md
 
       - name: Generate SHA256SUMS
         run: |
@@ -263,9 +268,9 @@ jobs:
           install_tmp="$(mktemp -d)"
           trap 'rm -rf "$install_tmp"' EXIT
           curl -LsSf --retry 5 --retry-delay 2 --retry-all-errors \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ needs.version.outputs.tag }}/install.sh" |
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/install.sh" |
             HOLD_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh
           installed_version="$("$install_tmp/bin/hold" --version)"
           hold_version="$("$install_tmp/bin/hold" --version)"
-          test "$installed_version" = "${{ needs.version.outputs.tag }}"
-          test "$hold_version" = "${{ needs.version.outputs.tag }}"
+          test "$installed_version" = "${RELEASE_TAG}"
+          test "$hold_version" = "${RELEASE_TAG}"

@@ -69,12 +69,12 @@ void hold_free_profile(struct hold_profile *p) {
     if (!p) {
         return;
     }
-    hold_free_argv_alloc(p->argv, p->argc);
-    hold_free_argv_alloc(p->env, p->envc);
-    hold_free_argv_alloc(p->ports, p->portc);
-    hold_free_argv_alloc(p->volumes, p->volumec);
-    hold_free_argv_alloc(p->cap_add, p->cap_addc);
-    hold_free_argv_alloc(p->cap_drop, p->cap_dropc);
+    hold_free_argv_alloc(p->recipe.argv, p->recipe.argc);
+    hold_free_argv_alloc(p->recipe.env, p->recipe.envc);
+    hold_free_argv_alloc(p->recipe.ports, p->recipe.portc);
+    hold_free_argv_alloc(p->recipe.volumes, p->recipe.volumec);
+    hold_free_argv_alloc(p->recipe.cap_add, p->recipe.cap_addc);
+    hold_free_argv_alloc(p->recipe.cap_drop, p->recipe.cap_dropc);
     memset(p, 0, sizeof(*p));
 }
 
@@ -88,60 +88,60 @@ void hold_write_profile_recipe_json_members(FILE *f,
     const char *bin = bin_key ? bin_key : "bin";
     const char *argv_name = argv_key ? argv_key : "args";
     fprintf(f, "%s\"%s\": \"", pre, bin);
-    hold_json_escape(f, profile && profile->binary_path[0] ? profile->binary_path : "");
+    hold_json_escape(f, profile && profile->recipe.binary_path[0] ? profile->recipe.binary_path : "");
     fprintf(f, "\", \"%s\": ", argv_name);
-    if (strcmp(argv_name, "args") == 0 && profile && profile->argc > 0) {
-        write_json_argv_tail(f, profile->argc, profile->argv);
+    if (strcmp(argv_name, "args") == 0 && profile && profile->recipe.argc > 0) {
+        write_json_argv_tail(f, profile->recipe.argc, profile->recipe.argv);
     } else {
-        hold_write_json_argv(f, profile ? profile->argc : 0, profile ? profile->argv : NULL);
+        hold_write_json_argv(f, profile ? profile->recipe.argc : 0, profile ? profile->recipe.argv : NULL);
     }
-    if (profile && profile->envc > 0 && profile->env) {
+    if (profile && profile->recipe.envc > 0 && profile->recipe.env) {
         fprintf(f, ", \"env\": ");
-        hold_write_json_argv(f, profile->envc, profile->env);
+        hold_write_json_argv(f, profile->recipe.envc, profile->recipe.env);
     }
-    if (profile && profile->portc > 0 && profile->ports) {
+    if (profile && profile->recipe.portc > 0 && profile->recipe.ports) {
         fprintf(f, ", \"ports\": ");
-        hold_write_json_argv(f, profile->portc, profile->ports);
+        hold_write_json_argv(f, profile->recipe.portc, profile->recipe.ports);
     }
-    if (profile && profile->volumec > 0 && profile->volumes) {
+    if (profile && profile->recipe.volumec > 0 && profile->recipe.volumes) {
         fprintf(f, ", \"volumes\": ");
-        hold_write_json_argv(f, profile->volumec, profile->volumes);
+        hold_write_json_argv(f, profile->recipe.volumec, profile->recipe.volumes);
     }
-    if (profile && profile->cap_addc > 0 && profile->cap_add) {
+    if (profile && profile->recipe.cap_addc > 0 && profile->recipe.cap_add) {
         fprintf(f, ", \"cap_add\": ");
-        hold_write_json_argv(f, profile->cap_addc, profile->cap_add);
+        hold_write_json_argv(f, profile->recipe.cap_addc, profile->recipe.cap_add);
     }
-    if (profile && profile->cap_dropc > 0 && profile->cap_drop) {
+    if (profile && profile->recipe.cap_dropc > 0 && profile->recipe.cap_drop) {
         fprintf(f, ", \"cap_drop\": ");
-        hold_write_json_argv(f, profile->cap_dropc, profile->cap_drop);
+        hold_write_json_argv(f, profile->recipe.cap_dropc, profile->recipe.cap_drop);
     }
-    if (profile && (profile->mode_interactive || profile->mode_tty || profile->mode_detach || profile->allow_multi)) {
+    if (profile && (profile->recipe.mode_interactive || profile->recipe.mode_tty || profile->recipe.mode_detach || profile->recipe.allow_multi)) {
         if (mode_object) {
             fprintf(f, ", \"mode\": {");
             bool wrote_mode = false;
-            if (profile->mode_interactive) { fprintf(f, "\"interactive\": true"); wrote_mode = true; }
-            if (profile->mode_tty) { fprintf(f, "%s\"tty\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
-            if (profile->mode_detach) { fprintf(f, "%s\"detach\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
-            if (profile->allow_multi) { fprintf(f, "%s\"multi\": true", wrote_mode ? ", " : ""); }
+            if (profile->recipe.mode_interactive) { fprintf(f, "\"interactive\": true"); wrote_mode = true; }
+            if (profile->recipe.mode_tty) { fprintf(f, "%s\"tty\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
+            if (profile->recipe.mode_detach) { fprintf(f, "%s\"detach\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
+            if (profile->recipe.allow_multi) { fprintf(f, "%s\"multi\": true", wrote_mode ? ", " : ""); }
             fprintf(f, "}");
         } else {
-            if (profile->mode_interactive) fprintf(f, ", \"interactive\": true");
-            if (profile->mode_tty) fprintf(f, ", \"tty\": true");
-            if (profile->mode_detach) fprintf(f, ", \"detach\": true");
-            if (profile->allow_multi) fprintf(f, ", \"allow_multi\": true");
+            if (profile->recipe.mode_interactive) fprintf(f, ", \"interactive\": true");
+            if (profile->recipe.mode_tty) fprintf(f, ", \"tty\": true");
+            if (profile->recipe.mode_detach) fprintf(f, ", \"detach\": true");
+            if (profile->recipe.allow_multi) fprintf(f, ", \"allow_multi\": true");
         }
     }
-    if (profile && profile->has_restart_policy && profile->restart_policy[0]) {
+    if (profile && profile->recipe.has_restart_policy && profile->recipe.restart_policy[0]) {
         fprintf(f, ", \"restart\": \"");
-        hold_json_escape(f, profile->restart_policy);
+        hold_json_escape(f, profile->recipe.restart_policy);
         fprintf(f, "\"");
     }
-    if (profile && profile->has_restart_delay) {
-        fprintf(f, ", \"restart_delay_seconds\": %d", profile->restart_delay_seconds);
+    if (profile && profile->recipe.has_restart_delay) {
+        fprintf(f, ", \"restart_delay_seconds\": %d", profile->recipe.restart_delay_seconds);
     }
-    if (profile && profile->has_log_destination && profile->log_destination[0]) {
+    if (profile && profile->recipe.has_log_destination && profile->recipe.log_destination[0]) {
         fprintf(f, ", \"log_destination\": \"");
-        hold_json_escape(f, profile->log_destination);
+        hold_json_escape(f, profile->recipe.log_destination);
         fprintf(f, "\"");
     }
 }
@@ -187,77 +187,77 @@ static bool profile_equal_recipe(const struct hold_profile *p,
                                  const char *restart_policy,
                                  int restart_delay_seconds,
                                  const char *log_destination) {
-    if (strcmp(p->binary_path, binary_path) != 0 || !string_array_equal(p->argc, p->argv, argc, argv)) {
+    if (strcmp(p->recipe.binary_path, binary_path) != 0 || !string_array_equal(p->recipe.argc, p->recipe.argv, argc, argv)) {
         return false;
     }
     const char *want_restart = restart_policy && *restart_policy && strcmp(restart_policy, "no") != 0 ? restart_policy : NULL;
-    const char *have_restart = p->has_restart_policy ? p->restart_policy : NULL;
+    const char *have_restart = p->recipe.has_restart_policy ? p->recipe.restart_policy : NULL;
     const char *want_log = log_destination && *log_destination ? log_destination : NULL;
-    const char *have_log = p->has_log_destination ? p->log_destination : NULL;
-    return p->mode_interactive == mode_interactive &&
-           p->mode_tty == mode_tty &&
-           p->mode_detach == mode_detach &&
-           p->allow_multi == allow_multi &&
+    const char *have_log = p->recipe.has_log_destination ? p->recipe.log_destination : NULL;
+    return p->recipe.mode_interactive == mode_interactive &&
+           p->recipe.mode_tty == mode_tty &&
+           p->recipe.mode_detach == mode_detach &&
+           p->recipe.allow_multi == allow_multi &&
            ((have_restart == NULL && want_restart == NULL) ||
             (have_restart && want_restart && strcmp(have_restart, want_restart) == 0)) &&
-           ((want_restart == NULL && !p->has_restart_delay) ||
-            (want_restart != NULL && p->restart_delay_seconds == restart_delay_seconds)) &&
+           ((want_restart == NULL && !p->recipe.has_restart_delay) ||
+            (want_restart != NULL && p->recipe.restart_delay_seconds == restart_delay_seconds)) &&
            ((have_log == NULL && want_log == NULL) ||
             (have_log && want_log && strcmp(have_log, want_log) == 0)) &&
-           string_array_equal(p->envc, p->env, envc, env) &&
-           string_array_equal(p->portc, p->ports, portc, ports) &&
-           string_array_equal(p->volumec, p->volumes, volumec, volumes) &&
-           string_array_equal(p->cap_addc, p->cap_add, cap_addc, cap_add) &&
-           string_array_equal(p->cap_dropc, p->cap_drop, cap_dropc, cap_drop);
+           string_array_equal(p->recipe.envc, p->recipe.env, envc, env) &&
+           string_array_equal(p->recipe.portc, p->recipe.ports, portc, ports) &&
+           string_array_equal(p->recipe.volumec, p->recipe.volumes, volumec, volumes) &&
+           string_array_equal(p->recipe.cap_addc, p->recipe.cap_add, cap_addc, cap_add) &&
+           string_array_equal(p->recipe.cap_dropc, p->recipe.cap_drop, cap_dropc, cap_drop);
 }
 
 static int prepend_binary_to_argv_if_needed(struct hold_profile *profile) {
-    if (!profile || profile->binary_path[0] != '/' || profile->argc < 0) {
+    if (!profile || profile->recipe.binary_path[0] != '/' || profile->recipe.argc < 0) {
         errno = EINVAL;
         return -1;
     }
-    if (profile->argc > 0 && profile->argv && profile->argv[0] && strcmp(profile->argv[0], profile->binary_path) == 0) {
+    if (profile->recipe.argc > 0 && profile->recipe.argv && profile->recipe.argv[0] && strcmp(profile->recipe.argv[0], profile->recipe.binary_path) == 0) {
         return 0;
     }
-    char **next = calloc((size_t)profile->argc + 2, sizeof(char *));
+    char **next = calloc((size_t)profile->recipe.argc + 2, sizeof(char *));
     if (!next) return -1;
-    next[0] = strdup(profile->binary_path);
+    next[0] = strdup(profile->recipe.binary_path);
     if (!next[0]) {
         free(next);
         return -1;
     }
-    for (int i = 0; i < profile->argc; i++) {
-        next[i + 1] = strdup(profile->argv && profile->argv[i] ? profile->argv[i] : "");
+    for (int i = 0; i < profile->recipe.argc; i++) {
+        next[i + 1] = strdup(profile->recipe.argv && profile->recipe.argv[i] ? profile->recipe.argv[i] : "");
         if (!next[i + 1]) {
             hold_free_argv_alloc(next, i + 1);
             return -1;
         }
     }
-    next[profile->argc + 1] = NULL;
-    hold_free_argv_alloc(profile->argv, profile->argc);
-    profile->argv = next;
-    profile->argc += 1;
+    next[profile->recipe.argc + 1] = NULL;
+    hold_free_argv_alloc(profile->recipe.argv, profile->recipe.argc);
+    profile->recipe.argv = next;
+    profile->recipe.argc += 1;
     return 0;
 }
 
 static void parse_profile_mode_fields(const char *j, struct hold_profile *profile) {
-    (void)hold_json_get_bool(j, "interactive", &profile->mode_interactive);
-    (void)hold_json_get_bool(j, "tty", &profile->mode_tty);
-    (void)hold_json_get_bool(j, "detach", &profile->mode_detach);
-    (void)hold_json_get_bool(j, "multi", &profile->allow_multi);
+    (void)hold_json_get_bool(j, "interactive", &profile->recipe.mode_interactive);
+    (void)hold_json_get_bool(j, "tty", &profile->recipe.mode_tty);
+    (void)hold_json_get_bool(j, "detach", &profile->recipe.mode_detach);
+    (void)hold_json_get_bool(j, "multi", &profile->recipe.allow_multi);
     const char *mode = NULL;
     if (hold_json_find_key(j, "mode", &mode) == 0 && mode && *mode == '{') {
-        (void)hold_json_get_bool(mode, "interactive", &profile->mode_interactive);
-        (void)hold_json_get_bool(mode, "tty", &profile->mode_tty);
-        (void)hold_json_get_bool(mode, "detach", &profile->mode_detach);
-        (void)hold_json_get_bool(mode, "multi", &profile->allow_multi);
-        (void)hold_json_get_bool(mode, "allow_multi", &profile->allow_multi);
+        (void)hold_json_get_bool(mode, "interactive", &profile->recipe.mode_interactive);
+        (void)hold_json_get_bool(mode, "tty", &profile->recipe.mode_tty);
+        (void)hold_json_get_bool(mode, "detach", &profile->recipe.mode_detach);
+        (void)hold_json_get_bool(mode, "multi", &profile->recipe.allow_multi);
+        (void)hold_json_get_bool(mode, "allow_multi", &profile->recipe.allow_multi);
     }
     const char *config = NULL;
     if (hold_json_find_key(j, "Config", &config) == 0 && config && *config == '{') {
         bool b = false;
-        if (hold_json_get_bool(config, "Tty", &b) == 0) profile->mode_tty = b;
-        if (hold_json_get_bool(config, "OpenStdin", &b) == 0) profile->mode_interactive = b;
+        if (hold_json_get_bool(config, "Tty", &b) == 0) profile->recipe.mode_tty = b;
+        if (hold_json_get_bool(config, "OpenStdin", &b) == 0) profile->recipe.mode_interactive = b;
     }
 }
 
@@ -267,20 +267,20 @@ int hold_parse_profile_recipe_json(const char *j, const char *expected_hash, str
         errno = EINVAL;
         return -1;
     }
-    if (hold_json_get_str(j, "bin", profile->binary_path, sizeof(profile->binary_path)) != 0 &&
-        hold_json_get_str(j, "binary_path", profile->binary_path, sizeof(profile->binary_path)) != 0 &&
-        hold_json_get_str(j, "Path", profile->binary_path, sizeof(profile->binary_path)) != 0) {
+    if (hold_json_get_str(j, "bin", profile->recipe.binary_path, sizeof(profile->recipe.binary_path)) != 0 &&
+        hold_json_get_str(j, "binary_path", profile->recipe.binary_path, sizeof(profile->recipe.binary_path)) != 0 &&
+        hold_json_get_str(j, "Path", profile->recipe.binary_path, sizeof(profile->recipe.binary_path)) != 0) {
         return -1;
     }
-    if (profile->binary_path[0] != '/') {
+    if (profile->recipe.binary_path[0] != '/') {
         errno = EINVAL;
         return -1;
     }
     bool command_args_are_tail = false;
-    if (hold_json_get_string_array_key_allow_empty_alloc(j, "args", &profile->argv, &profile->argc) == 0 ||
-        hold_json_get_string_array_key_allow_empty_alloc(j, "argv", &profile->argv, &profile->argc) == 0) {
+    if (hold_json_get_string_array_key_allow_empty_alloc(j, "args", &profile->recipe.argv, &profile->recipe.argc) == 0 ||
+        hold_json_get_string_array_key_allow_empty_alloc(j, "argv", &profile->recipe.argv, &profile->recipe.argc) == 0) {
         command_args_are_tail = true;
-    } else if (hold_json_get_path_args_argv_alloc(j, &profile->argv, &profile->argc) != 0) {
+    } else if (hold_json_get_path_args_argv_alloc(j, &profile->recipe.argv, &profile->recipe.argc) != 0) {
         hold_free_profile(profile);
         return -1;
     }
@@ -288,68 +288,68 @@ int hold_parse_profile_recipe_json(const char *j, const char *expected_hash, str
         hold_free_profile(profile);
         return -1;
     }
-    if (hold_json_get_env_alloc(j, &profile->env, &profile->envc) != 0) {
+    if (hold_json_get_env_alloc(j, &profile->recipe.env, &profile->recipe.envc) != 0) {
         const char *config = NULL;
         if (hold_json_find_key(j, "Config", &config) != 0 || !config || *config != '{' ||
-            hold_json_get_string_array_key_allow_empty_alloc(config, "Env", &profile->env, &profile->envc) != 0) {
-            profile->env = NULL;
-            profile->envc = 0;
+            hold_json_get_string_array_key_allow_empty_alloc(config, "Env", &profile->recipe.env, &profile->recipe.envc) != 0) {
+            profile->recipe.env = NULL;
+            profile->recipe.envc = 0;
         }
     }
-    if (hold_json_get_ports_alloc(j, &profile->ports, &profile->portc) != 0) {
-        profile->ports = NULL;
-        profile->portc = 0;
+    if (hold_json_get_ports_alloc(j, &profile->recipe.ports, &profile->recipe.portc) != 0) {
+        profile->recipe.ports = NULL;
+        profile->recipe.portc = 0;
     }
-    if (hold_json_get_volumes_alloc(j, &profile->volumes, &profile->volumec) != 0) {
-        profile->volumes = NULL;
-        profile->volumec = 0;
+    if (hold_json_get_volumes_alloc(j, &profile->recipe.volumes, &profile->recipe.volumec) != 0) {
+        profile->recipe.volumes = NULL;
+        profile->recipe.volumec = 0;
     }
-    if (hold_json_get_string_array_key_alloc(j, "cap_add", &profile->cap_add, &profile->cap_addc) != 0 &&
-        hold_json_get_string_array_key_alloc(j, "CapAdd", &profile->cap_add, &profile->cap_addc) != 0) {
+    if (hold_json_get_string_array_key_alloc(j, "cap_add", &profile->recipe.cap_add, &profile->recipe.cap_addc) != 0 &&
+        hold_json_get_string_array_key_alloc(j, "CapAdd", &profile->recipe.cap_add, &profile->recipe.cap_addc) != 0) {
         const char *config = NULL;
         if (hold_json_find_key(j, "Config", &config) != 0 || !config || *config != '{' ||
-            hold_json_get_string_array_key_alloc(config, "CapAdd", &profile->cap_add, &profile->cap_addc) != 0) {
-        profile->cap_add = NULL;
-        profile->cap_addc = 0;
+            hold_json_get_string_array_key_alloc(config, "CapAdd", &profile->recipe.cap_add, &profile->recipe.cap_addc) != 0) {
+        profile->recipe.cap_add = NULL;
+        profile->recipe.cap_addc = 0;
         }
     }
-    if (hold_json_get_string_array_key_alloc(j, "cap_drop", &profile->cap_drop, &profile->cap_dropc) != 0 &&
-        hold_json_get_string_array_key_alloc(j, "CapDrop", &profile->cap_drop, &profile->cap_dropc) != 0) {
+    if (hold_json_get_string_array_key_alloc(j, "cap_drop", &profile->recipe.cap_drop, &profile->recipe.cap_dropc) != 0 &&
+        hold_json_get_string_array_key_alloc(j, "CapDrop", &profile->recipe.cap_drop, &profile->recipe.cap_dropc) != 0) {
         const char *config = NULL;
         if (hold_json_find_key(j, "Config", &config) != 0 || !config || *config != '{' ||
-            hold_json_get_string_array_key_alloc(config, "CapDrop", &profile->cap_drop, &profile->cap_dropc) != 0) {
-            profile->cap_drop = NULL;
-            profile->cap_dropc = 0;
+            hold_json_get_string_array_key_alloc(config, "CapDrop", &profile->recipe.cap_drop, &profile->recipe.cap_dropc) != 0) {
+            profile->recipe.cap_drop = NULL;
+            profile->recipe.cap_dropc = 0;
         }
     }
-    if (hold_json_get_str(j, "log_destination", profile->log_destination, sizeof(profile->log_destination)) == 0 &&
-        profile->log_destination[0]) {
-        profile->has_log_destination = true;
+    if (hold_json_get_str(j, "log_destination", profile->recipe.log_destination, sizeof(profile->recipe.log_destination)) == 0 &&
+        profile->recipe.log_destination[0]) {
+        profile->recipe.has_log_destination = true;
     } else {
         const char *config = NULL;
         const char *log_config = NULL;
         if (hold_json_find_key(j, "Config", &config) == 0 && config && *config == '{' &&
             hold_json_find_key(config, "LogConfig", &log_config) == 0 && log_config && *log_config == '{' &&
-            hold_json_get_str(log_config, "Type", profile->log_destination, sizeof(profile->log_destination)) == 0 &&
-            profile->log_destination[0]) {
-            profile->has_log_destination = true;
+            hold_json_get_str(log_config, "Type", profile->recipe.log_destination, sizeof(profile->recipe.log_destination)) == 0 &&
+            profile->recipe.log_destination[0]) {
+            profile->recipe.has_log_destination = true;
         }
     }
-    if (profile->has_log_destination && strcmp(profile->log_destination, "local") == 0) {
-        profile->log_destination[0] = '\0';
-        profile->has_log_destination = false;
+    if (profile->recipe.has_log_destination && strcmp(profile->recipe.log_destination, "local") == 0) {
+        profile->recipe.log_destination[0] = '\0';
+        profile->recipe.has_log_destination = false;
     }
     parse_profile_mode_fields(j, profile);
-    if (hold_json_get_str(j, "restart", profile->restart_policy, sizeof(profile->restart_policy)) == 0 &&
-        profile->restart_policy[0] && strcmp(profile->restart_policy, "no") != 0) {
-        profile->has_restart_policy = true;
+    if (hold_json_get_str(j, "restart", profile->recipe.restart_policy, sizeof(profile->recipe.restart_policy)) == 0 &&
+        profile->recipe.restart_policy[0] && strcmp(profile->recipe.restart_policy, "no") != 0) {
+        profile->recipe.has_restart_policy = true;
     }
     int64_t restart_delay_tmp = 0;
     if (hold_json_get_i64(j, "restart_delay_seconds", &restart_delay_tmp) == 0 && restart_delay_tmp >= 0 && restart_delay_tmp <= INT_MAX) {
-        profile->restart_delay_seconds = (int)restart_delay_tmp;
-        profile->has_restart_delay = profile->has_restart_policy;
+        profile->recipe.restart_delay_seconds = (int)restart_delay_tmp;
+        profile->recipe.has_restart_delay = profile->recipe.has_restart_policy;
     }
-    hold_profile_hash_for_argv(profile->binary_path, profile->argc, profile->argv, profile->hash);
+    hold_profile_hash_for_argv(profile->recipe.binary_path, profile->recipe.argc, profile->recipe.argv, profile->hash);
     if (expected_hash && strcmp(profile->hash, expected_hash) != 0) {
         hold_free_profile(profile);
         errno = EINVAL;
@@ -581,35 +581,35 @@ int hold_write_profile_atomic_full(const struct hold_store *store,
     profiles = next;
     memset(&profiles[count], 0, sizeof(profiles[count]));
     snprintf(profiles[count].hash, sizeof(profiles[count].hash), "%s", hash);
-    if (hold_checked_snprintf(profiles[count].binary_path, sizeof(profiles[count].binary_path), "%s", binary_path) != 0 ||
-        hold_copy_argv(&profiles[count].argv, argc, argv) != 0 ||
-        (envc > 0 && hold_copy_argv(&profiles[count].env, envc, env) != 0) ||
-        (portc > 0 && hold_copy_argv(&profiles[count].ports, portc, ports) != 0) ||
-        (volumec > 0 && hold_copy_argv(&profiles[count].volumes, volumec, volumes) != 0) ||
-        (cap_addc > 0 && hold_copy_argv(&profiles[count].cap_add, cap_addc, cap_add) != 0) ||
-        (cap_dropc > 0 && hold_copy_argv(&profiles[count].cap_drop, cap_dropc, cap_drop) != 0)) {
+    if (hold_checked_snprintf(profiles[count].recipe.binary_path, sizeof(profiles[count].recipe.binary_path), "%s", binary_path) != 0 ||
+        hold_copy_argv(&profiles[count].recipe.argv, argc, argv) != 0 ||
+        (envc > 0 && hold_copy_argv(&profiles[count].recipe.env, envc, env) != 0) ||
+        (portc > 0 && hold_copy_argv(&profiles[count].recipe.ports, portc, ports) != 0) ||
+        (volumec > 0 && hold_copy_argv(&profiles[count].recipe.volumes, volumec, volumes) != 0) ||
+        (cap_addc > 0 && hold_copy_argv(&profiles[count].recipe.cap_add, cap_addc, cap_add) != 0) ||
+        (cap_dropc > 0 && hold_copy_argv(&profiles[count].recipe.cap_drop, cap_dropc, cap_drop) != 0)) {
         free_profiles(profiles, count + 1);
         return -1;
     }
-    profiles[count].argc = argc;
-    profiles[count].envc = envc;
-    profiles[count].portc = portc;
-    profiles[count].volumec = volumec;
-    profiles[count].cap_addc = cap_addc;
-    profiles[count].cap_dropc = cap_dropc;
-    profiles[count].mode_interactive = mode_interactive;
-    profiles[count].mode_tty = mode_tty;
-    profiles[count].mode_detach = mode_detach;
-    profiles[count].allow_multi = allow_multi;
+    profiles[count].recipe.argc = argc;
+    profiles[count].recipe.envc = envc;
+    profiles[count].recipe.portc = portc;
+    profiles[count].recipe.volumec = volumec;
+    profiles[count].recipe.cap_addc = cap_addc;
+    profiles[count].recipe.cap_dropc = cap_dropc;
+    profiles[count].recipe.mode_interactive = mode_interactive;
+    profiles[count].recipe.mode_tty = mode_tty;
+    profiles[count].recipe.mode_detach = mode_detach;
+    profiles[count].recipe.allow_multi = allow_multi;
     if (restart_policy && *restart_policy && strcmp(restart_policy, "no") != 0) {
-        snprintf(profiles[count].restart_policy, sizeof(profiles[count].restart_policy), "%s", restart_policy);
-        profiles[count].has_restart_policy = true;
+        snprintf(profiles[count].recipe.restart_policy, sizeof(profiles[count].recipe.restart_policy), "%s", restart_policy);
+        profiles[count].recipe.has_restart_policy = true;
     }
-    profiles[count].restart_delay_seconds = profiles[count].has_restart_policy ? restart_delay_seconds : 0;
-    profiles[count].has_restart_delay = profiles[count].has_restart_policy && restart_delay_seconds > 0;
+    profiles[count].recipe.restart_delay_seconds = profiles[count].recipe.has_restart_policy ? restart_delay_seconds : 0;
+    profiles[count].recipe.has_restart_delay = profiles[count].recipe.has_restart_policy && restart_delay_seconds > 0;
     if (log_destination && *log_destination) {
-        snprintf(profiles[count].log_destination, sizeof(profiles[count].log_destination), "%s", log_destination);
-        profiles[count].has_log_destination = true;
+        snprintf(profiles[count].recipe.log_destination, sizeof(profiles[count].recipe.log_destination), "%s", log_destination);
+        profiles[count].recipe.has_log_destination = true;
     }
     count++;
     int rc = write_profiles_atomic(store, profiles, count);

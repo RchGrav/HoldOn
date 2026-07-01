@@ -7,26 +7,26 @@
 
 void hold_free_run_record(struct hold_run_record *r) {
     if (!r) return;
-    hold_free_argv_alloc(r->argv, r->argc);
-    hold_free_argv_alloc(r->env, r->envc);
-    hold_free_argv_alloc(r->ports, r->portc);
-    hold_free_argv_alloc(r->volumes, r->volumec);
-    hold_free_argv_alloc(r->cap_add, r->cap_addc);
-    hold_free_argv_alloc(r->cap_drop, r->cap_dropc);
+    hold_free_argv_alloc(r->recipe.argv, r->recipe.argc);
+    hold_free_argv_alloc(r->recipe.env, r->recipe.envc);
+    hold_free_argv_alloc(r->recipe.ports, r->recipe.portc);
+    hold_free_argv_alloc(r->recipe.volumes, r->recipe.volumec);
+    hold_free_argv_alloc(r->recipe.cap_add, r->recipe.cap_addc);
+    hold_free_argv_alloc(r->recipe.cap_drop, r->recipe.cap_dropc);
     hold_free_argv_alloc(r->observed_argv, r->observed_argc);
-    r->argv = NULL;
-    r->env = NULL;
-    r->ports = NULL;
-    r->volumes = NULL;
-    r->cap_add = NULL;
-    r->cap_drop = NULL;
+    r->recipe.argv = NULL;
+    r->recipe.env = NULL;
+    r->recipe.ports = NULL;
+    r->recipe.volumes = NULL;
+    r->recipe.cap_add = NULL;
+    r->recipe.cap_drop = NULL;
     r->observed_argv = NULL;
-    r->argc = 0;
-    r->envc = 0;
-    r->portc = 0;
-    r->volumec = 0;
-    r->cap_addc = 0;
-    r->cap_dropc = 0;
+    r->recipe.argc = 0;
+    r->recipe.envc = 0;
+    r->recipe.portc = 0;
+    r->recipe.volumec = 0;
+    r->recipe.cap_addc = 0;
+    r->recipe.cap_dropc = 0;
     r->observed_argc = 0;
 }
 
@@ -122,8 +122,8 @@ static void write_docker_config_object(FILE *f, const struct hold_run_record *r,
     fprintf(f, "    \"OpenStdin\": %s,\n", r->open_stdin ? "true" : "false");
     fprintf(f, "    \"StdinOnce\": %s,\n", r->stdin_once ? "true" : "false");
     fprintf(f, "    \"Env\": ");
-    if (r->envc > 0 && r->env) {
-        hold_write_json_argv(f, r->envc, r->env);
+    if (r->recipe.envc > 0 && r->recipe.env) {
+        hold_write_json_argv(f, r->recipe.envc, r->recipe.env);
     } else {
         fputs("[]", f);
     }
@@ -139,16 +139,16 @@ static void write_docker_config_object(FILE *f, const struct hold_run_record *r,
     }
     fprintf(f, "\",\n");
     fprintf(f, "    \"CapAdd\": ");
-    if (r->cap_addc > 0 && r->cap_add) hold_write_json_argv(f, r->cap_addc, r->cap_add);
+    if (r->recipe.cap_addc > 0 && r->recipe.cap_add) hold_write_json_argv(f, r->recipe.cap_addc, r->recipe.cap_add);
     else fputs("null", f);
     fprintf(f, ",\n");
     fprintf(f, "    \"CapDrop\": ");
-    if (r->cap_dropc > 0 && r->cap_drop) hold_write_json_argv(f, r->cap_dropc, r->cap_drop);
+    if (r->recipe.cap_dropc > 0 && r->recipe.cap_drop) hold_write_json_argv(f, r->recipe.cap_dropc, r->recipe.cap_drop);
     else fputs("null", f);
     fprintf(f, ",\n");
     fprintf(f, "    \"Privileged\": %s,\n", r->uid == 0 ? "true" : "false");
     fprintf(f, "    \"LogConfig\": {\"Type\": \"");
-    hold_json_escape(f, r->has_log_destination && r->log_destination[0] ? r->log_destination : "local");
+    hold_json_escape(f, r->recipe.has_log_destination && r->recipe.log_destination[0] ? r->recipe.log_destination : "local");
     fprintf(f, "\", \"Config\": {}}\n");
     fprintf(f, "  }");
 }
@@ -285,51 +285,51 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
         hold_json_escape(f, r->console_sock);
         fprintf(f, "\",\n");
     }
-    if (r->envc > 0 && r->env) {
+    if (r->recipe.envc > 0 && r->recipe.env) {
         fprintf(f, "  \"env\": ");
-        hold_write_json_argv(f, r->envc, r->env);
+        hold_write_json_argv(f, r->recipe.envc, r->recipe.env);
         fprintf(f, ",\n");
     }
-    if (r->portc > 0 && r->ports) {
+    if (r->recipe.portc > 0 && r->recipe.ports) {
         fprintf(f, "  \"ports\": ");
-        hold_write_json_argv(f, r->portc, r->ports);
+        hold_write_json_argv(f, r->recipe.portc, r->recipe.ports);
         fprintf(f, ",\n");
     }
-    if (r->volumec > 0 && r->volumes) {
+    if (r->recipe.volumec > 0 && r->recipe.volumes) {
         fprintf(f, "  \"volumes\": ");
-        hold_write_json_argv(f, r->volumec, r->volumes);
+        hold_write_json_argv(f, r->recipe.volumec, r->recipe.volumes);
         fprintf(f, ",\n");
     }
-    if (r->cap_addc > 0 && r->cap_add) {
+    if (r->recipe.cap_addc > 0 && r->recipe.cap_add) {
         fprintf(f, "  \"cap_add\": ");
-        hold_write_json_argv(f, r->cap_addc, r->cap_add);
+        hold_write_json_argv(f, r->recipe.cap_addc, r->recipe.cap_add);
         fprintf(f, ",\n");
     }
-    if (r->cap_dropc > 0 && r->cap_drop) {
+    if (r->recipe.cap_dropc > 0 && r->recipe.cap_drop) {
         fprintf(f, "  \"cap_drop\": ");
-        hold_write_json_argv(f, r->cap_dropc, r->cap_drop);
+        hold_write_json_argv(f, r->recipe.cap_dropc, r->recipe.cap_drop);
         fprintf(f, ",\n");
     }
-    if (r->mode_interactive || r->mode_tty || r->mode_detach || r->allow_multi) {
+    if (r->recipe.mode_interactive || r->recipe.mode_tty || r->recipe.mode_detach || r->recipe.allow_multi) {
         fprintf(f, "  \"mode\": {");
         bool wrote_mode = false;
-        if (r->mode_interactive) { fprintf(f, "%s\"interactive\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
-        if (r->mode_tty) { fprintf(f, "%s\"tty\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
-        if (r->mode_detach) { fprintf(f, "%s\"detach\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
-        if (r->allow_multi) { fprintf(f, "%s\"allow_multi\": true", wrote_mode ? ", " : ""); }
+        if (r->recipe.mode_interactive) { fprintf(f, "%s\"interactive\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
+        if (r->recipe.mode_tty) { fprintf(f, "%s\"tty\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
+        if (r->recipe.mode_detach) { fprintf(f, "%s\"detach\": true", wrote_mode ? ", " : ""); wrote_mode = true; }
+        if (r->recipe.allow_multi) { fprintf(f, "%s\"allow_multi\": true", wrote_mode ? ", " : ""); }
         fprintf(f, "},\n");
     }
-    if (r->has_restart_policy && r->restart_policy[0]) {
+    if (r->recipe.has_restart_policy && r->recipe.restart_policy[0]) {
         fprintf(f, "  \"restart\": \"");
-        hold_json_escape(f, r->restart_policy);
+        hold_json_escape(f, r->recipe.restart_policy);
         fprintf(f, "\",\n");
     }
-    if (r->has_restart_delay) {
-        fprintf(f, "  \"restart_delay_seconds\": %d,\n", r->restart_delay_seconds);
+    if (r->recipe.has_restart_delay) {
+        fprintf(f, "  \"restart_delay_seconds\": %d,\n", r->recipe.restart_delay_seconds);
     }
-    if (r->has_log_destination && r->log_destination[0]) {
+    if (r->recipe.has_log_destination && r->recipe.log_destination[0]) {
         fprintf(f, "  \"log_destination\": \"");
-        hold_json_escape(f, r->log_destination);
+        hold_json_escape(f, r->recipe.log_destination);
         fprintf(f, "\",\n");
     }
     fprintf(f, "  \"uid\": %u,\n", r->uid);
@@ -661,13 +661,13 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     const char *mode_obj = NULL;
     if (hold_json_find_key(j, "mode", &mode_obj) == 0 && mode_obj && *mode_obj == '{') {
         bool b = false;
-        if (hold_json_get_bool(mode_obj, "interactive", &b) == 0) r->mode_interactive = b;
-        if (hold_json_get_bool(mode_obj, "tty", &b) == 0) r->mode_tty = b;
-        if (hold_json_get_bool(mode_obj, "detach", &b) == 0) r->mode_detach = b;
-        if (hold_json_get_bool(mode_obj, "allow_multi", &b) == 0) r->allow_multi = b;
+        if (hold_json_get_bool(mode_obj, "interactive", &b) == 0) r->recipe.mode_interactive = b;
+        if (hold_json_get_bool(mode_obj, "tty", &b) == 0) r->recipe.mode_tty = b;
+        if (hold_json_get_bool(mode_obj, "detach", &b) == 0) r->recipe.mode_detach = b;
+        if (hold_json_get_bool(mode_obj, "allow_multi", &b) == 0) r->recipe.allow_multi = b;
     } else {
-        r->mode_interactive = r->open_stdin && !r->tty;
-        r->mode_tty = r->tty;
+        r->recipe.mode_interactive = r->open_stdin && !r->tty;
+        r->recipe.mode_tty = r->tty;
     }
     const char *observed = NULL;
     if (hold_json_find_key(j, "observed", &observed) == 0 && observed && *observed == '{') {
@@ -696,63 +696,63 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
             r->has_observed = true;
         }
     }
-    if (hold_json_get_argv_alloc(j, &r->argv, &r->argc) != 0) {
-        if (hold_json_get_path_args_argv_alloc(j, &r->argv, &r->argc) != 0) {
-            r->argv = NULL;
-            r->argc = 0;
+    if (hold_json_get_argv_alloc(j, &r->recipe.argv, &r->recipe.argc) != 0) {
+        if (hold_json_get_path_args_argv_alloc(j, &r->recipe.argv, &r->recipe.argc) != 0) {
+            r->recipe.argv = NULL;
+            r->recipe.argc = 0;
         }
     }
-    if (hold_json_get_env_alloc(j, &r->env, &r->envc) != 0) {
+    if (hold_json_get_env_alloc(j, &r->recipe.env, &r->recipe.envc) != 0) {
         if (!config_obj || *config_obj != '{' ||
-            hold_json_get_string_array_key_allow_empty_alloc(config_obj, "Env", &r->env, &r->envc) != 0) {
-            r->env = NULL;
-            r->envc = 0;
+            hold_json_get_string_array_key_allow_empty_alloc(config_obj, "Env", &r->recipe.env, &r->recipe.envc) != 0) {
+            r->recipe.env = NULL;
+            r->recipe.envc = 0;
         }
     }
-    if (hold_json_get_ports_alloc(j, &r->ports, &r->portc) != 0) {
-        r->ports = NULL;
-        r->portc = 0;
+    if (hold_json_get_ports_alloc(j, &r->recipe.ports, &r->recipe.portc) != 0) {
+        r->recipe.ports = NULL;
+        r->recipe.portc = 0;
     }
-    if (hold_json_get_volumes_alloc(j, &r->volumes, &r->volumec) != 0) {
-        r->volumes = NULL;
-        r->volumec = 0;
+    if (hold_json_get_volumes_alloc(j, &r->recipe.volumes, &r->recipe.volumec) != 0) {
+        r->recipe.volumes = NULL;
+        r->recipe.volumec = 0;
     }
-    if (hold_json_get_string_array_key_alloc(j, "cap_add", &r->cap_add, &r->cap_addc) != 0 &&
-        hold_json_get_string_array_key_alloc(j, "CapAdd", &r->cap_add, &r->cap_addc) != 0 &&
+    if (hold_json_get_string_array_key_alloc(j, "cap_add", &r->recipe.cap_add, &r->recipe.cap_addc) != 0 &&
+        hold_json_get_string_array_key_alloc(j, "CapAdd", &r->recipe.cap_add, &r->recipe.cap_addc) != 0 &&
         (!config_obj || *config_obj != '{' ||
-         hold_json_get_string_array_key_alloc(config_obj, "CapAdd", &r->cap_add, &r->cap_addc) != 0)) {
-        r->cap_add = NULL;
-        r->cap_addc = 0;
+         hold_json_get_string_array_key_alloc(config_obj, "CapAdd", &r->recipe.cap_add, &r->recipe.cap_addc) != 0)) {
+        r->recipe.cap_add = NULL;
+        r->recipe.cap_addc = 0;
     }
-    if (hold_json_get_string_array_key_alloc(j, "cap_drop", &r->cap_drop, &r->cap_dropc) != 0 &&
-        hold_json_get_string_array_key_alloc(j, "CapDrop", &r->cap_drop, &r->cap_dropc) != 0 &&
+    if (hold_json_get_string_array_key_alloc(j, "cap_drop", &r->recipe.cap_drop, &r->recipe.cap_dropc) != 0 &&
+        hold_json_get_string_array_key_alloc(j, "CapDrop", &r->recipe.cap_drop, &r->recipe.cap_dropc) != 0 &&
         (!config_obj || *config_obj != '{' ||
-         hold_json_get_string_array_key_alloc(config_obj, "CapDrop", &r->cap_drop, &r->cap_dropc) != 0)) {
-        r->cap_drop = NULL;
-        r->cap_dropc = 0;
+         hold_json_get_string_array_key_alloc(config_obj, "CapDrop", &r->recipe.cap_drop, &r->recipe.cap_dropc) != 0)) {
+        r->recipe.cap_drop = NULL;
+        r->recipe.cap_dropc = 0;
     }
-    if (hold_json_get_str(j, "restart", r->restart_policy, sizeof(r->restart_policy)) == 0 &&
-        r->restart_policy[0]) {
-        r->has_restart_policy = true;
+    if (hold_json_get_str(j, "restart", r->recipe.restart_policy, sizeof(r->recipe.restart_policy)) == 0 &&
+        r->recipe.restart_policy[0]) {
+        r->recipe.has_restart_policy = true;
     }
     if (hold_json_get_i64(j, "restart_delay_seconds", &tmp) == 0 && tmp >= 0 && tmp <= INT_MAX) {
-        r->restart_delay_seconds = (int)tmp;
-        r->has_restart_delay = true;
+        r->recipe.restart_delay_seconds = (int)tmp;
+        r->recipe.has_restart_delay = true;
     }
-    if (hold_json_get_str(j, "log_destination", r->log_destination, sizeof(r->log_destination)) == 0 &&
-        r->log_destination[0]) {
-        r->has_log_destination = true;
+    if (hold_json_get_str(j, "log_destination", r->recipe.log_destination, sizeof(r->recipe.log_destination)) == 0 &&
+        r->recipe.log_destination[0]) {
+        r->recipe.has_log_destination = true;
     } else if (config_obj && *config_obj == '{') {
         const char *log_config = NULL;
         if (hold_json_find_key(config_obj, "LogConfig", &log_config) == 0 && log_config && *log_config == '{' &&
-            hold_json_get_str(log_config, "Type", r->log_destination, sizeof(r->log_destination)) == 0 &&
-            r->log_destination[0]) {
-            r->has_log_destination = true;
+            hold_json_get_str(log_config, "Type", r->recipe.log_destination, sizeof(r->recipe.log_destination)) == 0 &&
+            r->recipe.log_destination[0]) {
+            r->recipe.has_log_destination = true;
         }
     }
-    if (r->has_log_destination && strcmp(r->log_destination, "local") == 0) {
-        r->log_destination[0] = '\0';
-        r->has_log_destination = false;
+    if (r->recipe.has_log_destination && strcmp(r->recipe.log_destination, "local") == 0) {
+        r->recipe.log_destination[0] = '\0';
+        r->recipe.has_log_destination = false;
     }
     if (hold_json_get_u64(j, "proc_starttime_ticks", &r->proc_starttime_ticks) != 0 ||
         hold_json_get_u64(j, "exe_dev", &r->exe_dev) != 0 ||
@@ -763,7 +763,7 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     }
     if (hold_json_get_argv_display(j, r->cmdline, sizeof(r->cmdline)) != 0 &&
         hold_json_get_str(j, "cmdline_display", r->cmdline, sizeof(r->cmdline)) != 0) {
-        if (r->argc <= 0 || !r->argv || hold_format_argv_human(r->cmdline, sizeof(r->cmdline), r->argc, r->argv) != 0) {
+        if (r->recipe.argc <= 0 || !r->recipe.argv || hold_format_argv_human(r->cmdline, sizeof(r->cmdline), r->recipe.argc, r->recipe.argv) != 0) {
             snprintf(r->cmdline, sizeof(r->cmdline), "?");
         }
     }
@@ -986,8 +986,8 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
         r.has_ended_at = true;
     }
 
-    int argc = r.argc;
-    char **argv = r.argv;
+    int argc = r.recipe.argc;
+    char **argv = r.recipe.argv;
     if (argc <= 0 || !argv) {
         argc = r.observed_argc;
         argv = r.observed_argv;

@@ -85,49 +85,7 @@ int hold_open_unique_temp(const char *dir, const char *prefix, mode_t mode, char
 }
 
 int hold_mkdir_p0700(const char *dir) {
-    char path[HOLD_PATH_MAX];
-    if (hold_checked_snprintf(path, sizeof(path), "%s", dir) != 0) {
-        return -1;
-    }
-
-    size_t len = strlen(path);
-    if (len == 0) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    for (size_t i = 1; i <= len; i++) {
-        if (path[i] != '/' && path[i] != '\0') {
-            continue;
-        }
-        char saved = path[i];
-        path[i] = '\0';
-        if (path[0] != '\0') {
-            struct stat st;
-            bool created = false;
-            if (lstat(path, &st) != 0) {
-                if (mkdir(path, 0700) != 0 && errno != EEXIST) {
-                    return -1;
-                }
-                if (lstat(path, &st) != 0) {
-                    return -1;
-                }
-                created = true;
-            } else if (!S_ISDIR(st.st_mode)) {
-                errno = ENOTDIR;
-                return -1;
-            }
-            if (!S_ISDIR(st.st_mode)) {
-                errno = ENOTDIR;
-                return -1;
-            }
-            if (created && hold_chmod_dir_no_symlink(path, 0700) != 0) {
-                return -1;
-            }
-        }
-        path[i] = saved;
-    }
-    return 0;
+    return hold_mkdir_p_mode(dir, 0700);
 }
 
 int hold_read_file_trim(const char *path, char *buf, size_t n) {
@@ -220,6 +178,11 @@ int hold_read_owned_file_no_symlink(const char *path, char **out) {
         int saved = errno;
         close(fd);
         errno = saved;
+        return -1;
+    }
+    if (geteuid() != 0 && st.st_uid != 0 && st.st_uid != geteuid()) {
+        close(fd);
+        errno = EACCES;
         return -1;
     }
     if (!S_ISREG(st.st_mode) || st.st_size < 0 || st.st_size > MAX_RECORD_BYTES) {

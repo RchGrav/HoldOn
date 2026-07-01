@@ -78,18 +78,18 @@ static int stage_load_recipe(struct captive_profile_stage *stage, const struct h
         return 0;
     }
     int rc = 0;
-    if (hold_checked_snprintf(stage->binary, sizeof(stage->binary), "%s", recipe.binary_path) != 0) {
+    if (hold_checked_snprintf(stage->binary, sizeof(stage->binary), "%s", recipe.recipe.binary_path) != 0) {
         rc = 5;
         goto done;
     }
-    if (recipe.argc > 1) {
-        if ((size_t)(recipe.argc - 1) > CAPTIVE_MAX_ARGS) {
+    if (recipe.recipe.argc > 1) {
+        if ((size_t)(recipe.recipe.argc - 1) > CAPTIVE_MAX_ARGS) {
             fprintf(stderr, "%% Existing profile has too many argv tokens for captive editing\n");
             rc = 5;
             goto done;
         }
-        for (int i = 1; i < recipe.argc; i++) {
-            stage->args[stage->arg_count] = strdup(recipe.argv[i]);
+        for (int i = 1; i < recipe.recipe.argc; i++) {
+            stage->args[stage->arg_count] = strdup(recipe.recipe.argv[i]);
             if (!stage->args[stage->arg_count]) {
                 rc = 3;
                 goto done;
@@ -97,14 +97,14 @@ static int stage_load_recipe(struct captive_profile_stage *stage, const struct h
             stage->arg_count++;
         }
     }
-    if (recipe.envc > 0) {
-        if ((size_t)recipe.envc > CAPTIVE_MAX_ENV) {
+    if (recipe.recipe.envc > 0) {
+        if ((size_t)recipe.recipe.envc > CAPTIVE_MAX_ENV) {
             fprintf(stderr, "%% Existing profile has too many env entries for captive editing\n");
             rc = 5;
             goto done;
         }
-        for (int i = 0; i < recipe.envc; i++) {
-            stage->env[stage->env_count] = strdup(recipe.env[i]);
+        for (int i = 0; i < recipe.recipe.envc; i++) {
+            stage->env[stage->env_count] = strdup(recipe.recipe.env[i]);
             if (!stage->env[stage->env_count]) {
                 rc = 3;
                 goto done;
@@ -112,14 +112,14 @@ static int stage_load_recipe(struct captive_profile_stage *stage, const struct h
             stage->env_count++;
         }
     }
-    if (recipe.portc > 0) {
-        if ((size_t)recipe.portc > CAPTIVE_MAX_ARGS) {
+    if (recipe.recipe.portc > 0) {
+        if ((size_t)recipe.recipe.portc > CAPTIVE_MAX_ARGS) {
             fprintf(stderr, "%% Existing profile has too many publish entries for captive editing\n");
             rc = 5;
             goto done;
         }
-        for (int i = 0; i < recipe.portc; i++) {
-            stage->ports[stage->port_count] = strdup(recipe.ports[i]);
+        for (int i = 0; i < recipe.recipe.portc; i++) {
+            stage->ports[stage->port_count] = strdup(recipe.recipe.ports[i]);
             if (!stage->ports[stage->port_count]) {
                 rc = 3;
                 goto done;
@@ -127,14 +127,14 @@ static int stage_load_recipe(struct captive_profile_stage *stage, const struct h
             stage->port_count++;
         }
     }
-    if (recipe.volumec > 0) {
-        if ((size_t)recipe.volumec > CAPTIVE_MAX_ARGS) {
+    if (recipe.recipe.volumec > 0) {
+        if ((size_t)recipe.recipe.volumec > CAPTIVE_MAX_ARGS) {
             fprintf(stderr, "%% Existing profile has too many volume entries for captive editing\n");
             rc = 5;
             goto done;
         }
-        for (int i = 0; i < recipe.volumec; i++) {
-            stage->volumes[stage->volume_count] = strdup(recipe.volumes[i]);
+        for (int i = 0; i < recipe.recipe.volumec; i++) {
+            stage->volumes[stage->volume_count] = strdup(recipe.recipe.volumes[i]);
             if (!stage->volumes[stage->volume_count]) {
                 rc = 3;
                 goto done;
@@ -142,14 +142,14 @@ static int stage_load_recipe(struct captive_profile_stage *stage, const struct h
             stage->volume_count++;
         }
     }
-    if (recipe.cap_addc > 0) {
-        if ((size_t)recipe.cap_addc > CAPTIVE_MAX_ARGS) {
+    if (recipe.recipe.cap_addc > 0) {
+        if ((size_t)recipe.recipe.cap_addc > CAPTIVE_MAX_ARGS) {
             fprintf(stderr, "%% Existing profile has too many cap-add entries for captive editing\n");
             rc = 5;
             goto done;
         }
-        for (int i = 0; i < recipe.cap_addc; i++) {
-            stage->cap_add[stage->cap_add_count] = strdup(recipe.cap_add[i]);
+        for (int i = 0; i < recipe.recipe.cap_addc; i++) {
+            stage->cap_add[stage->cap_add_count] = strdup(recipe.recipe.cap_add[i]);
             if (!stage->cap_add[stage->cap_add_count]) {
                 rc = 3;
                 goto done;
@@ -157,14 +157,14 @@ static int stage_load_recipe(struct captive_profile_stage *stage, const struct h
             stage->cap_add_count++;
         }
     }
-    if (recipe.cap_dropc > 0) {
-        if ((size_t)recipe.cap_dropc > CAPTIVE_MAX_ARGS) {
+    if (recipe.recipe.cap_dropc > 0) {
+        if ((size_t)recipe.recipe.cap_dropc > CAPTIVE_MAX_ARGS) {
             fprintf(stderr, "%% Existing profile has too many cap-drop entries for captive editing\n");
             rc = 5;
             goto done;
         }
-        for (int i = 0; i < recipe.cap_dropc; i++) {
-            stage->cap_drop[stage->cap_drop_count] = strdup(recipe.cap_drop[i]);
+        for (int i = 0; i < recipe.recipe.cap_dropc; i++) {
+            stage->cap_drop[stage->cap_drop_count] = strdup(recipe.recipe.cap_drop[i]);
             if (!stage->cap_drop[stage->cap_drop_count]) {
                 rc = 3;
                 goto done;
@@ -172,16 +172,16 @@ static int stage_load_recipe(struct captive_profile_stage *stage, const struct h
             stage->cap_drop_count++;
         }
     }
-    stage->mode_interactive = recipe.mode_interactive;
-    stage->mode_tty = recipe.mode_tty;
-    stage->mode_detach = recipe.mode_detach;
-    stage->allow_multi = recipe.allow_multi;
-    stage->has_restart_policy = recipe.has_restart_policy;
-    stage->has_restart_delay = recipe.has_restart_delay;
-    if (recipe.has_restart_policy) {
-        snprintf(stage->restart_policy, sizeof(stage->restart_policy), "%s", recipe.restart_policy);
+    stage->mode_interactive = recipe.recipe.mode_interactive;
+    stage->mode_tty = recipe.recipe.mode_tty;
+    stage->mode_detach = recipe.recipe.mode_detach;
+    stage->allow_multi = recipe.recipe.allow_multi;
+    stage->has_restart_policy = recipe.recipe.has_restart_policy;
+    stage->has_restart_delay = recipe.recipe.has_restart_delay;
+    if (recipe.recipe.has_restart_policy) {
+        snprintf(stage->restart_policy, sizeof(stage->restart_policy), "%s", recipe.recipe.restart_policy);
     }
-    stage->restart_delay_seconds = recipe.restart_delay_seconds;
+    stage->restart_delay_seconds = recipe.recipe.restart_delay_seconds;
     stage->dirty = false;
 done:
     hold_free_profile(&recipe);
@@ -285,13 +285,15 @@ enum captive_input_key {
 };
 
 static int read_byte_timeout(unsigned char *out, int timeout_ms) {
-    fd_set rfds;
-    FD_ZERO(&rfds);
-    FD_SET(STDIN_FILENO, &rfds);
-    struct timeval tv;
-    tv.tv_sec = timeout_ms / 1000;
-    tv.tv_usec = (timeout_ms % 1000) * 1000;
-    int ready = select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv);
+    struct pollfd pfd = {
+        .fd = STDIN_FILENO,
+        .events = POLLIN,
+        .revents = 0,
+    };
+    int ready;
+    do {
+        ready = poll(&pfd, 1, timeout_ms);
+    } while (ready < 0 && errno == EINTR);
     if (ready <= 0) return 0;
     ssize_t n = read(STDIN_FILENO, out, 1);
     return n == 1 ? 1 : 0;

@@ -253,21 +253,20 @@ static int read_proc_cwd_path(pid_t pid, char *out, size_t n) {
 static void shell_background_logger(int master, const char *log_path, pid_t shell_pid, pid_t adopted_pgid, pid_t adopted_sid) {
     signal(SIGHUP, SIG_IGN);
     shell_close_stdio_to_devnull();
-    int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) _exit(1);
     int idxfd = hold_open_log_index_fd(log_path, fd);
     while (1) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(master, &rfds);
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 200000;
+        struct pollfd pfd = {
+            .fd = master,
+            .events = POLLIN,
+            .revents = 0,
+        };
         int ready;
         do {
-            ready = select(master + 1, &rfds, NULL, NULL, &tv);
+            ready = poll(&pfd, 1, 200);
         } while (ready < 0 && errno == EINTR);
-        if (ready > 0 && FD_ISSET(master, &rfds)) {
+        if (ready > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
             char buf[4096];
             ssize_t n = read(master, buf, sizeof(buf));
             if (n > 0) {
@@ -531,20 +530,24 @@ static int relay_shell_pty(int master, pid_t child, bool *detached) {
         }
         if (w < 0 && errno != EINTR) return 1;
 
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(master, &rfds);
-        int maxfd = master;
+        struct pollfd pfds[2];
+        nfds_t nfds = 0;
+        int master_idx = (int)nfds;
+        pfds[nfds].fd = master;
+        pfds[nfds].events = POLLIN;
+        pfds[nfds].revents = 0;
+        nfds++;
+        int stdin_idx = -1;
         if (stdin_open) {
-            FD_SET(STDIN_FILENO, &rfds);
-            if (STDIN_FILENO > maxfd) maxfd = STDIN_FILENO;
+            stdin_idx = (int)nfds;
+            pfds[nfds].fd = STDIN_FILENO;
+            pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0;
+            nfds++;
         }
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = pending_ctrl_p ? 500000 : 100000;
         int ready;
         do {
-            ready = select(maxfd + 1, &rfds, NULL, NULL, &tv);
+            ready = poll(pfds, nfds, pending_ctrl_p ? 500 : 100);
         } while (ready < 0 && errno == EINTR);
         if (ready < 0) return 1;
         if (ready == 0) {
@@ -555,7 +558,7 @@ static int relay_shell_pty(int master, pid_t child, bool *detached) {
             }
             continue;
         }
-        if (FD_ISSET(master, &rfds)) {
+        if (pfds[master_idx].revents & (POLLIN | POLLHUP | POLLERR)) {
             char buf[4096];
             ssize_t n = read(master, buf, sizeof(buf));
             if (n > 0) {
@@ -564,7 +567,7 @@ static int relay_shell_pty(int master, pid_t child, bool *detached) {
                 return 0;
             }
         }
-        if (stdin_open && FD_ISSET(STDIN_FILENO, &rfds)) {
+        if (stdin_idx >= 0 && (pfds[stdin_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
             unsigned char buf[4096];
             ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
             if (n < 0) {

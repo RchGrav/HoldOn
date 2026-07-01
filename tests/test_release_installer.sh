@@ -135,8 +135,22 @@ SH
   }
 }
 
+
+test_release_notes_fallback() {
+  local notes
+  notes="$tmp/release-notes-existing.md"
+  .github/scripts/release_notes_from_changelog.sh v0.4.0 "$notes"
+  grep -q '^## 0[.]4[.]0' "$notes"
+
+  notes="$tmp/release-notes-generated.md"
+  .github/scripts/release_notes_from_changelog.sh v9.8.7 "$notes"
+  grep -q '^## 9[.]8[.]7' "$notes"
+  grep -q 'Automated release for `v9.8.7`' "$notes"
+}
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 test_installer_fail_closed
 test_package_tarball_deterministic_when_gnu_tar
+test_release_notes_fallback

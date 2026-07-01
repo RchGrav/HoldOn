@@ -7,11 +7,13 @@ if [[ $# -ne 2 ]]; then
 fi
 
 version="${1#v}"
+tag="v${version}"
 output_file="$2"
 
 mkdir -p "$(dirname "$output_file")"
 
-awk -v version="$version" '
+tmp="${output_file}.tmp"
+if awk -v version="$version" '
   $0 ~ "^##[[:space:]]+" version "([[:space:]-]|$)" {
     found = 1
     print
@@ -28,9 +30,14 @@ awk -v version="$version" '
       exit 1
     }
   }
-' CHANGELOG.md >"$output_file"
-
-if [[ ! -s "$output_file" ]]; then
-  echo "release_notes_from_changelog: no notes found for $version" >&2
-  exit 1
+' CHANGELOG.md >"$tmp" && [[ -s "$tmp" ]]; then
+  mv "$tmp" "$output_file"
+  exit 0
 fi
+
+rm -f "$tmp"
+{
+  printf '## %s\n\n' "$version"
+  printf 'Automated release for `%s`.\n\n' "$tag"
+  printf 'No matching `CHANGELOG.md` section was found for `%s`, so this release uses generated notes.\n' "$version"
+} >"$output_file"

@@ -150,27 +150,29 @@ int hold_run_native_console(const char *sock_path) {
             }
         }
 
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(sock, &rfds);
-        int maxfd = sock;
+        struct pollfd pfds[2];
+        nfds_t nfds = 0;
+        int sock_idx = (int)nfds;
+        pfds[nfds].fd = sock;
+        pfds[nfds].events = POLLIN;
+        pfds[nfds].revents = 0;
+        nfds++;
+        int stdin_idx = -1;
         if (stdin_open) {
-            FD_SET(STDIN_FILENO, &rfds);
-            if (STDIN_FILENO > maxfd) {
-                maxfd = STDIN_FILENO;
-            }
+            stdin_idx = (int)nfds;
+            pfds[nfds].fd = STDIN_FILENO;
+            pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0;
+            nfds++;
         }
 
-        struct timeval tv;
-        struct timeval *tvp = NULL;
+        int timeout_ms = -1;
         if (pending_detach_len > 0) {
             int64_t now = hold_console_now_usec();
             int64_t remaining = pending_detach_deadline > now ? pending_detach_deadline - now : 0;
-            tv.tv_sec = (time_t)(remaining / 1000000);
-            tv.tv_usec = (suseconds_t)(remaining % 1000000);
-            tvp = &tv;
+            timeout_ms = (int)((remaining + 999) / 1000);
         }
-        int sr = select(maxfd + 1, &rfds, NULL, NULL, tvp);
+        int sr = poll(pfds, nfds, timeout_ms);
         if (sr < 0) {
             if (errno == EINTR) {
                 continue;
@@ -186,7 +188,7 @@ int hold_run_native_console(const char *sock_path) {
             if (sr == 0) continue;
         }
 
-        if (stdin_open && FD_ISSET(STDIN_FILENO, &rfds)) {
+        if (stdin_idx >= 0 && (pfds[stdin_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
             unsigned char buf[4096];
             ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
             if (n > 0) {
@@ -224,7 +226,7 @@ int hold_run_native_console(const char *sock_path) {
             }
         }
 
-        if (FD_ISSET(sock, &rfds)) {
+        if (pfds[sock_idx].revents & (POLLIN | POLLHUP | POLLERR)) {
             char buf[4096];
             ssize_t n = read(sock, buf, sizeof(buf));
             if (n > 0) {

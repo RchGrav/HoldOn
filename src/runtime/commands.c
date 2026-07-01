@@ -136,40 +136,40 @@ int hold_cmd_alias_action(const struct hold_invocation *inv,
     char binary_path[HOLD_PATH_MAX];
     char hash[PROFILE_HASH_STR_LEN];
     int rc = 0;
-    if (r.argc <= 0 || !r.argv || !r.argv[0] ||
-        hold_resolve_binary_path(r.argv[0], binary_path, sizeof(binary_path)) != 0) {
+    if (r.recipe.argc <= 0 || !r.recipe.argv || !r.recipe.argv[0] ||
+        hold_resolve_binary_path(r.recipe.argv[0], binary_path, sizeof(binary_path)) != 0) {
         fprintf(stderr, "hold: error: failed to derive profile from run %s\n", target.id);
         rc = 5;
         goto out;
     }
     char command[256];
-    if (hold_format_argv_human(command, sizeof(command), r.argc, r.argv) != 0) {
+    if (hold_format_argv_human(command, sizeof(command), r.recipe.argc, r.recipe.argv) != 0) {
         snprintf(command, sizeof(command), "%s", "?");
     }
     if (target.store.kind == STORE_SYSTEM_MANAGED) {
-        hold_profile_hash_for_argv(binary_path, r.argc, r.argv, hash);
+        hold_profile_hash_for_argv(binary_path, r.recipe.argc, r.recipe.argv, hash);
         if (hold_write_profile_atomic_full(&target.store,
                                            hash,
                                            binary_path,
-                                           r.argc,
-                                           r.argv,
-                                           r.envc,
-                                           r.env,
-                                           r.portc,
-                                           r.ports,
-                                           r.volumec,
-                                           r.volumes,
-                                           r.cap_addc,
-                                           r.cap_add,
-                                           r.cap_dropc,
-                                           r.cap_drop,
-                                           r.mode_interactive,
-                                           r.mode_tty,
-                                           r.mode_detach,
-                                           r.allow_multi,
-                                           r.has_restart_policy ? r.restart_policy : NULL,
-                                           r.has_restart_delay ? r.restart_delay_seconds : 0,
-                                           r.has_log_destination ? r.log_destination : NULL) != 0) {
+                                           r.recipe.argc,
+                                           r.recipe.argv,
+                                           r.recipe.envc,
+                                           r.recipe.env,
+                                           r.recipe.portc,
+                                           r.recipe.ports,
+                                           r.recipe.volumec,
+                                           r.recipe.volumes,
+                                           r.recipe.cap_addc,
+                                           r.recipe.cap_add,
+                                           r.recipe.cap_dropc,
+                                           r.recipe.cap_drop,
+                                           r.recipe.mode_interactive,
+                                           r.recipe.mode_tty,
+                                           r.recipe.mode_detach,
+                                           r.recipe.allow_multi,
+                                           r.recipe.has_restart_policy ? r.recipe.restart_policy : NULL,
+                                           r.recipe.has_restart_delay ? r.recipe.restart_delay_seconds : 0,
+                                           r.recipe.has_log_destination ? r.recipe.log_destination : NULL) != 0) {
             hold_die_errno("hold: failed to write profile");
         }
         if (hold_alias_upsert_hash(&target.store, name, hash) != 0) {
@@ -184,25 +184,25 @@ int hold_cmd_alias_action(const struct hold_invocation *inv,
         if (hold_alias_upsert_recipe_full(&target.store,
                                           name,
                                           binary_path,
-                                          r.argc,
-                                          r.argv,
-                                          r.envc,
-                                          r.env,
-                                          r.portc,
-                                          r.ports,
-                                          r.volumec,
-                                          r.volumes,
-                                          r.cap_addc,
-                                          r.cap_add,
-                                          r.cap_dropc,
-                                          r.cap_drop,
-                                          r.mode_interactive,
-                                          r.mode_tty,
-                                          r.mode_detach,
-                                          r.allow_multi,
-                                          r.has_restart_policy ? r.restart_policy : NULL,
-                                          r.has_restart_delay ? r.restart_delay_seconds : 0,
-                                          r.has_log_destination ? r.log_destination : NULL) != 0) {
+                                          r.recipe.argc,
+                                          r.recipe.argv,
+                                          r.recipe.envc,
+                                          r.recipe.env,
+                                          r.recipe.portc,
+                                          r.recipe.ports,
+                                          r.recipe.volumec,
+                                          r.recipe.volumes,
+                                          r.recipe.cap_addc,
+                                          r.recipe.cap_add,
+                                          r.recipe.cap_dropc,
+                                          r.recipe.cap_drop,
+                                          r.recipe.mode_interactive,
+                                          r.recipe.mode_tty,
+                                          r.recipe.mode_detach,
+                                          r.recipe.allow_multi,
+                                          r.recipe.has_restart_policy ? r.recipe.restart_policy : NULL,
+                                          r.recipe.has_restart_delay ? r.recipe.restart_delay_seconds : 0,
+                                          r.recipe.has_log_destination ? r.recipe.log_destination : NULL) != 0) {
             hold_die_errno("hold: failed to write profile");
         }
         hold_sig_note(inv, "hold: pinned '%s' -> %s\n", name, command);
@@ -224,7 +224,7 @@ static int print_aliases_for_store(const char *scope, const struct hold_store *s
         char command[96];
         char hash_display[PROFILE_HASH_STR_LEN];
         if (entries[i].has_recipe) {
-            if (hold_format_argv_human(command, sizeof(command), entries[i].argc, entries[i].argv) != 0) {
+            if (hold_format_argv_human(command, sizeof(command), entries[i].recipe.argc, entries[i].recipe.argv) != 0) {
                 snprintf(command, sizeof(command), "%s", "?");
             }
         } else {
@@ -304,55 +304,55 @@ static int profile_export_transcript(FILE *out, const char *name, const struct h
     fputs("enable\nconfigure terminal\nprofile ", out);
     profile_shell_quote(out, name);
     fputs("\nbinary ", out);
-    profile_shell_quote(out, recipe->binary_path);
+    profile_shell_quote(out, recipe->recipe.binary_path);
     fputc('\n', out);
-    if (recipe->argc > 1) {
+    if (recipe->recipe.argc > 1) {
         fputs("argv", out);
     }
-    for (int i = 1; i < recipe->argc; i++) {
+    for (int i = 1; i < recipe->recipe.argc; i++) {
         fputc(' ', out);
-        profile_shell_quote(out, recipe->argv[i]);
+        profile_shell_quote(out, recipe->recipe.argv[i]);
     }
-    if (recipe->argc > 1) fputc('\n', out);
-    for (int i = 0; i < recipe->envc; i++) {
-        const char *eq = recipe->env[i] ? strchr(recipe->env[i], '=') : NULL;
-        if (!eq || eq == recipe->env[i]) continue;
+    if (recipe->recipe.argc > 1) fputc('\n', out);
+    for (int i = 0; i < recipe->recipe.envc; i++) {
+        const char *eq = recipe->recipe.env[i] ? strchr(recipe->recipe.env[i], '=') : NULL;
+        if (!eq || eq == recipe->recipe.env[i]) continue;
         fputs("env ", out);
         char key[256];
-        size_t key_len = (size_t)(eq - recipe->env[i]);
+        size_t key_len = (size_t)(eq - recipe->recipe.env[i]);
         if (key_len >= sizeof(key)) key_len = sizeof(key) - 1;
-        memcpy(key, recipe->env[i], key_len);
+        memcpy(key, recipe->recipe.env[i], key_len);
         key[key_len] = '\0';
         profile_shell_quote(out, key);
         fputc(' ', out);
         profile_shell_quote(out, eq + 1);
         fputc('\n', out);
     }
-    for (int i = 0; i < recipe->cap_addc; i++) {
+    for (int i = 0; i < recipe->recipe.cap_addc; i++) {
         fputs("cap-add ", out);
-        profile_shell_quote(out, recipe->cap_add[i]);
+        profile_shell_quote(out, recipe->recipe.cap_add[i]);
         fputc('\n', out);
     }
-    for (int i = 0; i < recipe->cap_dropc; i++) {
+    for (int i = 0; i < recipe->recipe.cap_dropc; i++) {
         fputs("cap-drop ", out);
-        profile_shell_quote(out, recipe->cap_drop[i]);
+        profile_shell_quote(out, recipe->recipe.cap_drop[i]);
         fputc('\n', out);
     }
-    if (recipe->mode_interactive) fputs("interactive\n", out);
-    if (recipe->mode_tty) fputs("tty\n", out);
-    if (recipe->mode_detach) fputs("detach\n", out);
-    if (recipe->allow_multi) fputs("multi\n", out);
-    if (recipe->has_restart_policy && recipe->restart_policy[0]) {
+    if (recipe->recipe.mode_interactive) fputs("interactive\n", out);
+    if (recipe->recipe.mode_tty) fputs("tty\n", out);
+    if (recipe->recipe.mode_detach) fputs("detach\n", out);
+    if (recipe->recipe.allow_multi) fputs("multi\n", out);
+    if (recipe->recipe.has_restart_policy && recipe->recipe.restart_policy[0]) {
         fputs("restart ", out);
-        profile_shell_quote(out, recipe->restart_policy);
+        profile_shell_quote(out, recipe->recipe.restart_policy);
         fputc('\n', out);
     }
-    if (recipe->has_restart_delay) {
-        fprintf(out, "restart-delay %d\n", recipe->restart_delay_seconds);
+    if (recipe->recipe.has_restart_delay) {
+        fprintf(out, "restart-delay %d\n", recipe->recipe.restart_delay_seconds);
     }
-    if (recipe->has_log_destination && recipe->log_destination[0]) {
+    if (recipe->recipe.has_log_destination && recipe->recipe.log_destination[0]) {
         fputs("log-destination ", out);
-        profile_shell_quote(out, recipe->log_destination);
+        profile_shell_quote(out, recipe->recipe.log_destination);
         fputc('\n', out);
     }
     fputs("commit\nend\nwrite\n", out);
@@ -515,7 +515,7 @@ static int profile_import_json(const struct hold_store *store,
         goto out;
     }
     have_recipe = true;
-    if (hold_normalize_existing_argv_paths_from_cwd(recipe.argv, recipe.argc, 1, NULL) != 0) {
+    if (hold_normalize_existing_argv_paths_from_cwd(recipe.recipe.argv, recipe.recipe.argc, 1, NULL) != 0) {
         hold_die_errno("hold: failed to normalize profile argv paths");
     }
     if (dry_run) {
@@ -525,26 +525,26 @@ static int profile_import_json(const struct hold_store *store,
     }
     if (hold_alias_upsert_recipe_full(store,
                                       name,
-                                      recipe.binary_path,
-                                      recipe.argc,
-                                      recipe.argv,
-                                      recipe.envc,
-                                      recipe.env,
-                                      recipe.portc,
-                                      recipe.ports,
-                                      recipe.volumec,
-                                      recipe.volumes,
-                                      recipe.cap_addc,
-                                      recipe.cap_add,
-                                      recipe.cap_dropc,
-                                      recipe.cap_drop,
-                                      recipe.mode_interactive,
-                                      recipe.mode_tty,
-                                      recipe.mode_detach,
-                                      recipe.allow_multi,
-                                      recipe.has_restart_policy ? recipe.restart_policy : NULL,
-                                      recipe.has_restart_delay ? recipe.restart_delay_seconds : 0,
-                                      recipe.has_log_destination ? recipe.log_destination : NULL) != 0) {
+                                      recipe.recipe.binary_path,
+                                      recipe.recipe.argc,
+                                      recipe.recipe.argv,
+                                      recipe.recipe.envc,
+                                      recipe.recipe.env,
+                                      recipe.recipe.portc,
+                                      recipe.recipe.ports,
+                                      recipe.recipe.volumec,
+                                      recipe.recipe.volumes,
+                                      recipe.recipe.cap_addc,
+                                      recipe.recipe.cap_add,
+                                      recipe.recipe.cap_dropc,
+                                      recipe.recipe.cap_drop,
+                                      recipe.recipe.mode_interactive,
+                                      recipe.recipe.mode_tty,
+                                      recipe.recipe.mode_detach,
+                                      recipe.recipe.allow_multi,
+                                      recipe.recipe.has_restart_policy ? recipe.recipe.restart_policy : NULL,
+                                      recipe.recipe.has_restart_delay ? recipe.recipe.restart_delay_seconds : 0,
+                                      recipe.recipe.has_log_destination ? recipe.recipe.log_destination : NULL) != 0) {
         hold_die_errno("hold: failed to import profile");
     }
     rc = 0;
@@ -1313,7 +1313,7 @@ int hold_cmd_cap_request_action(const struct hold_invocation *inv,
     }
     int rc = 0;
     if (!strcmp(op, "start")) {
-        if (!force && !granted.allow_multi) {
+        if (!force && !granted.recipe.allow_multi) {
             size_t running = 0;
             if (count_granted_profile_running(system_store, profile, &running) != 0) {
                 hold_free_profile(&granted);
@@ -1327,36 +1327,35 @@ int hold_cmd_cap_request_action(const struct hold_invocation *inv,
                 return 6;
             }
         }
-        bool eff_console = console_mode || granted.mode_tty;
-        bool eff_interactive = granted.mode_interactive;
+        bool eff_console = console_mode || granted.recipe.mode_tty;
+        bool eff_interactive = granted.recipe.mode_interactive;
         bool eff_tail = tail;
-        if ((request_detach || granted.mode_detach) && !console_mode) {
+        if ((request_detach || granted.recipe.mode_detach) && !console_mode) {
             eff_tail = false;
         }
-        rc = hold_perform_start_with_metadata_name_cap_options(inv,
-                                                               system_store,
-                                                               eff_tail,
-                                                               eff_console,
-                                                               false,
-                                                               eff_interactive,
-                                                               granted.argc,
-                                                               granted.argv,
-                                                               granted.binary_path,
-                                                               profile,
-                                                               NULL,
-                                                               granted.envc,
-                                                               granted.env,
-                                                               granted.portc,
-                                                               granted.ports,
-                                                               granted.volumec,
-                                                               granted.volumes,
-                                                               granted.cap_addc,
-                                                               granted.cap_add,
-                                                               granted.cap_dropc,
-                                                               granted.cap_drop,
-                                                               granted.has_restart_policy ? granted.restart_policy : NULL,
-                                                               granted.has_restart_delay ? granted.restart_delay_seconds : 0,
-                                                               granted.has_log_destination ? granted.log_destination : NULL);
+        struct hold_start_options opts = {
+            .tail = eff_tail,
+            .console_mode = eff_console,
+            .interactive_stdin = eff_interactive,
+            .argc = granted.recipe.argc,
+            .argv = granted.recipe.argv,
+            .exec_path = granted.recipe.binary_path,
+            .profile_alias = profile,
+            .envc = granted.recipe.envc,
+            .env = granted.recipe.env,
+            .portc = granted.recipe.portc,
+            .ports = granted.recipe.ports,
+            .volumec = granted.recipe.volumec,
+            .volumes = granted.recipe.volumes,
+            .cap_addc = granted.recipe.cap_addc,
+            .cap_add = granted.recipe.cap_add,
+            .cap_dropc = granted.recipe.cap_dropc,
+            .cap_drop = granted.recipe.cap_drop,
+            .restart_policy = granted.recipe.has_restart_policy ? granted.recipe.restart_policy : NULL,
+            .restart_delay_seconds = granted.recipe.has_restart_delay ? granted.recipe.restart_delay_seconds : 0,
+            .log_destination = granted.recipe.has_log_destination ? granted.recipe.log_destination : NULL,
+        };
+        rc = hold_perform_start_options(inv, system_store, &opts);
     } else {
         fprintf(stderr, "hold: error: unsupported capability operation '%s'\n", op);
         rc = 5;

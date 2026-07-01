@@ -5,6 +5,8 @@
 #include "hold/store.h"
 #include "hold/console_internal.h"
 
+#include <poll.h>
+
 /* Set by the SIGWINCH handler below; read by run_native_console in attach.c. */
 volatile sig_atomic_t g_console_resized = 0;
 
@@ -131,7 +133,7 @@ void hold_run_console_broker(int parent_pipe,
     if (listener < 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
     }
-    logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
     logidxfd = logfd >= 0 ? hold_open_log_index_fd(log_path, logfd) : -1;
     if (logfd < 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
@@ -145,6 +147,10 @@ void hold_run_console_broker(int parent_pipe,
     if (pipe2(exec_pipe, O_CLOEXEC) != 0)
 #endif
     {
+        /* Non-Linux builds set FD_CLOEXEC after pipe(); unlike pipe2(O_CLOEXEC),
+         * that is not atomic with respect to concurrent fork/exec in a
+         * multi-threaded process. The broker reaches this path before it starts
+         * any broker-owned threads, so this fallback is acceptable here. */
         if (pipe(exec_pipe) != 0) {
             broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
         }
@@ -252,37 +258,45 @@ void hold_run_console_broker(int parent_pipe,
             }
         }
 
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(master, &rfds);
-        FD_SET(listener, &rfds);
-        int maxfd = master > listener ? master : listener;
-        if (client >= 0 && !client_input_closed) {
-            FD_SET(client, &rfds);
-            if (client > maxfd) {
-                maxfd = client;
-            }
+        struct pollfd pfds[3];
+        nfds_t nfds = 0;
+        nfds_t master_idx = nfds;
+        pfds[nfds++] = (struct pollfd){.fd = master, .events = POLLIN};
+        nfds_t listener_idx = nfds;
+        pfds[nfds++] = (struct pollfd){.fd = listener, .events = POLLIN};
+        nfds_t client_idx = 0;
+        bool poll_client = client >= 0 && !client_input_closed;
+        if (poll_client) {
+            client_idx = nfds;
+            pfds[nfds++] = (struct pollfd){.fd = client, .events = POLLIN};
         }
-        struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
-        int sr = select(maxfd + 1, &rfds, NULL, NULL, &tv);
-        if (sr < 0) {
+
+        int pr = poll(pfds, nfds, 1000);
+        if (pr < 0) {
             if (errno == EINTR) {
                 continue;
             }
             break;
         }
-        if (sr == 0) {
+        if (pr == 0) {
             if (target_done) {
                 break;
             }
             continue;
         }
-        if (FD_ISSET(listener, &rfds)) {
+
+        short listener_events = pfds[listener_idx].revents;
+        short client_events = poll_client ? pfds[client_idx].revents : 0;
+        short master_events = pfds[master_idx].revents;
+
+        if (listener_events & POLLIN) {
             int next = accept(listener, NULL, NULL);
             if (next >= 0) {
                 if (!authorize_console_client(next, owner_uid, have_allowed_peer_uid, allowed_peer_uid)) {
                     close(next);
                 } else if (client >= 0) {
+                    static const char msg[] = "hold: console already attached\n";
+                    (void)hold_write_all(next, msg, sizeof(msg) - 1);
                     close(next);
                 } else if (hold_console_replay_write(&replay, next) != 0) {
                     close(next);
@@ -293,7 +307,8 @@ void hold_run_console_broker(int parent_pipe,
                 }
             }
         }
-        if (client >= 0 && !client_input_closed && FD_ISSET(client, &rfds)) {
+        if (client >= 0 && !client_input_closed &&
+            (client_events & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
             unsigned char buf[4096];
             ssize_t n = read(client, buf, sizeof(buf));
             if (n > 0) {
@@ -317,7 +332,7 @@ void hold_run_console_broker(int parent_pipe,
                 memset(&client_state, 0, sizeof(client_state));
             }
         }
-        if (FD_ISSET(master, &rfds)) {
+        if (master_events & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) {
             char buf[4096];
             ssize_t n = read(master, buf, sizeof(buf));
             if (n > 0) {

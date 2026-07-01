@@ -171,15 +171,14 @@ static enum viewer_key read_key(unsigned char *printable, int timeout_ms) {
     unsigned char c = 0;
     *printable = 0;
     if (timeout_ms >= 0) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(STDIN_FILENO, &rfds);
-        struct timeval tv;
-        tv.tv_sec = timeout_ms / 1000;
-        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        struct pollfd pfd = {
+            .fd = STDIN_FILENO,
+            .events = POLLIN,
+            .revents = 0,
+        };
         int ready;
         do {
-            ready = select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv);
+            ready = poll(&pfd, 1, timeout_ms);
         } while (ready < 0 && errno == EINTR);
         if (ready <= 0) return VIEWER_KEY_NONE;
     }

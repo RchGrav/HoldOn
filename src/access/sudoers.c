@@ -13,6 +13,7 @@ static int grant_action_index(const char *name);
 static int parse_grant_actions(const char *input, bool selected[GRANT_ACTION_COUNT], bool *all_scope);
 
 static int validate_hold_self_for_sudoers(const char *program, char *abs_hold, size_t n);
+static int validate_profile_recipe_paths(const struct hold_profile *recipe, const char *profile);
 static int validate_profile_paths_for_grant(const struct hold_store *system_store,
                                             const char *hash,
                                             const char *profile,
@@ -140,6 +141,37 @@ static void print_grant_security_options(const char *command_name,
     fprintf(stderr, "     Warning: --force may weaken system security.\n");
 }
 
+static int validate_profile_recipe_paths(const struct hold_profile *recipe, const char *profile) {
+    if (!recipe) {
+        errno = EINVAL;
+        return -1;
+    }
+    int problems = 0;
+    (void)validate_grant_path_chain(recipe->recipe.binary_path, "profile binary", &problems);
+    for (int i = 0; i < recipe->recipe.argc; i++) {
+        const char *arg = recipe->recipe.argv && recipe->recipe.argv[i] ? recipe->recipe.argv[i] : NULL;
+        if (!arg || !*arg) continue;
+        if (i == 0 && strcmp(arg, recipe->recipe.binary_path) == 0) continue;
+        char label[64];
+        if (arg[0] == '/') {
+            snprintf(label, sizeof(label), "argv[%d]", i);
+            (void)validate_grant_path_chain(arg, label, &problems);
+        }
+        const char *eq = strchr(arg, '=');
+        if (eq && eq[1] == '/') {
+            snprintf(label, sizeof(label), "argv[%d] value", i);
+            (void)validate_grant_path_chain(eq + 1, label, &problems);
+        }
+    }
+    if (problems > 0) {
+        fprintf(stderr, "hold: error: profile '%s' has %d unsafe path%s\n",
+                profile && *profile ? profile : "(unknown)", problems, problems == 1 ? "" : "s");
+        errno = EPERM;
+        return -1;
+    }
+    return 0;
+}
+
 static int validate_profile_paths_for_grant(const struct hold_store *system_store,
                                             const char *hash,
                                             const char *profile,
@@ -156,29 +188,11 @@ static int validate_profile_paths_for_grant(const struct hold_store *system_stor
         fprintf(stderr, "hold: error: grant target profile is unavailable\n");
         return -1;
     }
-    int problems = 0;
-    (void)validate_grant_path_chain(recipe.binary_path, "profile binary", &problems);
-    for (int i = 0; i < recipe.argc; i++) {
-        const char *arg = recipe.argv && recipe.argv[i] ? recipe.argv[i] : NULL;
-        if (!arg || !*arg) continue;
-        if (i == 0 && strcmp(arg, recipe.binary_path) == 0) continue;
-        char label[64];
-        if (arg[0] == '/') {
-            snprintf(label, sizeof(label), "argv[%d]", i);
-            (void)validate_grant_path_chain(arg, label, &problems);
-        }
-        const char *eq = strchr(arg, '=');
-        if (eq && eq[1] == '/') {
-            snprintf(label, sizeof(label), "argv[%d] value", i);
-            (void)validate_grant_path_chain(eq + 1, label, &problems);
-        }
-    }
+    int rc = validate_profile_recipe_paths(&recipe, profile);
     hold_free_profile(&recipe);
-    if (problems > 0) {
-        fprintf(stderr, "hold: error: refusing sudoers grant because profile '%s' has %d unsafe path%s\n",
-                profile, problems, problems == 1 ? "" : "s");
+    if (rc != 0) {
+        fprintf(stderr, "hold: error: refusing sudoers grant because profile '%s' has unsafe paths\n", profile);
         print_grant_security_options(command_name, profile, subject, actions);
-        errno = EPERM;
         return -1;
     }
     return 0;
@@ -458,51 +472,51 @@ static int subject_grant_canonical_digest_json(const char *json,
     hold_sha256_update_nul_field(&ctx, "profile");
     hold_sha256_update_nul_field(&ctx, profile);
     hold_sha256_update_nul_field(&ctx, "binary_path");
-    hold_sha256_update_nul_field(&ctx, recipe.binary_path);
+    hold_sha256_update_nul_field(&ctx, recipe.recipe.binary_path);
     hold_sha256_update_nul_field(&ctx, "argv");
     char count_buf[32];
-    snprintf(count_buf, sizeof(count_buf), "%d", recipe.argc);
+    snprintf(count_buf, sizeof(count_buf), "%d", recipe.recipe.argc);
     hold_sha256_update_nul_field(&ctx, count_buf);
-    for (int i = 0; i < recipe.argc; i++) {
+    for (int i = 0; i < recipe.recipe.argc; i++) {
         char idx_buf[32];
         snprintf(idx_buf, sizeof(idx_buf), "%d", i);
         hold_sha256_update_nul_field(&ctx, idx_buf);
-        hold_sha256_update_nul_field(&ctx, recipe.argv[i]);
+        hold_sha256_update_nul_field(&ctx, recipe.recipe.argv[i]);
     }
-    grant_hash_string_array(&ctx, "env", recipe.envc, recipe.env);
-    grant_hash_string_array(&ctx, "ports", recipe.portc, recipe.ports);
-    grant_hash_string_array(&ctx, "volumes", recipe.volumec, recipe.volumes);
-    grant_hash_string_array(&ctx, "cap_add", recipe.cap_addc, recipe.cap_add);
-    grant_hash_string_array(&ctx, "cap_drop", recipe.cap_dropc, recipe.cap_drop);
-    if (recipe.mode_interactive) {
+    grant_hash_string_array(&ctx, "env", recipe.recipe.envc, recipe.recipe.env);
+    grant_hash_string_array(&ctx, "ports", recipe.recipe.portc, recipe.recipe.ports);
+    grant_hash_string_array(&ctx, "volumes", recipe.recipe.volumec, recipe.recipe.volumes);
+    grant_hash_string_array(&ctx, "cap_add", recipe.recipe.cap_addc, recipe.recipe.cap_add);
+    grant_hash_string_array(&ctx, "cap_drop", recipe.recipe.cap_dropc, recipe.recipe.cap_drop);
+    if (recipe.recipe.mode_interactive) {
         hold_sha256_update_nul_field(&ctx, "interactive");
         hold_sha256_update_nul_field(&ctx, "true");
     }
-    if (recipe.mode_tty) {
+    if (recipe.recipe.mode_tty) {
         hold_sha256_update_nul_field(&ctx, "tty");
         hold_sha256_update_nul_field(&ctx, "true");
     }
-    if (recipe.mode_detach) {
+    if (recipe.recipe.mode_detach) {
         hold_sha256_update_nul_field(&ctx, "detach");
         hold_sha256_update_nul_field(&ctx, "true");
     }
-    if (recipe.allow_multi) {
+    if (recipe.recipe.allow_multi) {
         hold_sha256_update_nul_field(&ctx, "allow_multi");
         hold_sha256_update_nul_field(&ctx, "true");
     }
-    if (recipe.has_restart_policy) {
+    if (recipe.recipe.has_restart_policy) {
         hold_sha256_update_nul_field(&ctx, "restart");
-        hold_sha256_update_nul_field(&ctx, recipe.restart_policy);
+        hold_sha256_update_nul_field(&ctx, recipe.recipe.restart_policy);
     }
-    if (recipe.has_restart_delay) {
+    if (recipe.recipe.has_restart_delay) {
         char delay_buf[32];
-        snprintf(delay_buf, sizeof(delay_buf), "%d", recipe.restart_delay_seconds);
+        snprintf(delay_buf, sizeof(delay_buf), "%d", recipe.recipe.restart_delay_seconds);
         hold_sha256_update_nul_field(&ctx, "restart_delay_seconds");
         hold_sha256_update_nul_field(&ctx, delay_buf);
     }
-    if (recipe.has_log_destination) {
+    if (recipe.recipe.has_log_destination) {
         hold_sha256_update_nul_field(&ctx, "log_destination");
-        hold_sha256_update_nul_field(&ctx, recipe.log_destination);
+        hold_sha256_update_nul_field(&ctx, recipe.recipe.log_destination);
     }
     hold_sha256_update_nul_field(&ctx, "actions");
     for (int i = 0; i < GRANT_ACTION_COUNT; i++) {
@@ -653,6 +667,9 @@ int hold_load_subject_grant_profile(const struct hold_store *system_store,
         hold_json_get_str(j, "profile", profile_in, sizeof(profile_in)) != 0 || strcmp(profile_in, profile) != 0 ||
         subject_grant_has_action(j, required_action) != 0) {
         errno = EINVAL;
+        goto out;
+    }
+    if (validate_profile_recipe_paths(profile_out, profile) != 0) {
         goto out;
     }
     rc = 0;

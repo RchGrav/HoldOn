@@ -6,7 +6,10 @@
 #include "hold/types.h"
 
 /* Public console entry points used by the runtime/CLI layers. The frame, replay
- * and broker internals live in console_internal.h. */
+ * and broker internals live in console_internal.h.
+ *
+ * The broker supports one interactive client at a time. Additional authorized
+ * clients receive a short "already attached" error and are closed. */
 int hold_format_console_sock_path(const struct hold_store *store,
                              const char *id,
                              char *out,

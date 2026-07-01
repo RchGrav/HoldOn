@@ -1,0 +1,109 @@
+name: Release Bump (create tag)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump type
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - custom
+      custom_version:
+        description: Custom version (required if bump=custom), e.g. v0.5.0
+        required: false
+        type: string
+      target_branch:
+        description: Branch to tag from
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    name: Create release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+
+      - name: Fetch all tags
+        run: git fetch --tags --force
+
+      - name: Compute next version
+        id: semver
+        env:
+          BUMP: ${{ inputs.bump }}
+          CUSTOM: ${{ inputs.custom_version }}
+        run: |
+          set -euo pipefail
+
+          latest="$(git tag -l 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "${latest}" ]; then
+            latest="v0.0.0"
+          fi
+
+          echo "Latest tag: ${latest}"
+
+          if [ "${BUMP}" = "custom" ]; then
+            if [ -z "${CUSTOM}" ]; then
+              echo "custom_version is required when bump=custom" >&2
+              exit 1
+            fi
+            next="${CUSTOM}"
+            [[ "${next}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+              echo "custom_version must look like vX.Y.Z" >&2
+              exit 1
+            }
+          else
+            base="${latest#v}"
+            IFS='.' read -r major minor patch <<< "${base}"
+
+            case "${BUMP}" in
+              patch) patch=$((patch + 1)) ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              *) echo "Unknown bump type: ${BUMP}" >&2; exit 1 ;;
+            esac
+
+            next="v${major}.${minor}.${patch}"
+          fi
+
+          if git rev-parse "${next}" >/dev/null 2>&1; then
+            echo "Tag ${next} already exists locally." >&2
+            exit 1
+          fi
+          if git ls-remote --tags origin "refs/tags/${next}" | grep -q "${next}"; then
+            echo "Tag ${next} already exists on origin." >&2
+            exit 1
+          fi
+
+          echo "next=${next}" >> "$GITHUB_OUTPUT"
+          echo "Next tag: ${next}"
+
+      - name: Create and push tag
+        env:
+          NEXT: ${{ steps.semver.outputs.next }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${NEXT}" -m "Release ${NEXT}"
+          git push origin "refs/tags/${NEXT}"
+
+      - name: Summary
+        env:
+          NEXT: ${{ steps.semver.outputs.next }}
+        run: |
+          echo "Created tag: ${NEXT}" >> "$GITHUB_STEP_SUMMARY"
+          echo "The Multi-arch Release workflow should now run on this tag." >> "$GITHUB_STEP_SUMMARY"

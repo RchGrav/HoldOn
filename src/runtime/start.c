@@ -75,33 +75,7 @@ static int perform_explicit_start_options(const struct hold_invocation *inv,
                                             char **argv);
 static int perform_start_with_metadata_name_options_internal(const struct hold_invocation *inv,
                                                              const struct hold_store *store,
-                                                             bool tail,
-                                                             bool console_mode,
-                                                             bool auto_remove,
-                                                             bool interactive_stdin,
-                                                             int argc,
-                                                             char **argv,
-                                                             const char *exec_path,
-                                                             const char *run_alias,
-                                                             const char *requested_run_name,
-                                                             int envc,
-                                                             char **env,
-                                                             int portc,
-                                                             char **ports,
-                                                             int volumec,
-                                                             char **volumes,
-                                                             const char *restart_policy,
-                                                             int restart_delay_seconds,
-                                                             const char *log_destination,
-                                                             int cap_addc,
-                                                             char **cap_add,
-                                                             int cap_dropc,
-                                                             char **cap_drop,
-                                                             const char *existing_id,
-                                                             const char *existing_log_path,
-                                                             const char *existing_run_name,
-                                                             int64_t existing_created_unix_ns,
-                                                             const char *existing_created_at);
+                                                             const struct hold_start_options *opts);
 static int run_name_exists_in_store(const struct hold_store *store, const char *name, const char *ignore_id);
 static int find_restart_record(const struct hold_store *store, const char *token, char out[ID_STR_LEN]);
 static int restart_existing_run(const struct hold_invocation *inv,
@@ -131,6 +105,7 @@ static void spawn_log_capture(int stdout_fd,
                               const char *profile,
                               const char *cmdline);
 static void close_stdio_to_devnull(void);
+static int enter_privileged_exec_cwd(void);
 static void spawn_auto_remove_watcher(const struct hold_store *store, const struct hold_run_record *record);
 
 static void free_launch_and_observed_argv(char **launch_argv, char **observed_argv, int argc) {
@@ -142,6 +117,54 @@ static void unlink_if_nonempty(const char *path) {
     if (path && *path) {
         unlink(path);
     }
+}
+
+static int open_log_append_no_symlink(const char *path) {
+    if (!path || !*path) {
+        errno = EINVAL;
+        return -1;
+    }
+    const char *slash = strrchr(path, '/');
+    if (!slash || slash == path || !slash[1]) {
+        errno = EINVAL;
+        return -1;
+    }
+    size_t dir_len = (size_t)(slash - path);
+    if (dir_len >= HOLD_PATH_MAX) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    char dir[HOLD_PATH_MAX];
+    memcpy(dir, path, dir_len);
+    dir[dir_len] = '\0';
+
+    int dirfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (dirfd < 0) return -1;
+    int fd = openat(dirfd, slash + 1, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
+    int saved = errno;
+    close(dirfd);
+    if (fd < 0) {
+        errno = saved;
+        return -1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        saved = errno ? errno : EINVAL;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    return fd;
+}
+
+static int enter_privileged_exec_cwd(void) {
+    struct stat st;
+    if (lstat("/", &st) != 0) return -1;
+    if (!S_ISDIR(st.st_mode) || st.st_uid != 0 || (st.st_mode & 0022) != 0) {
+        errno = EPERM;
+        return -1;
+    }
+    return chdir("/");
 }
 
 static void kill_supervisor_if_distinct(pid_t supervisor_pid, pid_t target_pid) {
@@ -318,35 +341,35 @@ static int restart_existing_run(const struct hold_invocation *inv,
         rc = 5;
         goto out;
     }
-    rc = perform_start_with_metadata_name_options_internal(inv,
-                                                           store,
-                                                           tail,
-                                                           console_mode,
-                                                           auto_remove,
-                                                           interactive_stdin,
-                                                           argc,
-                                                           argv,
-                                                           argv[0],
-                                                           old.has_alias ? old.alias : NULL,
-                                                           NULL,
-                                                           old.envc,
-                                                           old.env,
-                                                           old.portc,
-                                                           old.ports,
-                                                           old.volumec,
-                                                           old.volumes,
-                                                           restart_policy ? restart_policy : (old.has_restart_policy ? old.restart_policy : NULL),
-                                                           restart_policy ? restart_delay_seconds : old.restart_delay_seconds,
-                                                           old.has_log_destination ? old.log_destination : NULL,
-                                                           old.cap_addc,
-                                                           old.cap_add,
-                                                           old.cap_dropc,
-                                                           old.cap_drop,
-                                                           old.id,
-                                                           old.log_path,
-                                                           old.has_name ? old.name : NULL,
-                                                           old.created_unix_ns,
-                                                           old.has_created_at ? old.created_at : NULL);
+    struct hold_start_options opts = {
+        .tail = tail,
+        .console_mode = console_mode,
+        .auto_remove = auto_remove,
+        .interactive_stdin = interactive_stdin,
+        .argc = argc,
+        .argv = argv,
+        .exec_path = argv[0],
+        .profile_alias = old.has_alias ? old.alias : NULL,
+        .envc = old.recipe.envc,
+        .env = old.recipe.env,
+        .portc = old.recipe.portc,
+        .ports = old.recipe.ports,
+        .volumec = old.recipe.volumec,
+        .volumes = old.recipe.volumes,
+        .cap_addc = old.recipe.cap_addc,
+        .cap_add = old.recipe.cap_add,
+        .cap_dropc = old.recipe.cap_dropc,
+        .cap_drop = old.recipe.cap_drop,
+        .restart_policy = restart_policy ? restart_policy : (old.recipe.has_restart_policy ? old.recipe.restart_policy : NULL),
+        .restart_delay_seconds = restart_policy ? restart_delay_seconds : old.recipe.restart_delay_seconds,
+        .log_destination = old.recipe.has_log_destination ? old.recipe.log_destination : NULL,
+        .existing_id = old.id,
+        .existing_log_path = old.log_path,
+        .existing_run_name = old.has_name ? old.name : NULL,
+        .existing_created_unix_ns = old.created_unix_ns,
+        .existing_created_at = old.has_created_at ? old.created_at : NULL,
+    };
+    rc = hold_perform_start_options(inv, store, &opts);
 out:
     hold_free_argv_alloc(argv, argc);
     free(j);
@@ -469,7 +492,6 @@ static void mirror_syslog_line(const char *stream,
     char *line = strndup(buf ? buf : "", n);
     if (!line) return;
     while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = '\0';
-    openlog("hold", LOG_PID, LOG_USER);
     syslog(priority,
            "run=%s name=%s profile=%s stream=%s cmd=\"%s\" msg=\"%s\"",
            display[0] ? display : "-",
@@ -478,7 +500,6 @@ static void mirror_syslog_line(const char *stream,
            stream && *stream ? stream : "stdout",
            cmdline && *cmdline ? cmdline : "-",
            line);
-    closelog();
     free(line);
 #else
     (void)stream; (void)id; (void)name; (void)profile; (void)cmdline; (void)buf; (void)n;
@@ -523,33 +544,53 @@ static void spawn_log_capture(int stdout_fd,
         return;
     }
     close_stdio_to_devnull();
-    int logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    int logfd = open_log_append_no_symlink(log_path);
     if (logfd < 0) _exit(0);
     int idxfd = hold_open_log_index_fd(log_path, logfd);
+    bool syslog_enabled = log_destination && strcmp(log_destination, "syslog") == 0;
+#if defined(__linux__)
+    if (syslog_enabled) openlog("hold", LOG_PID, LOG_USER);
+#endif
     while (stdout_fd >= 0 || stderr_fd >= 0) {
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        int maxfd = -1;
-        if (stdout_fd >= 0) { FD_SET(stdout_fd, &rfds); if (stdout_fd > maxfd) maxfd = stdout_fd; }
-        if (stderr_fd >= 0) { FD_SET(stderr_fd, &rfds); if (stderr_fd > maxfd) maxfd = stderr_fd; }
-        if (maxfd < 0) break;
-        int sr = select(maxfd + 1, &rfds, NULL, NULL, NULL);
+        struct pollfd pfds[2];
+        int nfds = 0;
+        int stdout_slot = -1;
+        int stderr_slot = -1;
+        if (stdout_fd >= 0) {
+            stdout_slot = nfds;
+            pfds[nfds].fd = stdout_fd;
+            pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0;
+            nfds++;
+        }
+        if (stderr_fd >= 0) {
+            stderr_slot = nfds;
+            pfds[nfds].fd = stderr_fd;
+            pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0;
+            nfds++;
+        }
+        if (nfds == 0) break;
+        int sr = poll(pfds, (nfds_t)nfds, -1);
         if (sr < 0) {
             if (errno == EINTR) continue;
             break;
         }
         char buf[4096];
-        if (stdout_fd >= 0 && FD_ISSET(stdout_fd, &rfds)) {
+        if (stdout_slot >= 0 && (pfds[stdout_slot].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
             ssize_t n = read(stdout_fd, buf, sizeof(buf));
             if (n > 0) logger_write_bytes(logfd, idxfd, log_destination, "stdout", id, name, profile, cmdline, buf, (size_t)n);
             else { close(stdout_fd); stdout_fd = -1; }
         }
-        if (stderr_fd >= 0 && FD_ISSET(stderr_fd, &rfds)) {
+        if (stderr_slot >= 0 && (pfds[stderr_slot].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
             ssize_t n = read(stderr_fd, buf, sizeof(buf));
             if (n > 0) logger_write_bytes(logfd, idxfd, log_destination, "stderr", id, name, profile, cmdline, buf, (size_t)n);
             else { close(stderr_fd); stderr_fd = -1; }
         }
     }
+#if defined(__linux__)
+    if (syslog_enabled) closelog();
+#endif
     if (idxfd >= 0) close(idxfd);
     close(logfd);
     _exit(0);
@@ -567,9 +608,15 @@ static void run_restart_supervisor(int handshake_fd,
                                    int cap_dropc,
                                    char **cap_drop,
                                    const char *restart_policy,
-                                   int restart_delay_seconds) {
+                                   int restart_delay_seconds,
+                                   bool pin_privileged_cwd) {
     (void)log_path;
     if (setsid() < 0) {
+        int e = errno;
+        hold_write_all(handshake_fd, &e, sizeof(e));
+        _exit(127);
+    }
+    if (pin_privileged_cwd && enter_privileged_exec_cwd() != 0) {
         int e = errno;
         hold_write_all(handshake_fd, &e, sizeof(e));
         _exit(127);
@@ -1002,204 +1049,46 @@ bool hold_start_target_is_within_invoking_home(const struct hold_invocation *inv
     return false;
 }
 
-int hold_perform_start(const struct hold_invocation *inv,
-                         const struct hold_store *store,
-                         bool tail,
-                         bool console_mode,
-                         int argc,
-                         char **argv,
-                         const char *exec_path,
-                         const char *run_alias) {
-    return hold_perform_start_with_env(inv, store, tail, console_mode, argc, argv, exec_path, run_alias, 0, NULL);
-}
-
-int hold_perform_start_with_env(const struct hold_invocation *inv,
-                                  const struct hold_store *store,
-                                  bool tail,
-                                  bool console_mode,
-                                  int argc,
-                                  char **argv,
-                                  const char *exec_path,
-                                  const char *run_alias,
-                                  int envc,
-                                  char **env) {
-    return hold_perform_start_with_env_options(inv, store, tail, console_mode, false, false, argc, argv, exec_path, run_alias, envc, env);
-}
-
-int hold_perform_start_with_env_options(const struct hold_invocation *inv,
-                                          const struct hold_store *store,
-                                          bool tail,
-                                          bool console_mode,
-                                          bool auto_remove,
-                                          bool interactive_stdin,
-                                          int argc,
-                                          char **argv,
-                                          const char *exec_path,
-                                          const char *run_alias,
-                                          int envc,
-                                          char **env) {
-    return hold_perform_start_with_metadata_options(inv, store, tail, console_mode, auto_remove, interactive_stdin,
-                                                    argc, argv, exec_path, run_alias, envc, env, 0, NULL, 0, NULL, NULL, 0);
-}
-
-int hold_perform_start_with_metadata_options(const struct hold_invocation *inv,
-                                               const struct hold_store *store,
-                                               bool tail,
-                                               bool console_mode,
-                                               bool auto_remove,
-                                               bool interactive_stdin,
-                                               int argc,
-                                               char **argv,
-                                               const char *exec_path,
-                                               const char *run_alias,
-                                               int envc,
-                                               char **env,
-                                               int portc,
-                                               char **ports,
-                                               int volumec,
-                                               char **volumes,
-                                               const char *restart_policy,
-                                               int restart_delay_seconds) {
-    return hold_perform_start_with_metadata_name_options(inv, store, tail, console_mode, auto_remove, interactive_stdin,
-                                                         argc, argv, exec_path, run_alias, NULL, envc, env, portc, ports,
-                                                         volumec, volumes, restart_policy, restart_delay_seconds, NULL);
-}
-
-int hold_perform_start_with_metadata_name_options(const struct hold_invocation *inv,
-                                                   const struct hold_store *store,
-                                                   bool tail,
-                                                   bool console_mode,
-                                                   bool auto_remove,
-                                                   bool interactive_stdin,
-                                                   int argc,
-                                                   char **argv,
-                                                   const char *exec_path,
-                                                   const char *run_alias,
-                                                   const char *requested_run_name,
-                                                   int envc,
-                                                   char **env,
-                                                   int portc,
-                                                   char **ports,
-                                                   int volumec,
-                                                   char **volumes,
-                                                   const char *restart_policy,
-                                                   int restart_delay_seconds,
-                                                   const char *log_destination) {
-    return perform_start_with_metadata_name_options_internal(inv,
-                                                             store,
-                                                             tail,
-                                                             console_mode,
-                                                             auto_remove,
-                                                             interactive_stdin,
-                                                             argc,
-                                                             argv,
-                                                             exec_path,
-                                                             run_alias,
-                                                             requested_run_name,
-                                                             envc,
-                                                             env,
-                                                             portc,
-                                                             ports,
-                                                             volumec,
-                                                             volumes,
-                                                             restart_policy,
-                                                             restart_delay_seconds,
-                                                             log_destination,
-                                                             0,
-                                                             NULL,
-                                                             0,
-                                                             NULL,
-                                                             NULL,
-                                                             NULL,
-                                                             NULL,
-                                                             0,
-                                                             NULL);
-}
-
-int hold_perform_start_with_metadata_name_cap_options(const struct hold_invocation *inv,
-                                                       const struct hold_store *store,
-                                                       bool tail,
-                                                       bool console_mode,
-                                                       bool auto_remove,
-                                                       bool interactive_stdin,
-                                                       int argc,
-                                                       char **argv,
-                                                       const char *exec_path,
-                                                       const char *run_alias,
-                                                       const char *requested_run_name,
-                                                       int envc,
-                                                       char **env,
-                                                       int portc,
-                                                       char **ports,
-                                                       int volumec,
-                                                       char **volumes,
-                                                       int cap_addc,
-                                                       char **cap_add,
-                                                       int cap_dropc,
-                                                       char **cap_drop,
-                                                       const char *restart_policy,
-                                                       int restart_delay_seconds,
-                                                       const char *log_destination) {
-    return perform_start_with_metadata_name_options_internal(inv,
-                                                             store,
-                                                             tail,
-                                                             console_mode,
-                                                             auto_remove,
-                                                             interactive_stdin,
-                                                             argc,
-                                                             argv,
-                                                             exec_path,
-                                                             run_alias,
-                                                             requested_run_name,
-                                                             envc,
-                                                             env,
-                                                             portc,
-                                                             ports,
-                                                             volumec,
-                                                             volumes,
-                                                             restart_policy,
-                                                             restart_delay_seconds,
-                                                             log_destination,
-                                                             cap_addc,
-                                                             cap_add,
-                                                             cap_dropc,
-                                                             cap_drop,
-                                                             NULL,
-                                                             NULL,
-                                                             NULL,
-                                                             0,
-                                                             NULL);
+int hold_perform_start_options(const struct hold_invocation *inv,
+                                 const struct hold_store *store,
+                                 const struct hold_start_options *opts) {
+    if (!opts) {
+        hold_usage();
+        return 5;
+    }
+    return perform_start_with_metadata_name_options_internal(inv, store, opts);
 }
 
 static int perform_start_with_metadata_name_options_internal(const struct hold_invocation *inv,
                                                              const struct hold_store *store,
-                                                             bool tail,
-                                                             bool console_mode,
-                                                             bool auto_remove,
-                                                             bool interactive_stdin,
-                                                             int argc,
-                                                             char **argv,
-                                                             const char *exec_path,
-                                                             const char *run_alias,
-                                                             const char *requested_run_name,
-                                                             int envc,
-                                                             char **env,
-                                                             int portc,
-                                                             char **ports,
-                                                             int volumec,
-                                                             char **volumes,
-                                                             const char *restart_policy,
-                                                             int restart_delay_seconds,
-                                                             const char *log_destination,
-                                                             int cap_addc,
-                                                             char **cap_add,
-                                                             int cap_dropc,
-                                                             char **cap_drop,
-                                                             const char *existing_id,
-                                                             const char *existing_log_path,
-                                                             const char *existing_run_name,
-                                                             int64_t existing_created_unix_ns,
-                                                             const char *existing_created_at) {
+                                                             const struct hold_start_options *opts) {
+    bool tail = opts->tail;
+    bool console_mode = opts->console_mode;
+    bool auto_remove = opts->auto_remove;
+    bool interactive_stdin = opts->interactive_stdin;
+    int argc = opts->argc;
+    char **argv = opts->argv;
+    const char *exec_path = opts->exec_path;
+    const char *run_alias = opts->profile_alias;
+    const char *requested_run_name = opts->run_name;
+    int envc = opts->envc;
+    char **env = opts->env;
+    int portc = opts->portc;
+    char **ports = opts->ports;
+    int volumec = opts->volumec;
+    char **volumes = opts->volumes;
+    const char *restart_policy = opts->restart_policy;
+    int restart_delay_seconds = opts->restart_delay_seconds;
+    const char *log_destination = opts->log_destination;
+    int cap_addc = opts->cap_addc;
+    char **cap_add = opts->cap_add;
+    int cap_dropc = opts->cap_dropc;
+    char **cap_drop = opts->cap_drop;
+    const char *existing_id = opts->existing_id;
+    const char *existing_log_path = opts->existing_log_path;
+    const char *existing_run_name = opts->existing_run_name;
+    int64_t existing_created_unix_ns = opts->existing_created_unix_ns;
+    const char *existing_created_at = opts->existing_created_at;
     if (argc <= 0 || !argv || !argv[0] ||
         envc < 0 || (envc > 0 && !env) ||
         portc < 0 || (portc > 0 && !ports) ||
@@ -1313,9 +1202,20 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         free_launch_and_observed_argv(launch_argv, observed_argv, argc);
         hold_die_errno("hold: console socket path too long");
     }
+    int log_preflight_fd = open_log_append_no_symlink(log_path);
+    if (log_preflight_fd < 0) {
+        int saved = errno;
+        unlink_if_nonempty(reserve_path);
+        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
+        errno = saved;
+        hold_die_errno("hold: failed to open log");
+    }
+    close(log_preflight_fd);
+
     uid_t console_owner_uid = geteuid();
     bool console_have_allowed_peer_uid = inv && inv->euid_root && inv->have_sudo_user && inv->invoking_uid != console_owner_uid;
     uid_t console_allowed_peer_uid = console_have_allowed_peer_uid ? inv->invoking_uid : (uid_t)0;
+    bool pin_privileged_cwd = inv && inv->euid_root && inv->have_sudo_user;
 
     /* Capture the invoking terminal size up front so the console broker can size
      * its PTY before the child execs. The broker itself runs with /dev/null stdio
@@ -1459,7 +1359,8 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
                                    cap_dropc,
                                    cap_drop,
                                    restart_policy,
-                                   restart_delay_seconds);
+                                   restart_delay_seconds,
+                                   pin_privileged_cwd);
         }
         if (!console_mode) {
             pid_t target = fork();
@@ -1500,6 +1401,11 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
             if (target_pid_pipe[1] >= 0) close(target_pid_pipe[1]);
         }
         if (setsid() < 0) {
+            int e = errno;
+            hold_write_all(pipefd[1], &e, sizeof(e));
+            _exit(127);
+        }
+        if (pin_privileged_cwd && enter_privileged_exec_cwd() != 0) {
             int e = errno;
             hold_write_all(pipefd[1], &e, sizeof(e));
             _exit(127);
@@ -1720,43 +1626,43 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     r.tty = console_mode;
     r.open_stdin = interactive_stdin || console_mode;
     r.stdin_once = false;
-    r.mode_interactive = interactive_stdin;
-    r.mode_tty = console_mode;
-    r.mode_detach = !tail && !console_mode;
-    r.allow_multi = false;
-    if (envc > 0 && hold_copy_argv(&r.env, envc, env) != 0) {
+    r.recipe.mode_interactive = interactive_stdin;
+    r.recipe.mode_tty = console_mode;
+    r.recipe.mode_detach = !tail && !console_mode;
+    r.recipe.allow_multi = false;
+    if (envc > 0 && hold_copy_argv(&r.recipe.env, envc, env) != 0) {
         hold_die_errno("hold: failed to copy env metadata");
     }
-    r.envc = envc;
-    if (portc > 0 && hold_copy_argv(&r.ports, portc, ports) != 0) {
+    r.recipe.envc = envc;
+    if (portc > 0 && hold_copy_argv(&r.recipe.ports, portc, ports) != 0) {
         hold_die_errno("hold: failed to copy port metadata");
     }
-    r.portc = portc;
-    if (volumec > 0 && hold_copy_argv(&r.volumes, volumec, volumes) != 0) {
+    r.recipe.portc = portc;
+    if (volumec > 0 && hold_copy_argv(&r.recipe.volumes, volumec, volumes) != 0) {
         hold_die_errno("hold: failed to copy volume metadata");
     }
-    r.volumec = volumec;
-    if (cap_addc > 0 && hold_copy_argv(&r.cap_add, cap_addc, cap_add) != 0) {
+    r.recipe.volumec = volumec;
+    if (cap_addc > 0 && hold_copy_argv(&r.recipe.cap_add, cap_addc, cap_add) != 0) {
         hold_die_errno("hold: failed to copy capability add metadata");
     }
-    r.cap_addc = cap_addc;
-    if (cap_dropc > 0 && hold_copy_argv(&r.cap_drop, cap_dropc, cap_drop) != 0) {
+    r.recipe.cap_addc = cap_addc;
+    if (cap_dropc > 0 && hold_copy_argv(&r.recipe.cap_drop, cap_dropc, cap_drop) != 0) {
         hold_die_errno("hold: failed to copy capability drop metadata");
     }
-    r.cap_dropc = cap_dropc;
+    r.recipe.cap_dropc = cap_dropc;
     if (restart_enabled) {
-        if (hold_checked_snprintf(r.restart_policy, sizeof(r.restart_policy), "%s", restart_policy) != 0) {
+        if (hold_checked_snprintf(r.recipe.restart_policy, sizeof(r.recipe.restart_policy), "%s", restart_policy) != 0) {
             hold_die_errno("hold: restart policy too long");
         }
-        r.has_restart_policy = true;
+        r.recipe.has_restart_policy = true;
     }
-    r.restart_delay_seconds = restart_delay_seconds;
-    r.has_restart_delay = restart_delay_seconds > 0;
+    r.recipe.restart_delay_seconds = restart_delay_seconds;
+    r.recipe.has_restart_delay = restart_delay_seconds > 0;
     if (log_destination && *log_destination) {
-        if (hold_checked_snprintf(r.log_destination, sizeof(r.log_destination), "%s", log_destination) != 0) {
+        if (hold_checked_snprintf(r.recipe.log_destination, sizeof(r.recipe.log_destination), "%s", log_destination) != 0) {
             hold_die_errno("hold: log destination too long");
         }
-        r.has_log_destination = true;
+        r.recipe.has_log_destination = true;
     }
     r.has_log = true;
     if (hold_checked_snprintf(r.log_path, sizeof(r.log_path), "%s", log_path) != 0) {
@@ -1789,14 +1695,14 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         if (chown_user_local_artifacts) {
             int chown_rc = 0;
             if (record_path[0] &&
-                chown(record_path, inv->invoking_uid, inv->invoking_gid) != 0) {
+                lchown(record_path, inv->invoking_uid, inv->invoking_gid) != 0) {
                 chown_rc = -1;
             }
-            if (chown(log_path, inv->invoking_uid, inv->invoking_gid) != 0) {
+            if (lchown(log_path, inv->invoking_uid, inv->invoking_gid) != 0) {
                 chown_rc = -1;
             }
             if (console_sock[0] && hold_path_exists(console_sock) &&
-                chown(console_sock, inv->invoking_uid, inv->invoking_gid) != 0) {
+                lchown(console_sock, inv->invoking_uid, inv->invoking_gid) != 0) {
                 chown_rc = -1;
             }
             if (chown_rc != 0) {
@@ -1882,21 +1788,21 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
                 int prune_rc = hold_prune_one_run(store, r.id, have_boot ? boot : NULL, true, &removed);
                 if (tail_rc == 0 && prune_rc != 0) tail_rc = prune_rc;
             }
-            hold_free_argv_alloc(r.env, r.envc);
-            hold_free_argv_alloc(r.ports, r.portc);
-            hold_free_argv_alloc(r.volumes, r.volumec);
-            hold_free_argv_alloc(r.cap_add, r.cap_addc);
-            hold_free_argv_alloc(r.cap_drop, r.cap_dropc);
+            hold_free_argv_alloc(r.recipe.env, r.recipe.envc);
+            hold_free_argv_alloc(r.recipe.ports, r.recipe.portc);
+            hold_free_argv_alloc(r.recipe.volumes, r.recipe.volumec);
+            hold_free_argv_alloc(r.recipe.cap_add, r.recipe.cap_addc);
+            hold_free_argv_alloc(r.recipe.cap_drop, r.recipe.cap_dropc);
             return tail_rc;
         }
         if (auto_remove) {
             spawn_auto_remove_watcher(store, &r);
         }
-        hold_free_argv_alloc(r.env, r.envc);
-        hold_free_argv_alloc(r.ports, r.portc);
-        hold_free_argv_alloc(r.volumes, r.volumec);
-        hold_free_argv_alloc(r.cap_add, r.cap_addc);
-        hold_free_argv_alloc(r.cap_drop, r.cap_dropc);
+        hold_free_argv_alloc(r.recipe.env, r.recipe.envc);
+        hold_free_argv_alloc(r.recipe.ports, r.recipe.portc);
+        hold_free_argv_alloc(r.recipe.volumes, r.recipe.volumec);
+        hold_free_argv_alloc(r.recipe.cap_add, r.recipe.cap_addc);
+        hold_free_argv_alloc(r.recipe.cap_drop, r.recipe.cap_dropc);
         free_launch_and_observed_argv(launch_argv, observed_argv, argc);
         return 0;
     }
@@ -2225,22 +2131,36 @@ static int hold_perform_profile_start_options(const struct hold_invocation *inv,
         fprintf(stderr, "hold: error: profile %s is unavailable\n", hash);
         return 5;
     }
-    bool eff_console = console_mode || p.mode_tty;
-    bool eff_interactive = interactive_stdin || p.mode_interactive;
+    bool eff_console = console_mode || p.recipe.mode_tty;
+    bool eff_interactive = interactive_stdin || p.recipe.mode_interactive;
     bool eff_tail = tail;
-    if (!tail && p.mode_detach && !console_mode && !interactive_stdin) {
+    if (!tail && p.recipe.mode_detach && !console_mode && !interactive_stdin) {
         eff_tail = false;
     }
-    int rc = hold_perform_start_with_metadata_name_cap_options(inv, store, eff_tail, eff_console, auto_remove, eff_interactive,
-                                                           p.argc, p.argv, p.binary_path, alias, NULL,
-                                                           p.envc, p.env,
-                                                           p.portc, p.ports,
-                                                           p.volumec, p.volumes,
-                                                           p.cap_addc, p.cap_add,
-                                                           p.cap_dropc, p.cap_drop,
-                                                           restart_policy ? restart_policy : (p.has_restart_policy ? p.restart_policy : NULL),
-                                                           restart_policy ? restart_delay_seconds : p.restart_delay_seconds,
-                                                           log_destination ? log_destination : (p.has_log_destination ? p.log_destination : NULL));
+    struct hold_start_options opts = {
+        .tail = eff_tail,
+        .console_mode = eff_console,
+        .auto_remove = auto_remove,
+        .interactive_stdin = eff_interactive,
+        .argc = p.recipe.argc,
+        .argv = p.recipe.argv,
+        .exec_path = p.recipe.binary_path,
+        .profile_alias = alias,
+        .envc = p.recipe.envc,
+        .env = p.recipe.env,
+        .portc = p.recipe.portc,
+        .ports = p.recipe.ports,
+        .volumec = p.recipe.volumec,
+        .volumes = p.recipe.volumes,
+        .cap_addc = p.recipe.cap_addc,
+        .cap_add = p.recipe.cap_add,
+        .cap_dropc = p.recipe.cap_dropc,
+        .cap_drop = p.recipe.cap_drop,
+        .restart_policy = restart_policy ? restart_policy : (p.recipe.has_restart_policy ? p.recipe.restart_policy : NULL),
+        .restart_delay_seconds = restart_policy ? restart_delay_seconds : p.recipe.restart_delay_seconds,
+        .log_destination = log_destination ? log_destination : (p.recipe.has_log_destination ? p.recipe.log_destination : NULL),
+    };
+    int rc = hold_perform_start_options(inv, store, &opts);
     hold_free_profile(&p);
     return rc;
 }
@@ -2390,7 +2310,7 @@ int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
                         return reconnect_rc < 0 ? 3 : reconnect_rc;
                     }
                 }
-                bool profile_allows_multi = target.has_recipe && target.recipe.allow_multi;
+                bool profile_allows_multi = target.has_recipe && target.recipe.recipe.allow_multi;
                 if (target.has_alias && !multi && !profile_allows_multi) {
                     size_t running = 0;
                     if (count_running_alias(&target.store, target.alias, &running) != 0) {
@@ -2408,36 +2328,37 @@ int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
                 start_rc = 0;
                 for (int i = 0; i < starts; i++) {
                     if (target.has_recipe) {
-                        bool eff_console = console_mode || target.recipe.mode_tty;
-                        bool eff_interactive = interactive_stdin || target.recipe.mode_interactive;
+                        bool eff_console = console_mode || target.recipe.recipe.mode_tty;
+                        bool eff_interactive = interactive_stdin || target.recipe.recipe.mode_interactive;
                         bool eff_tail = tail;
-                        if (!tail && target.recipe.mode_detach && !console_mode && !interactive_stdin) {
+                        if (!tail && target.recipe.recipe.mode_detach && !console_mode && !interactive_stdin) {
                             eff_tail = false;
                         }
-                        start_rc = hold_perform_start_with_metadata_name_cap_options(inv,
-                                                 &target.store,
-                                                 eff_tail,
-                                                 eff_console,
-                                                 auto_remove,
-                                                 eff_interactive,
-                                                 target.recipe.argc,
-                                                 target.recipe.argv,
-                                                 target.recipe.binary_path,
-                                                 target.has_alias ? target.alias : NULL,
-                                                 requested_run_name,
-                                                 target.recipe.envc,
-                                                 target.recipe.env,
-                                                 target.recipe.portc,
-                                                 target.recipe.ports,
-                                                 target.recipe.volumec,
-                                                 target.recipe.volumes,
-                                                 target.recipe.cap_addc,
-                                                 target.recipe.cap_add,
-                                                 target.recipe.cap_dropc,
-                                                 target.recipe.cap_drop,
-                                                 restart_policy ? restart_policy : (target.recipe.has_restart_policy ? target.recipe.restart_policy : NULL),
-                                                 restart_policy ? restart_delay_seconds : target.recipe.restart_delay_seconds,
-                                                 log_destination ? log_destination : (target.recipe.has_log_destination ? target.recipe.log_destination : NULL));
+                        struct hold_start_options opts = {
+                            .tail = eff_tail,
+                            .console_mode = eff_console,
+                            .auto_remove = auto_remove,
+                            .interactive_stdin = eff_interactive,
+                            .argc = target.recipe.recipe.argc,
+                            .argv = target.recipe.recipe.argv,
+                            .exec_path = target.recipe.recipe.binary_path,
+                            .profile_alias = target.has_alias ? target.alias : NULL,
+                            .run_name = requested_run_name,
+                            .envc = target.recipe.recipe.envc,
+                            .env = target.recipe.recipe.env,
+                            .portc = target.recipe.recipe.portc,
+                            .ports = target.recipe.recipe.ports,
+                            .volumec = target.recipe.recipe.volumec,
+                            .volumes = target.recipe.recipe.volumes,
+                            .cap_addc = target.recipe.recipe.cap_addc,
+                            .cap_add = target.recipe.recipe.cap_add,
+                            .cap_dropc = target.recipe.recipe.cap_dropc,
+                            .cap_drop = target.recipe.recipe.cap_drop,
+                            .restart_policy = restart_policy ? restart_policy : (target.recipe.recipe.has_restart_policy ? target.recipe.recipe.restart_policy : NULL),
+                            .restart_delay_seconds = restart_policy ? restart_delay_seconds : target.recipe.recipe.restart_delay_seconds,
+                            .log_destination = log_destination ? log_destination : (target.recipe.recipe.has_log_destination ? target.recipe.recipe.log_destination : NULL),
+                        };
+                        start_rc = hold_perform_start_options(inv, &target.store, &opts);
                     } else {
                         start_rc = hold_perform_profile_start_options(inv,
                                                          &target.store,
@@ -2472,47 +2393,33 @@ int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
         }
         if (argc == 1) {
             char *shell_argv[4] = {"sh", "-c", argv[0], NULL};
-            return hold_perform_start_with_metadata_name_options(inv,
-                                                                  fallback_store,
-                                                                  tail,
-                                                                  console_mode,
-                                                                  auto_remove,
-                                                                  interactive_stdin,
-                                                                  3,
-                                                                  shell_argv,
-                                                                  NULL,
-                                                                  NULL,
-                                                                  requested_run_name,
-                                                                  0,
-                                                                  NULL,
-                                                                  0,
-                                                                  NULL,
-                                                                  0,
-                                                                  NULL,
-                                                                  restart_policy,
-                                                                  restart_delay_seconds,
-                                                                  log_destination);
+            struct hold_start_options opts = {
+                .tail = tail,
+                .console_mode = console_mode,
+                .auto_remove = auto_remove,
+                .interactive_stdin = interactive_stdin,
+                .argc = 3,
+                .argv = shell_argv,
+                .run_name = requested_run_name,
+                .restart_policy = restart_policy,
+                .restart_delay_seconds = restart_delay_seconds,
+                .log_destination = log_destination,
+            };
+            return hold_perform_start_options(inv, fallback_store, &opts);
         }
-        return hold_perform_start_with_metadata_name_options(inv,
-                                                              fallback_store,
-                                                              tail,
-                                                              console_mode,
-                                                              auto_remove,
-                                                              interactive_stdin,
-                                                              argc,
-                                                              argv,
-                                                              NULL,
-                                                              NULL,
-                                                              requested_run_name,
-                                                              0,
-                                                              NULL,
-                                                              0,
-                                                              NULL,
-                                                              0,
-                                                              NULL,
-                                                              restart_policy,
-                                                              restart_delay_seconds,
-                                                              log_destination);
+        struct hold_start_options opts = {
+            .tail = tail,
+            .console_mode = console_mode,
+            .auto_remove = auto_remove,
+            .interactive_stdin = interactive_stdin,
+            .argc = argc,
+            .argv = argv,
+            .run_name = requested_run_name,
+            .restart_policy = restart_policy,
+            .restart_delay_seconds = restart_delay_seconds,
+            .log_destination = log_destination,
+        };
+        return hold_perform_start_options(inv, fallback_store, &opts);
     }
     return perform_explicit_start_options(inv, fallback_store, tail, console_mode, auto_remove, interactive_stdin, restart_policy, restart_delay_seconds, argc, argv);
 }
@@ -2560,7 +2467,27 @@ static int perform_explicit_start_options(const struct hold_invocation *inv,
         shell_argv[1] = "-c";
         shell_argv[2] = argv[0];
         shell_argv[3] = NULL;
-        return hold_perform_start_with_metadata_options(inv, store, tail, console_mode, auto_remove, interactive_stdin, 3, shell_argv, NULL, NULL, 0, NULL, 0, NULL, 0, NULL, restart_policy, restart_delay_seconds);
+        struct hold_start_options opts = {
+            .tail = tail,
+            .console_mode = console_mode,
+            .auto_remove = auto_remove,
+            .interactive_stdin = interactive_stdin,
+            .argc = 3,
+            .argv = shell_argv,
+            .restart_policy = restart_policy,
+            .restart_delay_seconds = restart_delay_seconds,
+        };
+        return hold_perform_start_options(inv, store, &opts);
     }
-    return hold_perform_start_with_metadata_options(inv, store, tail, console_mode, auto_remove, interactive_stdin, argc, argv, NULL, NULL, 0, NULL, 0, NULL, 0, NULL, restart_policy, restart_delay_seconds);
+    struct hold_start_options opts = {
+        .tail = tail,
+        .console_mode = console_mode,
+        .auto_remove = auto_remove,
+        .interactive_stdin = interactive_stdin,
+        .argc = argc,
+        .argv = argv,
+        .restart_policy = restart_policy,
+        .restart_delay_seconds = restart_delay_seconds,
+    };
+    return hold_perform_start_options(inv, store, &opts);
 }

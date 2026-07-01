@@ -67,19 +67,28 @@ remove_tree() {
   local path="$1"
   [ -n "$path" ] || return 0
   [ -e "$path" ] || return 0
-  if [ "$(id -u)" -eq 0 ]; then
-    chmod -R u+rwX "$path" 2>/dev/null || true
-    rm -rf "$path"
-  elif [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] && [ -n "$SUDO_BIN" ]; then
-    # Some tests intentionally create root-owned system-store artifacts under
-    # the per-test temp tree. Normalize ownership/modes before deletion so the
-    # non-root suite never fails after the assertions have already passed.
-    "$SUDO_BIN" -n chmod -R u+rwX "$path" 2>/dev/null || true
-    "$SUDO_BIN" -n chown -R "$(id -u):$(id -g)" "$path" 2>/dev/null || true
-    rm -rf "$path" || "$SUDO_BIN" -n rm -rf "$path"
-  else
-    rm -rf "$path"
-  fi
+
+  # Fast path: almost every test tree is user-owned and removable as-is. Avoid
+  # recursive chmod/chown unless cleanup actually hits root-owned leftovers.
+  rm -rf "$path" 2>/dev/null || true
+  [ ! -e "$path" ] || [ -L "$path" ] || {
+    if [ "$(id -u)" -eq 0 ]; then
+      chmod -R u+rwX "$path" 2>/dev/null || true
+      rm -rf "$path" || true
+    elif [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] && [ -n "$SUDO_BIN" ]; then
+      # Root-owned artifacts are expected only in the synthetic system store
+      # and root-home fixtures. Normalize those directories instead of walking
+      # the whole temp tree on every cleanup.
+      while IFS= read -r root_owned_dir; do
+        "$SUDO_BIN" -n chmod -R u+rwX "$root_owned_dir" 2>/dev/null || true
+        "$SUDO_BIN" -n chown -R "$(id -u):$(id -g)" "$root_owned_dir" 2>/dev/null || true
+      done < <(find "$path" -maxdepth 3 -type d \( -name system -o -name root-home \) -print 2>/dev/null || true)
+      rm -rf "$path" 2>/dev/null || "$SUDO_BIN" -n rm -rf "$path" || true
+    else
+      rm -rf "$path" || true
+    fi
+  }
+  return 0
 }
 
 setup_suite_actors() {
@@ -3478,7 +3487,7 @@ PY
 
 test_grant_refuses_user_writable_profile_paths() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local safe out id script sudoers_dir visudo_ok rc grant_private grant_public
+  local safe out id script sudoers_dir visudo_ok rc grant_private grant_public grant_hash cap_token
 
   safe="$TEST_ROOT/hold-grant-paths"
   cp "$HOLD_REAL_BIN" "$safe" || return 1
@@ -3529,7 +3538,72 @@ test_grant_refuses_user_writable_profile_paths() {
   }
   root_file_exists "$grant_private" || return 1
   root_file_exists "$grant_public" || return 1
+  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
+  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
+  cap_token="eyJ2IjoxLCJvcCI6InN0YXJ0IiwiZm9yY2UiOmZhbHNlfQ"
+  set +e
+  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
+    "$safe" run unsafe-path --cap "$grant_hash" "$cap_token" >"$TEST_ROOT/grant-path-runtime.out" 2>"$TEST_ROOT/grant-path-runtime.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || { echo "forced unsafe grant was accepted at runtime" >&2; cat "$TEST_ROOT/grant-path-runtime.out" "$TEST_ROOT/grant-path-runtime.err" >&2; return 1; }
+  grep -Eq 'unsafe path|not grant-safe|capability' "$TEST_ROOT/grant-path-runtime.err" || { cat "$TEST_ROOT/grant-path-runtime.err" >&2; return 1; }
   as_root "$safe" stop "$id" >/dev/null || return 1
+}
+
+
+test_granted_start_pins_privileged_cwd() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  local safe out id hash sudoers_dir visudo_ok grant_public grant_hash cap_token hostile cap_out cap_id log
+
+  safe="$TEST_ROOT/hold-grant-cwd"
+  cp "$HOLD_REAL_BIN" "$safe" || return 1
+  as_root chown 0:0 "$safe" || return 1
+  as_root chmod 755 "$safe" || return 1
+
+  out=$(as_root "$safe" run -d -- /bin/pwd 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  as_root "$safe" profile save "$id" as cwd-pin >/dev/null 2>"$TEST_ROOT/cwd-pin-save.err" || {
+    cat "$TEST_ROOT/cwd-pin-save.err" >&2
+    return 1
+  }
+  hash=$(system_alias_hash cwd-pin)
+  [ -n "$hash" ] || return 1
+
+  sudoers_dir="$TEST_ROOT/sudoers-cwd.d"
+  mkdir -p "$sudoers_dir" || return 1
+  chmod 755 "$sudoers_dir" || return 1
+  export HOLD_TEST_SUDOERS_DIR="$sudoers_dir"
+  visudo_ok="$TEST_ROOT/visudo-cwd-ok"
+  printf '#!/usr/bin/env sh\nexit 0\n' >"$visudo_ok" || return 1
+  chmod 755 "$visudo_ok" || return 1
+  export HOLD_TEST_VISUDO_PROG="$visudo_ok"
+
+  as_root "$safe" grant cwd-pin "$TEST_USER" start >"$TEST_ROOT/grant-cwd.out" 2>"$TEST_ROOT/grant-cwd.err" || {
+    cat "$TEST_ROOT/grant-cwd.out" "$TEST_ROOT/grant-cwd.err" >&2
+    return 1
+  }
+  grant_public="$HOLD_TEST_SYSTEM_STATE_DIR/public/grants/users/$TEST_USER/cwd-pin.json"
+  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
+  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
+  cap_token="eyJ2IjoxLCJvcCI6InN0YXJ0IiwiZm9yY2UiOmZhbHNlLCJkZXRhY2giOnRydWV9"
+  hostile="$ACTOR_HOME/hostile-cwd"
+  mkdir -p "$hostile" || return 1
+  cap_out=$(cd "$hostile" && as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
+    "$safe" run cwd-pin --cap "$grant_hash" "$cap_token" 2>&1) || { printf '%s\n' "$cap_out" >&2; return 1; }
+  cap_id=$(printf '%s\n' "$cap_out" | extract_id)
+  [ -n "$cap_id" ] || { printf '%s\n' "$cap_out" >&2; return 1; }
+  log=$(root_log_path "$cap_id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs") || return 1
+  for _ in $(seq 1 30); do
+    as_root cat "$log" >"$TEST_ROOT/cwd-pin.log" 2>/dev/null || true
+    if grep -qx '/' "$TEST_ROOT/cwd-pin.log"; then
+      break
+    fi
+    sleep 0.1
+  done
+  grep -qx '/' "$TEST_ROOT/cwd-pin.log" || { as_root cat "$log" >&2; return 1; }
+  ! grep -Fxq "$hostile" "$TEST_ROOT/cwd-pin.log" || { cat "$TEST_ROOT/cwd-pin.log" >&2; return 1; }
 }
 
 test_grant_revoke_writes_hash_scoped_sudoers() {
@@ -4103,12 +4177,21 @@ test_system_raw_self_elevation_preserves_child_switches_and_delimiter() {
 
 test_elevated_requires_root() {
   local rc
+  make_fake_sudo || return 1
+  export HOLD_FAKE_SUDO_RC=1
   set +e
   "$HOLD_BIN" --elevated stop abc12345cafe >/dev/null 2>"$TEST_ROOT/elevated.err"
   rc=$?
   set -e
-  [ "$rc" -eq 3 ] || return 1
-  grep -q -- '--elevated without root authority' "$TEST_ROOT/elevated.err"
+  [ "$rc" -eq 1 ] || return 1
+  args=()
+  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
+  [ "${args[0]}" = "--" ] || return 1
+  [ "${args[2]}" = "--system" ] || return 1
+  [ "${args[3]}" = "--elevated" ] || return 1
+  [ "${args[4]}" = "stop" ] || return 1
+  [ "${args[5]}" = "abc12345cafe" ] || return 1
+  ! grep -q -- '--elevated without root authority' "$TEST_ROOT/elevated.err"
 }
 
 
@@ -4609,6 +4692,36 @@ test_docker_restart_validation_and_tty_gate() {
   grep -q -- '--restart with --tty/-t is not supported yet' "$TEST_ROOT/restart-tty.err" || { cat "$TEST_ROOT/restart-tty.err" >&2; return 1; }
 }
 
+
+
+
+test_start_existing_run_appends_retained_log() {
+  local out id log before_count after_count restart_out
+  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo restart-append-marker' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  log=$(log_path "$id") || return 1
+  for _ in $(seq 1 30); do
+    before_count=$(grep -c '^restart-append-marker$' "$log" 2>/dev/null || true)
+    [ "$before_count" -ge 1 ] && break
+    sleep 0.1
+  done
+  [ "${before_count:-0}" -ge 1 ] || { cat "$log" >&2; return 1; }
+  restart_out=$("$HOLD_BIN" start "$id" 2>&1) || {
+    printf '%s\n' "$restart_out" >&2
+    return 1
+  }
+  printf '%s\n' "$restart_out" | grep -q "${id:0:12}" || { printf '%s\n' "$restart_out" >&2; return 1; }
+  for _ in $(seq 1 30); do
+    after_count=$(grep -c '^restart-append-marker$' "$log" 2>/dev/null || true)
+    [ "$after_count" -ge 2 ] && break
+    sleep 0.1
+  done
+  [ "${after_count:-0}" -ge 2 ] || { cat "$log" >&2; return 1; }
+}
 
 test_docker_restart_persists_with_named_profile() {
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
@@ -5820,7 +5933,7 @@ SH
   # exact source-location line as an allowed repo-coordinate exception while
   # still rejecting leaked legacy branding or alias/run-namespace docs.
   if printf '%s\n' "$public_files" | xargs grep -InEi '(^|[^[:alnum:]_])(sigmund|mund)([^[:alnum:]_]|$)|(^|[^[:alnum:]_])hold[[:space:]]+aliases?([^[:alnum:]_]|$)|["'\'']?[$]HOLD_BIN["'\'']?[[:space:]]+aliases?([^[:alnum:]_]|$)|alias aliases|hold[[:space:]]+(start|grant|revoke)[[:space:]]+<alias>|start[[:space:]]+<alias>|known alias|alias selection|alias-labeled|alias exists|create an alias|aliases turn|system alias|alias starts|alias ambiguity|alias filtering|alias creation|run id or alias|command as an alias|system:alias|grant alias|root alias|public alias/hash|root-managed alias capabilities|supplied alias|alias/hash capability|run-alias verification|behind an alias|alias was called|alias was created from|for this alias/profile|across aliases' 2>/dev/null |
-      grep -Ev '^install\.sh:[0-9]+:REPO_NAME="[$][{]HOLD_REPO_NAME:-sigmund[}]"$' \
+      grep -Fv 'REPO_NAME="${HOLD_REPO_NAME:-sigmund}"' \
       >"$TEST_ROOT/forbidden-public-names.out"; then
     cat "$TEST_ROOT/forbidden-public-names.out" >&2
     return 1
@@ -5994,6 +6107,7 @@ run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported
 run_test "Docker restart policy restarts failed processes" test_docker_restart_policy_restarts_failures
 run_test "Docker restart validates policies and tty gate" test_docker_restart_validation_and_tty_gate
 run_test "Docker restart persists with named profiles" test_docker_restart_persists_with_named_profile
+run_test "start existing run appends retained log" test_start_existing_run_appends_retained_log
 run_test "Docker publish and volume flags are rejected" test_docker_publish_and_volume_rejected
 run_test "Docker named profiles persist -d -i -t mode flags" test_docker_named_profile_persists_mode_flags
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
@@ -6105,6 +6219,7 @@ run_test "system alias action self-elevates alias token" test_system_alias_actio
 run_test "system alias start self-elevates alias token" test_system_alias_start_self_elevates_alias
 run_test "system profile save preserves capability metadata" test_system_profile_save_preserves_capability_metadata
 run_test "grant refuses user-writable profile paths unless forced" test_grant_refuses_user_writable_profile_paths
+run_test "granted start pins privileged cwd" test_granted_start_pins_privileged_cwd
 run_test "grant/revoke writes hash-scoped sudoers entries" test_grant_revoke_writes_hash_scoped_sudoers
 run_test "elevated capability start/stop validates alias and hash" test_elevated_capability_start_and_stop_validate_alias_hash
 run_test "action self-elevation uses argv-preserving sudo fork+wait" test_action_self_elevation_uses_argv_fork_wait
