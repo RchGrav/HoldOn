@@ -547,8 +547,8 @@ static void spawn_log_capture(int stdout_fd,
     int logfd = open_log_append_no_symlink(log_path);
     if (logfd < 0) _exit(0);
     int idxfd = hold_open_log_index_fd(log_path, logfd);
-    bool syslog_enabled = log_destination && strcmp(log_destination, "syslog") == 0;
 #if defined(__linux__)
+    bool syslog_enabled = log_destination && strcmp(log_destination, "syslog") == 0;
     if (syslog_enabled) openlog("hold", LOG_PID, LOG_USER);
 #endif
     while (stdout_fd >= 0 || stderr_fd >= 0) {
