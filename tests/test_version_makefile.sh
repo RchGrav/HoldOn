@@ -24,7 +24,7 @@ snapshot="$tmp/snapshot"
 mkdir -p "$snapshot/.github/scripts"
 cp VERSION "$snapshot/"
 cp .github/scripts/resolve_version.sh "$snapshot/.github/scripts/"
-snapshot_version="$(cd "$snapshot" && bash .github/scripts/resolve_version.sh)"
+snapshot_version="$(cd "$snapshot" && env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME bash .github/scripts/resolve_version.sh)"
 if [ "$snapshot_version" != "$want" ]; then
   printf 'source-tree resolver outside git mismatch: got %s want %s\n' "$snapshot_version" "$want" >&2
   exit 1
@@ -57,6 +57,7 @@ cp Makefile VERSION "$gitcase/"
 cp .github/scripts/resolve_version.sh "$gitcase/.github/scripts/"
 (
   cd "$gitcase"
+  unset GITHUB_SHA GITHUB_REF_TYPE GITHUB_REF_NAME
   git init -q
   git config user.name test
   git config user.email test@example.invalid
@@ -183,21 +184,21 @@ SHSTUB
 chmod +x "$releasecase/bin/file"
 (
   cd "$releasecase"
-  env -u GITHUB_SHA PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=tag-clean bash scripts/release_build.sh >tag-clean.out 2>tag-clean.err
+  env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=tag-clean bash scripts/release_build.sh >tag-clean.out 2>tag-clean.err
   grep -qx 'linux-amd64-gnu-static 9.8.7 hold' dist/packages.log
   grep -qx 'linux-amd64-gnu-dynamic 9.8.7 hold-dynamic' dist/packages.log
 )
 (
   cd "$releasecase"
   rm -rf dist
-  env -u GITHUB_SHA PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=branch-clean bash scripts/release_build.sh >branch-clean.out 2>branch-clean.err
+  env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=branch-clean bash scripts/release_build.sh >branch-clean.out 2>branch-clean.err
   grep -qx 'linux-amd64-gnu-static 9.8.7-abcdef1 hold' dist/packages.log
   grep -qx 'linux-amd64-gnu-dynamic 9.8.7-abcdef1 hold-dynamic' dist/packages.log
 )
 (
   cd "$releasecase"
   rm -rf dist
-  if env -u GITHUB_SHA PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=tag-dirty bash scripts/release_build.sh >tag-dirty.out 2>tag-dirty.err; then
+  if env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=tag-dirty bash scripts/release_build.sh >tag-dirty.out 2>tag-dirty.err; then
     printf 'release_build unexpectedly allowed dirty tagged worktree\n' >&2
     exit 1
   fi
