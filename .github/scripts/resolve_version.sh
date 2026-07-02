@@ -17,27 +17,19 @@ version_from_tag() {
   version_base="$version"
 }
 
-version_from_file() {
-  version_file="${repo_root}/VERSION"
-
-  if [[ ! -f "$version_file" ]]; then
-    echo "resolve_version: missing VERSION file" >&2
-    exit 1
-  fi
-
-  version_base=$(sed -n '1s/[[:space:]]*$//p' "$version_file")
-  if [[ ! "$version_base" =~ ^[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-    echo "resolve_version: invalid VERSION value: $version_base" >&2
-    exit 1
-  fi
-  tag="v${version_base}"
+version_from_snapshot_fallback() {
+  # Git tags are the release source of truth. Source snapshots without .git
+  # metadata intentionally fall back to a non-release development version instead
+  # of carrying a stale VERSION file.
+  version_base="dev"
+  version="dev"
+  tag=""
 }
 
 if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
   version_from_tag "${GITHUB_REF_NAME:-}"
 elif ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  version_from_file
-  version="$version_base"
+  version_from_snapshot_fallback
 else
   exact_tag=$(git -C "$repo_root" describe --tags --exact-match --match 'v[0-9]*' HEAD 2>/dev/null || true)
   if [[ -n "$exact_tag" ]]; then
@@ -51,7 +43,7 @@ else
     if [[ -n "$latest_tag" ]]; then
       version_from_tag "$latest_tag"
     else
-      version_from_file
+      version_from_snapshot_fallback
     fi
 
     sha="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo dev)}"

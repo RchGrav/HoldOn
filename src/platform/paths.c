@@ -98,19 +98,20 @@ int hold_resolve_binary_path(const char *argv0, char *out, size_t n) {
     while (1) {
         const char *colon = strchr(p, ':');
         size_t len = colon ? (size_t)(colon - p) : strlen(p);
-        char dir[HOLD_PATH_MAX];
         if (len == 0) {
-            if (hold_checked_snprintf(dir, sizeof(dir), ".") != 0) {
-                return -1;
+            if (!colon) {
+                break;
             }
-        } else {
-            if (len >= sizeof(dir)) {
-                errno = ENAMETOOLONG;
-                return -1;
-            }
-            memcpy(dir, p, len);
-            dir[len] = '\0';
+            p = colon + 1;
+            continue;
         }
+        char dir[HOLD_PATH_MAX];
+        if (len >= sizeof(dir)) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        memcpy(dir, p, len);
+        dir[len] = '\0';
         char candidate[HOLD_PATH_MAX], resolved[HOLD_PATH_MAX];
         if (hold_checked_snprintf(candidate, sizeof(candidate), "%s/%s", dir, argv0) == 0 &&
             access(candidate, X_OK) == 0 && realpath_copy(candidate, resolved, sizeof(resolved)) == 0) {

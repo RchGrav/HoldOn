@@ -8,6 +8,8 @@
 #include "hold/console.h"
 #include "hold/access.h"
 
+#include <grp.h>
+
 static int attach_console_record(const struct hold_invocation *inv,
                                  const struct hold_run_record *r,
                                  enum run_state st);
@@ -23,6 +25,12 @@ static int profile_write_command_recipe(const struct hold_store *store,
                                         const char *name,
                                         int argc,
                                         char **argv);
+static int load_invocation_subject_grant_profile(const struct hold_invocation *inv,
+                                                 const struct hold_store *system_store,
+                                                 const char *alias,
+                                                 const char *hash,
+                                                 const char *required_action,
+                                                 struct hold_profile *profile_out);
 
 static int attach_console_record(const struct hold_invocation *inv,
                                  const struct hold_run_record *r,
@@ -1271,6 +1279,84 @@ static int count_granted_profile_running(const struct hold_store *store, const c
     return 0;
 }
 
+static int try_subject_grant_profile(const struct hold_store *system_store,
+                                     const char *subject,
+                                     const char *alias,
+                                     const char *hash,
+                                     const char *required_action,
+                                     struct hold_profile *profile_out) {
+    struct hold_profile tmp;
+    struct hold_profile *dst = profile_out ? profile_out : &tmp;
+    if (hold_load_subject_grant_profile(system_store, subject, alias, hash, required_action, dst) != 0) {
+        return -1;
+    }
+    if (!profile_out) {
+        hold_free_profile(&tmp);
+    }
+    return 0;
+}
+
+static int try_group_subject_grant_profile(const struct hold_store *system_store,
+                                           const char *group_name,
+                                           const char *alias,
+                                           const char *hash,
+                                           const char *required_action,
+                                           struct hold_profile *profile_out) {
+    if (!group_name || !*group_name || !hold_valid_alias(group_name)) {
+        return -1;
+    }
+    char subject[ALIAS_MAX_LEN + 2];
+    if (hold_checked_snprintf(subject, sizeof(subject), "%%%s", group_name) != 0) {
+        return -1;
+    }
+    return try_subject_grant_profile(system_store, subject, alias, hash, required_action, profile_out);
+}
+
+static int load_invocation_subject_grant_profile(const struct hold_invocation *inv,
+                                                 const struct hold_store *system_store,
+                                                 const char *alias,
+                                                 const char *hash,
+                                                 const char *required_action,
+                                                 struct hold_profile *profile_out) {
+    if (!inv || !inv->have_sudo_user || !inv->invoking_user[0]) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (try_subject_grant_profile(system_store, inv->invoking_user, alias, hash, required_action, profile_out) == 0) {
+        return 0;
+    }
+
+    struct group *primary = getgrgid(inv->invoking_gid);
+    if (primary && try_group_subject_grant_profile(system_store, primary->gr_name, alias, hash, required_action, profile_out) == 0) {
+        return 0;
+    }
+
+    setgrent();
+    struct group *gr = NULL;
+    while ((gr = getgrent()) != NULL) {
+        if (gr->gr_gid == inv->invoking_gid) {
+            continue;
+        }
+        bool member = false;
+        for (char **name = gr->gr_mem; name && *name; name++) {
+            if (strcmp(*name, inv->invoking_user) == 0) {
+                member = true;
+                break;
+            }
+        }
+        if (!member) {
+            continue;
+        }
+        if (try_group_subject_grant_profile(system_store, gr->gr_name, alias, hash, required_action, profile_out) == 0) {
+            endgrent();
+            return 0;
+        }
+    }
+    endgrent();
+    errno = EPERM;
+    return -1;
+}
+
 int hold_cmd_cap_request_action(const struct hold_invocation *inv,
                                 const struct hold_store *system_store,
                                 bool tail,
@@ -1305,9 +1391,8 @@ int hold_cmd_cap_request_action(const struct hold_invocation *inv,
         fprintf(stderr, "hold: error: invalid capability request\n");
         return 5;
     }
-    const char *subject = (inv->have_sudo_user && inv->invoking_user[0]) ? inv->invoking_user : "root";
     struct hold_profile granted;
-    if (hold_load_subject_grant_profile(system_store, subject, profile, hash, op, &granted) != 0) {
+    if (load_invocation_subject_grant_profile(inv, system_store, profile, hash, op, &granted) != 0) {
         fprintf(stderr, "hold: error: capability for '%s' is no longer valid\n", profile);
         return 3;
     }
@@ -1383,9 +1468,8 @@ int hold_cmd_elevated_capability_action(const struct hold_invocation *inv,
         return -1;
     }
     bool grant_validated = false;
-    const char *subject = (inv->have_sudo_user && inv->invoking_user[0]) ? inv->invoking_user : NULL;
     struct hold_profile grant_probe;
-    if (subject && hold_load_subject_grant_profile(system_store, subject, alias, hash, command, &grant_probe) == 0) {
+    if (inv->have_sudo_user && load_invocation_subject_grant_profile(inv, system_store, alias, hash, command, &grant_probe) == 0) {
         hold_free_profile(&grant_probe);
         grant_validated = true;
     }

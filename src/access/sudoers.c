@@ -781,6 +781,14 @@ static int validate_hold_self_for_sudoers(const char *program, char *abs_hold, s
                 abs_hold);
         return -1;
     }
+    int problems = 0;
+    if (validate_grant_path_chain(abs_hold, "hold executable", &problems) != 0) {
+        fprintf(stderr,
+                "hold: error: refusing sudoers grant because %s has an unsafe parent directory chain\n",
+                abs_hold);
+        errno = EPERM;
+        return -1;
+    }
     return 0;
 }
 

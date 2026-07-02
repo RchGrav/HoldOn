@@ -25,13 +25,10 @@ case "$make_version" in
 esac
 
 # Current user-facing release/status files must not keep stale VERSION warnings.
-for file in README.md REVIEW.md; do
+for file in README.md REVIEW.md docs/0.4-release-cut.md docs/HOLD_0_4_UX_SPEC.md; do
   [ -f "$file" ] || continue
-  if grep -Eq 'VERSION (still says|remains|is still|file remains) `?0[.]3[.]9`?|0[.]4[.]0 has not been released while `?VERSION`? remains `?0[.]3[.]9`?' "$file"; then
-    note_fail "$file contains stale 0.3.9 current-version wording"
-  fi
-  if grep -Eq 'Current branch version file remains|VERSION remains `?0[.]3[.]9`?' "$file"; then
-    note_fail "$file contains stale current branch version wording"
+  if grep -Eq 'VERSION (still says|remains|is still|file remains)|Current branch version file remains|canonical `VERSION` file|VERSION file value|Source archive builds report the `VERSION` file value' "$file"; then
+    note_fail "$file contains stale VERSION-file wording"
   fi
 done
 

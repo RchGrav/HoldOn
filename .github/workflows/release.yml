@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Resolve version from VERSION
+      - name: Resolve version from Git tag
         id: version
         run: bash ./.github/scripts/resolve_version.sh --github-output
 

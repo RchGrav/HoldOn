@@ -10,7 +10,7 @@ The GitHub Actions release workflow builds artifacts, generates SHA256SUMS, and
 publishes the GitHub release from the pushed tag.
 
 Examples:
-  bash scripts/deploy.sh
+  bash scripts/deploy.sh              # deploy next patch tag from latest v* tag
   bash scripts/deploy.sh --skip-tests
   bash scripts/deploy.sh v1.2.3 --dry-run
 
@@ -107,7 +107,7 @@ cd "$repo_root"
 [[ -f .github/scripts/resolve_version.sh ]] || die "missing .github/scripts/resolve_version.sh"
 
 if [[ -z "$tag" ]]; then
-  tag=$(bash .github/scripts/resolve_version.sh --base)
+  tag=$(bash scripts/bump_version.sh patch)
 fi
 
 case "$tag" in
@@ -129,11 +129,6 @@ fi
 
 current_branch=$(git branch --show-current)
 [[ -n "$current_branch" ]] || die "deploy from a branch, not a detached HEAD"
-
-version_base=$(bash .github/scripts/resolve_version.sh --base)
-if [[ "$version_base" != "$version" ]]; then
-  die "VERSION is $version_base, but deploy tag is $tag"
-fi
 
 if ! grep -Eq "^##[[:space:]]+${version//./\\.}([[:space:]-]|$)" CHANGELOG.md 2>/dev/null; then
   note "deploy: warning: CHANGELOG.md does not appear to have a $version section"

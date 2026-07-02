@@ -30,7 +30,7 @@ struct start_profile_target {
 static volatile sig_atomic_t g_restart_stop = 0;
 
 static const char *explicit_start_argv0(bool owned, const char *command, int argc, char **argv);
-static int apply_child_env(int envc, char **env);
+static int apply_child_env(int envc, char **env, bool clean_base);
 static int apply_child_capabilities(int cap_addc, char **cap_add, int cap_dropc, char **cap_drop);
 static int private_start_hash_for_token(const struct hold_store *store,
                                         const char *token,
@@ -96,14 +96,14 @@ static int reserve_hashed_run_id(const struct hold_store *store,
                                  const char *cwd,
                                  int64_t start_unix_ns,
                                  char out[ID_STR_LEN]);
-static void spawn_log_capture(int stdout_fd,
-                              int stderr_fd,
-                              const char *log_path,
-                              const char *log_destination,
-                              const char *id,
-                              const char *name,
-                              const char *profile,
-                              const char *cmdline);
+static int spawn_log_capture(int stdout_fd,
+                             int stderr_fd,
+                             const char *log_path,
+                             const char *log_destination,
+                             const char *id,
+                             const char *name,
+                             const char *profile,
+                             const char *cmdline);
 static void close_stdio_to_devnull(void);
 static int enter_privileged_exec_cwd(void);
 static void spawn_auto_remove_watcher(const struct hold_store *store, const struct hold_run_record *record);
@@ -529,19 +529,24 @@ static void logger_write_bytes(int logfd,
     }
 }
 
-static void spawn_log_capture(int stdout_fd,
-                              int stderr_fd,
-                              const char *log_path,
-                              const char *log_destination,
-                              const char *id,
-                              const char *name,
-                              const char *profile,
-                              const char *cmdline) {
+static int spawn_log_capture(int stdout_fd,
+                             int stderr_fd,
+                             const char *log_path,
+                             const char *log_destination,
+                             const char *id,
+                             const char *name,
+                             const char *profile,
+                             const char *cmdline) {
     pid_t logger = fork();
-    if (logger != 0) {
+    if (logger < 0) {
         if (stdout_fd >= 0) close(stdout_fd);
         if (stderr_fd >= 0) close(stderr_fd);
-        return;
+        return -1;
+    }
+    if (logger > 0) {
+        if (stdout_fd >= 0) close(stdout_fd);
+        if (stderr_fd >= 0) close(stderr_fd);
+        return 0;
     }
     close_stdio_to_devnull();
     int logfd = open_log_append_no_symlink(log_path);
@@ -601,6 +606,7 @@ static void run_restart_supervisor(int handshake_fd,
                                    bool interactive_stdin,
                                    int envc,
                                    char **env,
+                                   bool clean_child_env,
                                    const char *resolved_exec_path,
                                    char **launch_argv,
                                    int cap_addc,
@@ -621,7 +627,7 @@ static void run_restart_supervisor(int handshake_fd,
         hold_write_all(handshake_fd, &e, sizeof(e));
         _exit(127);
     }
-    if (apply_child_env(envc, env) != 0) {
+    if (apply_child_env(envc, env, clean_child_env) != 0) {
         int e = errno;
         hold_write_all(handshake_fd, &e, sizeof(e));
         _exit(127);
@@ -694,7 +700,39 @@ static const char *explicit_start_argv0(bool owned, const char *command, int arg
     return NULL;
 }
 
-static int apply_child_env(int envc, char **env) {
+extern char **environ;
+
+static int clear_process_environment(void) {
+#if defined(__GLIBC__)
+    if (clearenv() != 0) return -1;
+    return 0;
+#else
+    while (environ && environ[0]) {
+        const char *entry = environ[0];
+        const char *eq = strchr(entry, '=');
+        if (!eq || eq == entry) {
+            errno = EINVAL;
+            return -1;
+        }
+        size_t key_len = (size_t)(eq - entry);
+        char key[256];
+        if (key_len >= sizeof(key)) {
+            errno = EINVAL;
+            return -1;
+        }
+        memcpy(key, entry, key_len);
+        key[key_len] = '\0';
+        if (unsetenv(key) != 0) return -1;
+    }
+    return 0;
+#endif
+}
+
+static int apply_child_env(int envc, char **env, bool clean_base) {
+    if (clean_base) {
+        if (clear_process_environment() != 0) return -1;
+        if (setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0) return -1;
+    }
     for (int i = 0; i < envc; i++) {
         const char *entry = env ? env[i] : NULL;
         const char *eq = entry ? strchr(entry, '=') : NULL;
@@ -1216,6 +1254,7 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     bool console_have_allowed_peer_uid = inv && inv->euid_root && inv->have_sudo_user && inv->invoking_uid != console_owner_uid;
     uid_t console_allowed_peer_uid = console_have_allowed_peer_uid ? inv->invoking_uid : (uid_t)0;
     bool pin_privileged_cwd = inv && inv->euid_root && inv->have_sudo_user;
+    bool clean_child_env = inv && inv->euid_root && store && store->kind == STORE_SYSTEM_MANAGED;
 
     /* Capture the invoking terminal size up front so the console broker can size
      * its PTY before the child execs. The broker itself runs with /dev/null stdio
@@ -1352,6 +1391,7 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
                                    interactive_stdin,
                                    envc,
                                    env,
+                                   clean_child_env,
                                    resolved_exec_path,
                                    launch_argv,
                                    cap_addc,
@@ -1410,7 +1450,7 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
             hold_write_all(pipefd[1], &e, sizeof(e));
             _exit(127);
         }
-        if (apply_child_env(envc, env) != 0) {
+        if (apply_child_env(envc, env, clean_child_env) != 0) {
             int e = errno;
             hold_write_all(pipefd[1], &e, sizeof(e));
             _exit(127);
@@ -1544,14 +1584,28 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         snprintf(logger_cmdline, sizeof(logger_cmdline), "?");
     }
     if (!console_mode) {
-        spawn_log_capture(stdout_pipe[0],
-                          stderr_pipe[0],
-                          log_path,
-                          log_destination,
-                          id,
-                          run_name,
-                          run_alias,
-                          logger_cmdline);
+        if (spawn_log_capture(stdout_pipe[0],
+                              stderr_pipe[0],
+                              log_path,
+                              log_destination,
+                              id,
+                              run_name,
+                              run_alias,
+                              logger_cmdline) != 0) {
+            int saved = errno;
+            stdout_pipe[0] = -1;
+            stderr_pipe[0] = -1;
+            hold_rollback_spawned_group(supervisor_pid, pid);
+            kill_supervisor_if_distinct(supervisor_pid, pid);
+            unlink_if_nonempty(reserve_path);
+            if (owns_new_log) unlink(log_path);
+            if (console_sock[0]) {
+                unlink(console_sock);
+            }
+            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
+            errno = saved;
+            hold_die_errno("hold: logger fork failed");
+        }
         stdout_pipe[0] = -1;
         stderr_pipe[0] = -1;
     }

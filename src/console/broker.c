@@ -36,6 +36,7 @@ static bool authorize_console_client(int client,
                                      uid_t owner_uid,
                                      bool have_allowed_peer_uid,
                                      uid_t allowed_peer_uid);
+static int set_fd_nonblocking(int fd);
 
 void hold_handle_console_sigwinch(int signo) {
     (void)signo;
@@ -82,6 +83,13 @@ static void broker_fail_errno(int parent_pipe,
     }
     (void)hold_write_all(parent_pipe, &err, sizeof(err));
     broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, 127);
+}
+
+static int set_fd_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) return -1;
+    return 0;
 }
 
 static bool console_peer_uid_allowed(uid_t peer_uid,
@@ -292,7 +300,9 @@ void hold_run_console_broker(int parent_pipe,
         if (listener_events & POLLIN) {
             int next = accept(listener, NULL, NULL);
             if (next >= 0) {
-                if (!authorize_console_client(next, owner_uid, have_allowed_peer_uid, allowed_peer_uid)) {
+                if (set_fd_nonblocking(next) != 0) {
+                    close(next);
+                } else if (!authorize_console_client(next, owner_uid, have_allowed_peer_uid, allowed_peer_uid)) {
                     close(next);
                 } else if (client >= 0) {
                     static const char msg[] = "hold: console already attached\n";

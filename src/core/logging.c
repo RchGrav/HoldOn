@@ -128,10 +128,48 @@ static int read_logidx_header(int fd, struct hold_logidx_header_mem *h) {
     return 0;
 }
 
+static int open_log_index_no_symlink(const char *idx_path) {
+    if (!idx_path || !*idx_path) {
+        errno = EINVAL;
+        return -1;
+    }
+    const char *slash = strrchr(idx_path, '/');
+    if (!slash || slash == idx_path || !slash[1]) {
+        errno = EINVAL;
+        return -1;
+    }
+    size_t dir_len = (size_t)(slash - idx_path);
+    if (dir_len >= HOLD_PATH_MAX) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    char dir[HOLD_PATH_MAX];
+    memcpy(dir, idx_path, dir_len);
+    dir[dir_len] = '\0';
+
+    int dirfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (dirfd < 0) return -1;
+    int fd = openat(dirfd, slash + 1, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    int saved = errno;
+    close(dirfd);
+    if (fd < 0) {
+        errno = saved;
+        return -1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        saved = errno ? errno : EINVAL;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    return fd;
+}
+
 int hold_open_log_index_fd(const char *log_path, int raw_log_fd) {
     char idx_path[HOLD_PATH_MAX];
     if (hold_log_idx_path(log_path, idx_path, sizeof(idx_path)) != 0) return -1;
-    int fd = open(idx_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    int fd = open_log_index_no_symlink(idx_path);
     if (fd < 0) return -1;
     struct stat st;
     memset(&st, 0, sizeof(st));
@@ -140,8 +178,10 @@ int hold_open_log_index_fd(const char *log_path, int raw_log_fd) {
         return -1;
     }
     struct stat idx_st;
-    if (fstat(fd, &idx_st) != 0) {
+    if (fstat(fd, &idx_st) != 0 || !S_ISREG(idx_st.st_mode)) {
+        int saved = errno ? errno : EINVAL;
         close(fd);
+        errno = saved;
         return -1;
     }
     if (idx_st.st_size >= (off_t)HOLD_LOGIDX_HEADER_SIZE) {

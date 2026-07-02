@@ -6,10 +6,12 @@
 static int get_boot_id(char *buf, size_t n);
 
 static int get_boot_id(char *buf, size_t n) {
+#ifdef HOLD_TESTING
     const char *path = getenv("HOLD_BOOT_ID_PATH");
     if (path && *path) {
         return hold_read_file_trim(path, buf, n);
     }
+#endif
     if (hold_read_file_trim(HOLD_BOOT_ID_PATH, buf, n) == 0) {
         return 0;
     }

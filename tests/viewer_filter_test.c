@@ -1,5 +1,7 @@
 #include "hold/config.h"
+#include "hold/core.h"
 #include "hold/log_viewer.h"
+#include "hold/platform.h"
 
 static int failures = 0;
 
@@ -40,6 +42,100 @@ static void rewind_or_die(int fd) {
         perror("lseek");
         exit(2);
     }
+}
+
+static void test_log_index_rejects_symlink(void) {
+    char dir[] = "/tmp/hold-log-index-test.XXXXXX";
+    EXPECT_TRUE("mkdtemp for log index symlink test", mkdtemp(dir) != NULL);
+    if (!dir[0]) return;
+
+    char log_path[HOLD_PATH_MAX];
+    char idx_path[HOLD_PATH_MAX];
+    char sentinel_path[HOLD_PATH_MAX];
+    EXPECT_TRUE("format log path", hold_checked_snprintf(log_path, sizeof(log_path), "%s/run.log", dir) == 0);
+    EXPECT_TRUE("format idx path", hold_checked_snprintf(idx_path, sizeof(idx_path), "%s.idx", log_path) == 0);
+    EXPECT_TRUE("format sentinel path", hold_checked_snprintf(sentinel_path, sizeof(sentinel_path), "%s/sentinel", dir) == 0);
+
+    int logfd = open(log_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    EXPECT_TRUE("create raw log", logfd >= 0);
+    int sentinel = open(sentinel_path, O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    EXPECT_TRUE("create sentinel", sentinel >= 0);
+    if (sentinel >= 0) {
+        write_all_or_die(sentinel, "sentinel\n");
+        close(sentinel);
+    }
+    EXPECT_TRUE("plant idx symlink", symlink(sentinel_path, idx_path) == 0);
+
+    int idxfd = logfd >= 0 ? hold_open_log_index_fd(log_path, logfd) : -1;
+    EXPECT_TRUE("symlinked log index is rejected", idxfd < 0);
+    if (idxfd >= 0) close(idxfd);
+    if (logfd >= 0) close(logfd);
+
+    int check = open(sentinel_path, O_RDONLY | O_CLOEXEC);
+    EXPECT_TRUE("sentinel still exists", check >= 0);
+    if (check >= 0) {
+        char buf[32];
+        ssize_t n = read(check, buf, sizeof(buf) - 1);
+        EXPECT_TRUE("sentinel still readable", n > 0);
+        if (n > 0) {
+            buf[n] = '\0';
+            EXPECT_TRUE("sentinel content untouched", strcmp(buf, "sentinel\n") == 0);
+        }
+        close(check);
+    }
+    unlink(idx_path);
+    unlink(log_path);
+    unlink(sentinel_path);
+    rmdir(dir);
+}
+
+static void test_json_rejects_raw_control_bytes(void) {
+    char out[16];
+    EXPECT_TRUE("raw control byte in JSON string is rejected",
+                hold_parse_json_string("\"bad\001\"", out, sizeof(out), NULL) != 0);
+    EXPECT_TRUE("escaped control byte in JSON string remains accepted",
+                hold_parse_json_string("\"bad\\n\"", out, sizeof(out), NULL) == 0 && strcmp(out, "bad\n") == 0);
+}
+
+static void test_path_empty_components_do_not_resolve_cwd(void) {
+    char original_cwd[HOLD_PATH_MAX];
+    EXPECT_TRUE("save cwd", getcwd(original_cwd, sizeof(original_cwd)) != NULL);
+
+    char dir[] = "/tmp/hold-path-test.XXXXXX";
+    EXPECT_TRUE("mkdtemp for path test", mkdtemp(dir) != NULL);
+    char cwd_helper[HOLD_PATH_MAX];
+    char bin_dir[HOLD_PATH_MAX];
+    char bin_helper[HOLD_PATH_MAX];
+    EXPECT_TRUE("format cwd helper", hold_checked_snprintf(cwd_helper, sizeof(cwd_helper), "%s/fake-helper", dir) == 0);
+    EXPECT_TRUE("format bin dir", hold_checked_snprintf(bin_dir, sizeof(bin_dir), "%s/bin", dir) == 0);
+    EXPECT_TRUE("format bin helper", hold_checked_snprintf(bin_helper, sizeof(bin_helper), "%s/fake-helper", bin_dir) == 0);
+    EXPECT_TRUE("mkdir bin dir", mkdir(bin_dir, 0700) == 0);
+
+    int fd = open(cwd_helper, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0700);
+    EXPECT_TRUE("create cwd helper", fd >= 0);
+    if (fd >= 0) close(fd);
+    fd = open(bin_helper, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0700);
+    EXPECT_TRUE("create PATH helper", fd >= 0);
+    if (fd >= 0) close(fd);
+
+    char resolved[HOLD_PATH_MAX];
+    EXPECT_TRUE("chdir path temp", chdir(dir) == 0);
+    EXPECT_TRUE("empty-only PATH does not resolve cwd helper",
+                setenv("PATH", ":", 1) == 0 && hold_resolve_binary_path("fake-helper", resolved, sizeof(resolved)) != 0);
+    char path_value[HOLD_PATH_MAX];
+    EXPECT_TRUE("format PATH with empty components", hold_checked_snprintf(path_value, sizeof(path_value), ":%s:", bin_dir) == 0);
+    char *expected = realpath(bin_helper, NULL);
+    EXPECT_TRUE("realpath PATH helper", expected != NULL);
+    EXPECT_TRUE("PATH non-empty component still resolves",
+                expected && setenv("PATH", path_value, 1) == 0 && hold_resolve_binary_path("fake-helper", resolved, sizeof(resolved)) == 0 &&
+                    strcmp(resolved, expected) == 0);
+    free(expected);
+
+    EXPECT_TRUE("restore cwd", chdir(original_cwd) == 0);
+    unlink(cwd_helper);
+    unlink(bin_helper);
+    rmdir(bin_dir);
+    rmdir(dir);
 }
 
 static void test_literal_filter(void) {
@@ -225,6 +321,9 @@ static void test_backward_sparse_window_reports_partial(void) {
 }
 
 int main(void) {
+    test_log_index_rejects_symlink();
+    test_json_rejects_raw_control_bytes();
+    test_path_empty_components_do_not_resolve_cwd();
     test_literal_filter();
     test_similarity_filter();
     test_exclude_similarity_filter();

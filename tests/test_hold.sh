@@ -22,6 +22,7 @@ USER_ACTOR_NEEDS_SUDO=0
 ROOT_ACTOR_AVAILABLE=0
 SUDO_BIN="$(command -v sudo || true)"
 USER_CREATED=0
+ROOT_SAFE_HOLD_DIR=""
 HOLD_TEST_TIMEOUT="${HOLD_TEST_TIMEOUT:-25}"
 
 PASSES=0
@@ -58,6 +59,13 @@ suite_cleanup() {
   set +e
   if [ "$USER_CREATED" -eq 1 ] && [ -n "$TEST_USER" ]; then
     userdel "$TEST_USER" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$ROOT_SAFE_HOLD_DIR" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      rm -rf "$ROOT_SAFE_HOLD_DIR" >/dev/null 2>&1 || true
+    elif [ -n "$SUDO_BIN" ]; then
+      "$SUDO_BIN" -n rm -rf "$ROOT_SAFE_HOLD_DIR" >/dev/null 2>&1 || true
+    fi
   fi
   remove_tree "$SUITE_ROOT"
 }
@@ -878,27 +886,33 @@ test_print_signal_output() {
 }
 
 test_signal_refuses_tampered_live_group_identity() {
-  local out id rec real_pgid real_sid shell_pgid shell_sid rc
+  local out id rec real_pgid real_sid decoy_out decoy_id decoy_pgid decoy_sid rc
   out=$("$HOLD_BIN" -d sleep 300 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   real_pgid=$(record_pgid "$id")
   real_sid=$(record_sid "$id")
   [ -n "$id" ] && [ -n "$real_pgid" ] && [ -n "$real_sid" ] || return 1
-  shell_pgid=$(ps -o pgid= -p $$ | tr -d ' ')
-  shell_sid=$(ps -o sid= -p $$ | tr -d ' ')
-  [ -n "$shell_pgid" ] && [ -n "$shell_sid" ] || return 1
-  case "$shell_pgid:$shell_sid" in
-    *[!0-9:]*|0:*|1:*|*:0)
-      "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
-      skip "shell pgid/sid unavailable for live tamper check"
-      ;;
-  esac
-  [ "$shell_pgid" != "$real_pgid" ] || { "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; skip "shell and target unexpectedly share pgid"; }
+
+  decoy_out=$("$HOLD_BIN" -d sleep 300 2>&1) || { "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; return 1; }
+  decoy_id=$(printf '%s\n' "$decoy_out" | extract_id)
+  decoy_pgid=$(record_pgid "$decoy_id")
+  decoy_sid=$(record_sid "$decoy_id")
+  [ -n "$decoy_id" ] && [ -n "$decoy_pgid" ] && [ -n "$decoy_sid" ] || {
+    "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
+    [ -n "$decoy_id" ] && "$HOLD_BIN" stop "$decoy_id" >/dev/null 2>&1 || true
+    return 1
+  }
+  [ "$decoy_pgid" != "$real_pgid" ] && [ "$decoy_sid" != "$real_sid" ] || {
+    "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
+    "$HOLD_BIN" stop "$decoy_id" >/dev/null 2>&1 || true
+    return 1
+  }
+
   rec=$(record_path "$id") || return 1
   cp "$rec" "$rec.bak" || return 1
   sed -i.tmp \
-    -e "s/\"pgid\":[[:space:]]*[0-9][0-9]*/\"pgid\":$shell_pgid/" \
-    -e "s/\"sid\":[[:space:]]*[0-9][0-9]*/\"sid\":$shell_sid/" \
+    -e "s/\"pgid\":[[:space:]]*[0-9][0-9]*/\"pgid\":$decoy_pgid/" \
+    -e "s/\"sid\":[[:space:]]*[0-9][0-9]*/\"sid\":$decoy_sid/" \
     "$rec" || return 1
   rm -f "$rec.tmp"
   set +e
@@ -907,6 +921,7 @@ test_signal_refuses_tampered_live_group_identity() {
   set -e
   mv "$rec.bak" "$rec" 2>/dev/null || true
   "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
+  "$HOLD_BIN" stop "$decoy_id" >/dev/null 2>&1 || true
   [ "$rc" -eq 2 ] || { echo "--print on tampered live pgid/sid: rc=$rc (want 2 refused)" >&2; return 1; }
   grep -Eq 'process group/session differs|cannot be signaled' "$TEST_ROOT/tampered-live-print.err" || {
     cat "$TEST_ROOT/tampered-live-print.err" >&2
@@ -3391,10 +3406,7 @@ test_system_profile_save_preserves_capability_metadata() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local out id hash started cap_id cap_record profiles safe sudoers_dir visudo_ok grant_hash grant_private grant_public cap_token cap_out rc
 
-  safe="$TEST_ROOT/hold-grant-cap"
-  cp "$HOLD_REAL_BIN" "$safe" || return 1
-  as_root chown 0:0 "$safe" || return 1
-  as_root chmod 755 "$safe" || return 1
+  safe=$(root_safe_hold_copy hold-grant-cap) || return 1
 
   out=$(as_root "$safe" run -d --cap-drop ALL -- /bin/sleep 60 2>&1) || {
     printf '%s\n' "$out" >&2
@@ -3489,10 +3501,7 @@ test_grant_refuses_user_writable_profile_paths() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local safe out id script sudoers_dir visudo_ok rc grant_private grant_public grant_hash cap_token
 
-  safe="$TEST_ROOT/hold-grant-paths"
-  cp "$HOLD_REAL_BIN" "$safe" || return 1
-  as_root chown 0:0 "$safe" || return 1
-  as_root chmod 755 "$safe" || return 1
+  safe=$(root_safe_hold_copy hold-grant-paths) || return 1
 
   script="$TEST_ROOT/user-writable-target.sh"
   printf '#!/bin/sh\nsleep 60\n' >"$script" || return 1
@@ -3556,10 +3565,7 @@ test_granted_start_pins_privileged_cwd() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local safe out id hash sudoers_dir visudo_ok grant_public grant_hash cap_token hostile cap_out cap_id log
 
-  safe="$TEST_ROOT/hold-grant-cwd"
-  cp "$HOLD_REAL_BIN" "$safe" || return 1
-  as_root chown 0:0 "$safe" || return 1
-  as_root chmod 755 "$safe" || return 1
+  safe=$(root_safe_hold_copy hold-grant-cwd) || return 1
 
   out=$(as_root "$safe" run -d -- /bin/pwd 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
@@ -3641,11 +3647,8 @@ EOF
     echo "Docker-shaped grant digest vector mismatch: $docker_vector_digest != $vector_digest" >&2
     return 1
   }
-  safe="$TEST_ROOT/hold-safe"
+  safe=$(root_safe_hold_copy hold-safe) || return 1
   sh_bin="$(resolve_path /bin/sh)" || return 1
-  cp "$HOLD_REAL_BIN" "$safe" || return 1
-  as_root chown 0:0 "$safe" || return 1
-  as_root chmod 755 "$safe" || return 1
   safe_real="$(cd "$(dirname "$safe")" && pwd -P)/$(basename "$safe")" || return 1
   sudoers_dir="$TEST_ROOT/sudoers.d"
   mkdir -p "$sudoers_dir" || return 1
@@ -3907,10 +3910,7 @@ PY
 test_elevated_capability_start_and_stop_validate_alias_hash() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local safe out id hash start_out cap_id rc
-  safe="$TEST_ROOT/hold-cap"
-  cp "$HOLD_REAL_BIN" "$safe" || return 1
-  as_root chown 0:0 "$safe" || return 1
-  as_root chmod 755 "$safe" || return 1
+  safe=$(root_safe_hold_copy hold-cap) || return 1
 
   out=$(as_root "$safe" -d /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
@@ -5489,16 +5489,28 @@ as_user_spoof_sudo() {
   fi
 }
 
+root_safe_hold_copy() {
+  local name="$1" dir path
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 1
+  ROOT_SAFE_HOLD_DIR="/usr/local/lib/hold-test-$$"
+  dir="$ROOT_SAFE_HOLD_DIR/$(basename "$TEST_ROOT")"
+  path="$dir/$name"
+  as_root mkdir -p "$dir" || return 1
+  as_root chown 0:0 "$ROOT_SAFE_HOLD_DIR" "$dir" || return 1
+  as_root chmod 755 "$ROOT_SAFE_HOLD_DIR" "$dir" || return 1
+  as_root cp "$HOLD_REAL_BIN" "$path" || return 1
+  as_root chown 0:0 "$path" || return 1
+  as_root chmod 755 "$path" || return 1
+  printf '%s\n' "$path"
+}
+
 # Pin a root system alias 'web-sys' with a safe (root-owned, 0755, no-space-path)
 # hold copy and a passing visudo stub. Call directly (NOT in $(...)) so the
 # exported HOLD_TEST_SUDOERS_DIR/VISUDO_PROG reach the caller; sets globals
 # GRANT_SAFE and GRANT_SUDOERS_DIR.
 grant_fixture() {
   local id
-  GRANT_SAFE="$TEST_ROOT/hold-safe"
-  cp "$HOLD_REAL_BIN" "$GRANT_SAFE" || return 1
-  as_root chown 0:0 "$GRANT_SAFE" || return 1
-  as_root chmod 755 "$GRANT_SAFE" || return 1
+  GRANT_SAFE=$(root_safe_hold_copy hold-safe) || return 1
   GRANT_SUDOERS_DIR="$TEST_ROOT/sudoers.d"
   mkdir -p "$GRANT_SUDOERS_DIR" || return 1
   chmod 755 "$GRANT_SUDOERS_DIR" || return 1
@@ -5769,7 +5781,18 @@ test_grant_refuses_unsafe_self_binary() {
   set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/w.err"; rc=$?; set -e
   [ "$rc" -ne 0 ] || { echo "granted via a world-writable binary" >&2; return 1; }
   root_path_absent "$sudoers_file" || { echo "sudoers written via world-writable binary" >&2; return 1; }
-  # (c) whitespace in the binary path
+  # (c) root-owned hold binary beneath an unsafe parent directory
+  mkdir -p "$TEST_ROOT/unsafe-parent" || return 1
+  chmod 0777 "$TEST_ROOT/unsafe-parent" || return 1
+  bad="$TEST_ROOT/unsafe-parent/hold"
+  cp "$HOLD_REAL_BIN" "$bad" || return 1
+  as_root chown 0:0 "$bad" || return 1
+  as_root chmod 755 "$bad" || return 1
+  set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/p.err"; rc=$?; set -e
+  [ "$rc" -ne 0 ] || { echo "granted via a binary under an unsafe parent directory" >&2; return 1; }
+  grep -Eq 'unsafe parent directory chain|not grant-safe' "$TEST_ROOT/p.err" || { cat "$TEST_ROOT/p.err" >&2; return 1; }
+  root_path_absent "$sudoers_file" || { echo "sudoers written via unsafe-parent binary" >&2; return 1; }
+  # (d) whitespace in the binary path
   mkdir -p "$TEST_ROOT/bad dir" || return 1
   bad="$TEST_ROOT/bad dir/hold"
   cp "$HOLD_REAL_BIN" "$bad" || return 1

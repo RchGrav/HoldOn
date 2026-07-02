@@ -10,7 +10,7 @@ else
 STATIC_LDFLAGS ?= -static
 endif
 TEST_LDFLAGS ?=
-VERSION_BASE ?= $(shell bash .github/scripts/resolve_version.sh --base 2>/dev/null || sed -n '1s/[[:space:]]*$$//p' VERSION 2>/dev/null || printf dev)
+VERSION_BASE ?= $(shell bash .github/scripts/resolve_version.sh --base 2>/dev/null || printf dev)
 VERSION ?= $(shell if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git describe --tags --exact-match --dirty 2>/dev/null || printf '%s-%s%s\n' "$(VERSION_BASE)" "$$(git rev-parse --short HEAD)" "$$(git diff --quiet 2>/dev/null || echo -dirty)"; else printf '%s\n' "$(VERSION_BASE)"; fi)
 VERSION_CPPFLAG := -DHOLD_VERSION=\"$(VERSION)\"
 
@@ -69,7 +69,7 @@ hash-vector:
 	@./hash-vector
 
 viewer-filter-test:
-	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logging.c src/core/json.c src/core/util.c
+	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logging.c src/core/json.c src/core/util.c src/platform/paths.c
 	@./viewer-filter-test
 
 test-040: hold-dynamic

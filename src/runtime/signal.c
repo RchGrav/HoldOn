@@ -108,6 +108,7 @@ static int validate_signal_target(const char *id,
         return 2;
     }
 
+    bool have_identity_token = r->proc_starttime_ticks != 0 || (r->exe_dev != 0 && r->exe_ino != 0);
     char leader_state = 0;
     uint64_t leader_starttime = 0;
     bool have_leader_stat = hold_read_proc_stat_tokens(r->pid, &leader_state, &leader_starttime) == 0;
@@ -133,6 +134,10 @@ static int validate_signal_target(const char *id,
             return 2;
         }
         if (current_pgid >= 0 && current_sid >= 0) {
+            if (!have_identity_token) {
+                fprintf(stderr, "hold: error: run %s has no recorded process identity token and cannot be signaled\n", id);
+                return 2;
+            }
             return 0;
         }
     }
@@ -143,6 +148,10 @@ static int validate_signal_target(const char *id,
 
     enum group_liveness gl = hold_group_session_liveness(r->pgid, r->sid);
     if (gl == GROUP_LIVE) {
+        if (!have_identity_token) {
+            fprintf(stderr, "hold: error: run %s has no recorded process identity token and cannot be signaled\n", id);
+            return 2;
+        }
         return 0;
     }
     if (gl == GROUP_EMPTY || gl == GROUP_ZOMBIE_ONLY) {
@@ -269,6 +278,19 @@ int hold_do_signal_action(const struct hold_store *store, const char *id, int si
     if (graceful) {
         if (hold_wait_target_group_gone(&r, STOP_TIMEOUT_MS)) {
             hold_report_session_escapees(&r);
+            hold_free_run_record(&r);
+            return 0;
+        }
+        signal_state = SIGNAL_TARGET_RUNNING;
+        validation_rc = validate_signal_target(id, &r, false, &signal_state);
+        if (validation_rc != 0) {
+            hold_free_run_record(&r);
+            return validation_rc;
+        }
+        if (signal_state == SIGNAL_TARGET_EXITED) {
+            if (already_done) {
+                *already_done = true;
+            }
             hold_free_run_record(&r);
             return 0;
         }

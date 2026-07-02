@@ -497,6 +497,44 @@ out:
     return rc;
 }
 
+static int checked_i64_to_pid(int64_t v, pid_t *out) {
+    pid_t narrowed = (pid_t)v;
+    if ((int64_t)narrowed != v) {
+        errno = ERANGE;
+        return -1;
+    }
+    *out = narrowed;
+    return 0;
+}
+
+static int checked_i64_to_uid(int64_t v, uid_t *out) {
+    if (v < 0) {
+        errno = ERANGE;
+        return -1;
+    }
+    uid_t narrowed = (uid_t)v;
+    if ((uintmax_t)narrowed != (uintmax_t)v) {
+        errno = ERANGE;
+        return -1;
+    }
+    *out = narrowed;
+    return 0;
+}
+
+static int checked_i64_to_gid(int64_t v, gid_t *out) {
+    if (v < 0) {
+        errno = ERANGE;
+        return -1;
+    }
+    gid_t narrowed = (gid_t)v;
+    if ((uintmax_t)narrowed != (uintmax_t)v) {
+        errno = ERANGE;
+        return -1;
+    }
+    *out = narrowed;
+    return 0;
+}
+
 int hold_load_record(const char *path, struct hold_run_record *r) {
     memset(r, 0, sizeof(*r));
     char *j = NULL;
@@ -525,21 +563,30 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
             return -1;
         }
     }
-    r->pid = (pid_t)tmp;
+    if (checked_i64_to_pid(tmp, &r->pid) != 0) {
+        free(j);
+        return -1;
+    }
     if (hold_json_get_i64(j, "pgid", &tmp) != 0) {
         if (!state_obj || *state_obj != '{' || hold_json_get_i64(state_obj, "Pgid", &tmp) != 0) {
             free(j);
             return -1;
         }
     }
-    r->pgid = (pid_t)tmp;
+    if (checked_i64_to_pid(tmp, &r->pgid) != 0) {
+        free(j);
+        return -1;
+    }
     if (hold_json_get_i64(j, "sid", &tmp) != 0) {
         if (!state_obj || *state_obj != '{' || hold_json_get_i64(state_obj, "Sid", &tmp) != 0) {
             free(j);
             return -1;
         }
     }
-    r->sid = (pid_t)tmp;
+    if (checked_i64_to_pid(tmp, &r->sid) != 0) {
+        free(j);
+        return -1;
+    }
     if (hold_json_get_i64(j, "start_unix_ns", &r->start_unix_ns) != 0) {
         r->start_unix_ns = 0;
     }
@@ -550,19 +597,31 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
         free(j);
         return -1;
     }
-    r->uid = (uid_t)tmp;
+    if (checked_i64_to_uid(tmp, &r->uid) != 0) {
+        free(j);
+        return -1;
+    }
     if (hold_json_get_i64(j, "gid", &tmp) != 0) {
         free(j);
         return -1;
     }
-    r->gid = (gid_t)tmp;
+    if (checked_i64_to_gid(tmp, &r->gid) != 0) {
+        free(j);
+        return -1;
+    }
     if (hold_json_get_i64(j, "invoked_by_uid", &tmp) == 0) {
         r->has_invocation = true;
-        r->invoked_by_uid = (uid_t)tmp;
+        if (checked_i64_to_uid(tmp, &r->invoked_by_uid) != 0) {
+            free(j);
+            return -1;
+        }
     }
     if (hold_json_get_i64(j, "invoked_by_gid", &tmp) == 0) {
         r->has_invocation = true;
-        r->invoked_by_gid = (gid_t)tmp;
+        if (checked_i64_to_gid(tmp, &r->invoked_by_gid) != 0) {
+            free(j);
+            return -1;
+        }
     }
     if (hold_json_get_str(j, "invoked_by_user", r->invoked_by_user, sizeof(r->invoked_by_user)) == 0) {
         r->has_invocation = true;
@@ -966,7 +1025,12 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
         return -1;
     }
     struct stat old_st;
-    bool have_old_st = stat(path, &old_st) == 0;
+    bool have_old_st = false;
+    int old_fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (old_fd >= 0) {
+        have_old_st = fstat(old_fd, &old_st) == 0 && S_ISREG(old_st.st_mode);
+        close(old_fd);
+    }
 
     snprintf(r.state, sizeof(r.state), "%s", "exited");
     r.has_state = true;
@@ -995,8 +1059,14 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
     char rewritten_path[HOLD_PATH_MAX] = {0};
     int rc = hold_write_record_atomic(store->record_dir, &r, argc, argv, rewritten_path, sizeof(rewritten_path));
     if (rc == 0 && have_old_st && geteuid() == 0 && rewritten_path[0]) {
-        if (chown(rewritten_path, old_st.st_uid, old_st.st_gid) != 0) {
+        int rewritten_fd = open(rewritten_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (rewritten_fd < 0) {
             rc = -1;
+        } else {
+            if (fchown(rewritten_fd, old_st.st_uid, old_st.st_gid) != 0) {
+                rc = -1;
+            }
+            close(rewritten_fd);
         }
     }
     if (rc == 0 && store->kind == STORE_SYSTEM_MANAGED && store->public_dir[0]) {

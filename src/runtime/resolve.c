@@ -729,6 +729,40 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
         return 5;
     }
 
+    if (!cap_token && hold_valid_alias(atom)) {
+        int name_rc = 0;
+        if (inv->euid_root) {
+            if (scope == ID_TOKEN_USER) {
+                struct hold_store user_store;
+                if (hold_init_invoking_user_store(inv, &user_store) != 0) {
+                    fprintf(stderr, "hold: error: user:%s requires sudo provenance\n", atom);
+                    return 5;
+                }
+                name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, atom, command);
+            } else if (scope == ID_TOKEN_SYSTEM) {
+                name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, atom, command);
+            } else {
+                name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, atom, command);
+                if (name_rc == 0 && inv->have_sudo_user) {
+                    struct hold_store user_store;
+                    if (hold_init_invoking_user_store(inv, &user_store) == 0) {
+                        name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, atom, command);
+                    }
+                }
+            }
+        } else {
+            if (scope == ID_TOKEN_USER || scope == ID_TOKEN_PLAIN) {
+                name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_USER_LOCAL, current_user_store, atom, command);
+            }
+            if (name_rc == 0 && (scope == ID_TOKEN_SYSTEM || scope == ID_TOKEN_PLAIN)) {
+                name_rc = append_public_run_name_target(targets_out, count_out, system_store, atom, command);
+            }
+        }
+        if (name_rc == 1) return 0;
+        if (name_rc == -2) return 6;
+        if (name_rc < 0) return 3;
+    }
+
     if (!cap_token && hold_valid_id_prefix(atom)) {
         char resolved[ID_STR_LEN];
         if (inv->euid_root) {

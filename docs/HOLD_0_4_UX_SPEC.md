@@ -16,7 +16,7 @@ Version 0.4.0 is intentionally allowed to break the current CLI because the tool
 
 JSON remains the canonical on-disk profile storage format. CLI transcript config is a human Cisco-IOS-style editing/import/export format that compiles to the JSON profile model.
 
-The hardening backlog in section 11 is part of the same 0.4.0 release plan. The redesigned CLI should not be released as stable until the product surface and hardening work are both complete. `VERSION` is still `0.3.9` in the current branch, so wording in this document is branch/spec status unless explicitly tied to implemented source and tests. See [0.4 release cut](0.4-release-cut.md), [0.4 object format repair](0.4-object-format-repair.md), and the archived [0.4.0 branch alignment matrix](archive/0.4.0-alignment.md) for implementation status and historical split decisions.
+The hardening backlog in section 11 is part of the same 0.4.0 release plan. The redesigned CLI should not be released as stable until the product surface and hardening work are both complete. Git `v*` tags are the release source of truth, so wording in this document is branch/spec status unless explicitly tied to implemented source and tests. See [0.4 release cut](0.4-release-cut.md), [0.4 object format repair](0.4-object-format-repair.md), and the archived [0.4.0 branch alignment matrix](archive/0.4.0-alignment.md) for implementation status and historical split decisions.
 
 ## 2. Core model
 
@@ -1781,13 +1781,13 @@ Acceptance:
 
 Requirements:
 
-- Update `Makefile` so builds outside a Git checkout use `VERSION` directly, without `-dev-dirty`.
+- Update `Makefile` so builds outside a Git checkout report a visible non-release `dev` version instead of stale release metadata.
 - Preserve Git tag/hash/dirty metadata inside a Git checkout.
 - Add a lightweight test or documented manual check.
 
 Acceptance:
 
-- Source ZIP builds report the `VERSION` file value.
+- Source ZIP builds without Git metadata report `dev`.
 
 ### 11.9 Clarify static build/install behavior
 
@@ -1855,6 +1855,6 @@ Acceptance:
 - Interactive TTY authorization is peer-credential enforced;
 - signal safety is stricter than display liveness;
 - system store and atomic writes reject symlink/temp-file attacks;
-- source ZIP builds report `VERSION` correctly;
+- source ZIP builds report non-release `dev` correctly;
 - installer/release flow fails closed and avoids destructive release deletion;
 - stale review claims are removed or replaced with current verification evidence.

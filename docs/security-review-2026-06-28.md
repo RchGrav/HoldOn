@@ -1,5 +1,7 @@
 # hold 0.4.0 — Security Review (2026-06-28, branch `mund-0.4.0-redesign`)
 
+> 2026-07-02 status: this document is retained as the historical review that produced the privileged-hardening repair backlog. The CR-001 through CR-015 repair batch addresses the actionable findings below, removes the stale `VERSION` file in favor of tag-derived versions, and passes both `bash scripts/linux.sh` and `bash scripts/linux.sh root` in the Apple container Linux CI path. See `.agentic/code-review-repair-2026-07-02.md` for the current repair/validation report.
+
 **Method:** end-to-end review by five focused reviewers reading the *actual source* (no inference from
 docs/comments/notes), each citing `file:line` and marking findings VERIFIED vs NEEDS-CONFIRMATION.
 Every CRIT/HIGH below was **personally re-verified** against the cited code (greps: `chdir` absent

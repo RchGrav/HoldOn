@@ -4,35 +4,24 @@ set -Eeuo pipefail
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-cp Makefile VERSION "$tmp/"
-want="$(sed -n '1s/[[:space:]]*$//p' VERSION)"
-got="$(cd "$tmp" && make -s --no-print-directory print-version)"
-
-if [ "$got" != "$want" ]; then
-  printf 'source-tree VERSION mismatch outside git: got %s want %s\n' "$got" "$want" >&2
-  exit 1
-fi
-
-case "$got" in
-  *-dev-dirty)
-    printf 'source-tree VERSION outside git must not append -dev-dirty: %s\n' "$got" >&2
-    exit 1
-    ;;
-esac
-
+# Git tags are the release source of truth. Source snapshots without .git should
+# be visibly non-release dev builds rather than carrying a stale VERSION file.
 snapshot="$tmp/snapshot"
 mkdir -p "$snapshot/.github/scripts"
-cp VERSION "$snapshot/"
+cp Makefile "$snapshot/"
 cp .github/scripts/resolve_version.sh "$snapshot/.github/scripts/"
 snapshot_version="$(cd "$snapshot" && env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME bash .github/scripts/resolve_version.sh)"
-if [ "$snapshot_version" != "$want" ]; then
-  printf 'source-tree resolver outside git mismatch: got %s want %s\n' "$snapshot_version" "$want" >&2
+if [ "$snapshot_version" != "dev" ]; then
+  printf 'source snapshot resolver mismatch: got %s want dev\n' "$snapshot_version" >&2
+  exit 1
+fi
+snapshot_make="$(cd "$snapshot" && make -s --no-print-directory print-version)"
+if [ "$snapshot_make" != "dev" ]; then
+  printf 'source snapshot Makefile version mismatch: got %s want dev\n' "$snapshot_make" >&2
   exit 1
 fi
 
-# A pushed release tag is the release source of truth. This lets the manual
-# Release Bump workflow create vX.Y.Z without first editing VERSION in the
-# tree; VERSION remains a fallback for non-git/source snapshots.
+# A pushed release tag is the release source of truth.
 tag_value="$(GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v9.8.7 bash .github/scripts/resolve_version.sh)"
 if [ "$tag_value" != "9.8.7" ]; then
   printf 'tag release version mismatch: got %s want 9.8.7\n' "$tag_value" >&2
@@ -53,7 +42,7 @@ grep -qx 'tag=v9.8.7' "$out"
 
 gitcase="$tmp/gitcase"
 mkdir -p "$gitcase/.github/scripts"
-cp Makefile VERSION "$gitcase/"
+cp Makefile "$gitcase/"
 cp .github/scripts/resolve_version.sh "$gitcase/.github/scripts/"
 (
   cd "$gitcase"
@@ -63,8 +52,15 @@ cp .github/scripts/resolve_version.sh "$gitcase/.github/scripts/"
   git config user.email test@example.invalid
   git add .
   git commit -qm base
-  git tag v9.8.7
 
+  dev_short="$(git rev-parse --short HEAD)"
+  untagged_make="$(make -s --no-print-directory print-version)"
+  if [ "$untagged_make" != "dev-$dev_short" ]; then
+    printf 'untagged Makefile version mismatch: got %s want dev-%s\n' "$untagged_make" "$dev_short" >&2
+    exit 1
+  fi
+
+  git tag v9.8.7
   tagged_make="$(make -s --no-print-directory print-version)"
   if [ "$tagged_make" != "v9.8.7" ]; then
     printf 'exact tag Makefile version mismatch: got %s want v9.8.7\n' "$tagged_make" >&2
@@ -75,7 +71,7 @@ cp .github/scripts/resolve_version.sh "$gitcase/.github/scripts/"
     printf 'exact tag resolver base mismatch: got %s want 9.8.7\n' "$tagged_base" >&2
     exit 1
   fi
-  printf 'dirty\n' >> VERSION
+  printf '\n# dirty\n' >> Makefile
   dirty_make="$(make -s --no-print-directory print-version)"
   if [ "$dirty_make" != "v9.8.7-dirty" ]; then
     printf 'dirty exact tag Makefile version mismatch: got %s want v9.8.7-dirty\n' "$dirty_make" >&2
@@ -87,7 +83,7 @@ cp .github/scripts/resolve_version.sh "$gitcase/.github/scripts/"
     printf 'dirty exact tag resolver mismatch: got %s want 9.8.7-%s-dirty\n' "$dirty_resolved" "$short" >&2
     exit 1
   fi
-  git checkout -q -- VERSION
+  git checkout -q -- Makefile
 
   printf 'change\n' > later.txt
   git add later.txt
@@ -98,6 +94,24 @@ cp .github/scripts/resolve_version.sh "$gitcase/.github/scripts/"
     printf 'post-tag Makefile version mismatch: got %s want 9.8.7-%s\n' "$dev_make" "$short" >&2
     exit 1
   fi
+)
+
+bumps="$tmp/bumps"
+mkdir -p "$bumps/scripts"
+cp scripts/bump_version.sh "$bumps/scripts/bump_version.sh"
+(
+  cd "$bumps"
+  git init -q
+  git config user.name test
+  git config user.email test@example.invalid
+  touch file
+  git add file
+  git commit -qm base
+  git tag v0.4.4
+  [ "$(bash scripts/bump_version.sh patch)" = "v0.4.5" ]
+  [ "$(bash scripts/bump_version.sh minor)" = "v0.5.0" ]
+  [ "$(bash scripts/bump_version.sh major)" = "v1.0.0" ]
+  [ "$(bash scripts/bump_version.sh custom 2.3.4)" = "v2.3.4" ]
 )
 
 releasecase="$tmp/releasecase"
@@ -184,21 +198,21 @@ SHSTUB
 chmod +x "$releasecase/bin/file"
 (
   cd "$releasecase"
-  env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=tag-clean bash scripts/release_build.sh >tag-clean.out 2>tag-clean.err
+  env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:/usr/bin:/bin" FAKE_GIT_MODE=tag-clean bash scripts/release_build.sh >tag-clean.out 2>tag-clean.err
   grep -qx 'linux-amd64-gnu-static 9.8.7 hold' dist/packages.log
   grep -qx 'linux-amd64-gnu-dynamic 9.8.7 hold-dynamic' dist/packages.log
 )
 (
   cd "$releasecase"
   rm -rf dist
-  env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=branch-clean bash scripts/release_build.sh >branch-clean.out 2>branch-clean.err
+  env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:/usr/bin:/bin" FAKE_GIT_MODE=branch-clean bash scripts/release_build.sh >branch-clean.out 2>branch-clean.err
   grep -qx 'linux-amd64-gnu-static 9.8.7-abcdef1 hold' dist/packages.log
   grep -qx 'linux-amd64-gnu-dynamic 9.8.7-abcdef1 hold-dynamic' dist/packages.log
 )
 (
   cd "$releasecase"
   rm -rf dist
-  if env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:$PATH" FAKE_GIT_MODE=tag-dirty bash scripts/release_build.sh >tag-dirty.out 2>tag-dirty.err; then
+  if env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:/usr/bin:/bin" FAKE_GIT_MODE=tag-dirty bash scripts/release_build.sh >tag-dirty.out 2>tag-dirty.err; then
     printf 'release_build unexpectedly allowed dirty tagged worktree\n' >&2
     exit 1
   fi

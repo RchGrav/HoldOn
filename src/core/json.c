@@ -128,6 +128,7 @@ int hold_parse_json_string(const char *p, char *out, size_t n, const char **endp
             p++;
             continue;
         }
+        if ((unsigned char)*p < 0x20) return -1;
         if (i + 1 >= n) return -1;
         out[i++] = *p++;
     }

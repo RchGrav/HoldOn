@@ -96,7 +96,11 @@ int hold_parse_uid_env(const char *s, uid_t *out) {
     if (end == s || *end != '\0' || errno != 0) {
         return -1;
     }
-    *out = (uid_t)v;
+    uid_t narrowed = (uid_t)v;
+    if ((unsigned long long)narrowed != v) {
+        return -1;
+    }
+    *out = narrowed;
     return 0;
 }
 
@@ -110,7 +114,11 @@ int hold_parse_gid_env(const char *s, gid_t *out) {
     if (end == s || *end != '\0' || errno != 0) {
         return -1;
     }
-    *out = (gid_t)v;
+    gid_t narrowed = (gid_t)v;
+    if ((unsigned long long)narrowed != v) {
+        return -1;
+    }
+    *out = narrowed;
     return 0;
 }
 

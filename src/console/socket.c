@@ -284,5 +284,12 @@ int hold_connect_console_socket(const char *sock_path) {
         errno = err;
         return -1;
     }
+
+    uid_t peer_uid = (uid_t)-1;
+    if (hold_console_peer_uid(fd, &peer_uid) != 0 || (peer_uid != 0 && peer_uid != st.st_uid)) {
+        close(fd);
+        errno = EPERM;
+        return -1;
+    }
     return fd;
 }
