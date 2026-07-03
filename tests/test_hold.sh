@@ -5038,7 +5038,7 @@ SH
 
   public_files=$(
     { git ls-files docs examples install.sh scripts Makefile 2>/dev/null || find docs examples install.sh scripts Makefile -type f 2>/dev/null; } |
-      grep -Ev '^docs/(archive/.*|0\.4-repair-ledger\.md|0\.4\.0-direction-.*|security-review-.*)$' || true
+      grep -Ev '^docs/(archive/.*|0\.4-repair-ledger\.md|0\.4\.0-direction-.*|security-review-.*|hold-on-identity\.md)$' || true
   )
   # The live GitHub repository is still RchGrav/sigmund during the 0.4.0
   # rename window, so the installer needs that repository default. Treat that
