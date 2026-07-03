@@ -3155,6 +3155,17 @@ test_sudo_system_start_of_home_executable_uses_user_store() {
   local app out
   app=$(make_home_executable) || return 1
   out=$(as_sudo_from_user "$HOLD_REAL_BIN" --system -d "$app" 2>&1) || return 1
+  # Files materialize through a sudo child; poll briefly instead of asserting
+  # one instant. A real placement bug fails every attempt in the window.
+  local sudo_tries=0
+  while :; do
+    if assert_home_system_start_is_user_local "$out"; then
+      return 0
+    fi
+    sudo_tries=$((sudo_tries + 1))
+    [ "$sudo_tries" -lt 20 ] || break
+    sleep 0.1
+  done
   assert_home_system_start_is_user_local "$out"
 }
 
@@ -3198,9 +3209,16 @@ test_docker_shaped_cli_flags_and_rm() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-  "$HOLD_BIN" logs -n 1 --plain "$id" >"$TEST_ROOT/docker-logs-tail.out" || return 1
-  grep -q '^ok$' "$TEST_ROOT/docker-logs-tail.out" || { cat "$TEST_ROOT/docker-logs-tail.out" >&2; return 1; }
+  # Poll for the captured line: under load the logger can flush later than a
+  # fixed 0.2s; a real capture regression still fails the whole window.
+  local logs_tries=0
+  while :; do
+    "$HOLD_BIN" logs -n 1 --plain "$id" >"$TEST_ROOT/docker-logs-tail.out" 2>/dev/null || true
+    grep -q '^ok$' "$TEST_ROOT/docker-logs-tail.out" && break
+    logs_tries=$((logs_tries + 1))
+    [ "$logs_tries" -lt 20 ] || { cat "$TEST_ROOT/docker-logs-tail.out" >&2; return 1; }
+    sleep 0.1
+  done
   "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/docker-inspect.json" || return 1
   python3 - "$TEST_ROOT/docker-inspect.json" "$id" <<'PY' || { cat "$TEST_ROOT/docker-inspect.json" >&2; return 1; }
 import json, sys
@@ -3215,9 +3233,17 @@ if record.get('name') != 'docker-web':
 if 'ok\n' in json.dumps(record):
     raise SystemExit('inspect returned log text instead of structured record data')
 PY
-  "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-ps.out" || return 1
+  # The 0.1s child may still be live when the log line lands; poll until
+  # ps -a reports it Exited rather than sleeping a fixed beat.
+  local ps_tries=0
+  while :; do
+    "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-ps.out" || return 1
+    grep -Eq "^$id[[:space:]]+.*Exited.*docker-web$" "$TEST_ROOT/docker-ps.out" && break
+    ps_tries=$((ps_tries + 1))
+    [ "$ps_tries" -lt 20 ] || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
+    sleep 0.1
+  done
   grep -Eq "^CALL ID[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
-  grep -Eq "^$id[[:space:]]+.*Exited.*docker-web$" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
 
   out=$("$HOLD_BIN" -d --name docker-direct /bin/sh -c 'echo direct; sleep 5' 2>&1) || {
     printf '%s\n' "$out" >&2
