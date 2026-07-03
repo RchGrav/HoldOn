@@ -18,17 +18,17 @@ The unit Hold manages is a **call**: one held process group. You put a
 call on hold, list your calls, pick one back up, end it, save the ones
 worth keeping. "Run" and "container" do not appear in the vocabulary.
 
-## The shape: two binaries
+## The shape: one binary
 
-| Binary | Role | Size target |
-| --- | --- | --- |
-| `hold` | The guardian. Small enough to code-review in an afternoon. | 6–8k lines, single static binary |
-| `hlog` | The fast dynamic log viewer (the before-0.5 design). Optional, zero dependency — it reads files. `hold logs` delegates to it when installed and falls back to plain output when not. | separate binary |
+One static binary, small enough to code-review in an afternoon. Target:
+under 10k lines — the lean core (6–8k) plus the built-in log viewer.
 
-The only contract between binaries is the published on-disk format: raw
-`.log` plus the 16-byte-entry `.log.idx` sidecar (v1). No IPC, no shared
-daemon, no library dependency. A linker boundary is the one refactoring
-discipline that does not erode.
+The viewer is part of the tool, not an add-on: `hold logs <call>` opens
+the polished full-screen viewer from the before-0.5 design (quiet 80x24
+chrome, center-out filtering, no counters, no flicker), and it is held to
+that design's standard. The on-disk format — raw `.log` plus the
+16-byte-entry `.log.idx` sidecar (v1) — stays a documented, stable format
+so anything else can read Hold's logs without Hold's help.
 
 ## The surface
 
@@ -52,8 +52,8 @@ hold end <target>           # end the call politely: TERM, then KILL
                             #  (stop is an alias)
 hold kill <target>          # KILL now, when it won't listen
 hold logs <call> [-f] [-n N]
-                            # interactive viewer by default: delegates to hlog
-                            #  when installed, plain output otherwise
+                            # the polished full-screen viewer, built in
+                            #  (plain output automatically when not a TTY)
 hold logs <call> -p         # --print: plain dump, always script-safe
                             #  -t/--time prepends times, --date adds date+time
                             #  (timestamps read from the sidecar, never parsed
@@ -129,7 +129,7 @@ when the log would otherwise be misleadingly empty.
 | profiles, alias store, `profile`/`profiles`/`export`/`import`/`commit` | delete — replaced by save/rename on run records |
 | grants, sudoers pinning, elevation, `--cap` paths (`src/access/`) | delete — cruft; do one thing well |
 | captive CLI (`src/runtime/captive.c`) and the `hcli` idea | delete — with profiles gone there is nothing to edit |
-| viewer (`src/viewer/`) and `logs --dynamic` plans | move to `hlog` |
+| viewer (`src/viewer/`) | stays — rebuilt in core to the before-0.5 design as `hold logs` |
 | `hold shell` | becomes `hold on` / `hold off` |
 
 ## What stays (the hard-won plumbing)
