@@ -496,13 +496,15 @@ if ! path_contains_dir "$install_dir" && [ -z "${HOLD_ENV_FILE:-}" ]; then
 fi
 
 note "installed hold $version"
-note "binary: $target"
 if path_contains_dir "$install_dir"; then
-  note "run: hold --help"
+  note "run: hold on"
 else
   note "current shell PATH does not include $install_dir"
-  note "run now: $target --help"
+  note "run now: $target on"
   note "or export: PATH=$install_dir:\$PATH"
 fi
 
-printf 'HOLD_BIN=%s\n' "$target"
+# Machine handoff for scripts capturing stdout; humans already saw the path.
+if [ ! -t 1 ]; then
+  printf 'HOLD_BIN=%s\n' "$target"
+fi
