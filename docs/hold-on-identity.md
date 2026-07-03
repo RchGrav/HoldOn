@@ -18,13 +18,12 @@ The unit Hold manages is a **call**: one held process group. You put a
 call on hold, list your calls, pick one back up, end it, save the ones
 worth keeping. "Run" and "container" do not appear in the vocabulary.
 
-## The shape: three binaries
+## The shape: two binaries
 
 | Binary | Role | Size target |
 | --- | --- | --- |
 | `hold` | The guardian. Small enough to code-review in an afternoon. | 6–8k lines, single static binary |
-| `hlog` | The fast dynamic log viewer (the before-0.5 design). Optional, zero dependency — it reads files. | separate binary |
-| `hcli` | The Cisco-IOS captive shell. Optional, zero dependency. | separate binary |
+| `hlog` | The fast dynamic log viewer (the before-0.5 design). Optional, zero dependency — it reads files. `hold logs` delegates to it when installed and falls back to plain output when not. | separate binary |
 
 The only contract between binaries is the published on-disk format: raw
 `.log` plus the 16-byte-entry `.log.idx` sidecar (v1). No IPC, no shared
@@ -52,7 +51,19 @@ hold attach <target>        # pick the call back up (Ctrl-P Ctrl-Q detaches)
 hold end <target>           # end the call politely: TERM, then KILL
                             #  (stop is an alias)
 hold kill <target>          # KILL now, when it won't listen
-hold log <target> [-f] [-n] # plain log dump/follow; hlog is the fancy viewer
+hold logs <call> [-f] [-n N]
+                            # interactive viewer by default: delegates to hlog
+                            #  when installed, plain output otherwise
+hold logs <call> -p         # --print: plain dump, always script-safe
+                            #  -t/--time prepends times, --date adds date+time
+                            #  (timestamps read from the sidecar, never parsed
+                            #   out of the log text)
+hold inspect <call>         # uptime, session type (plain/console/fullscreen),
+                            #  fd targets, everything visible at your access
+                            #  level, as JSON
+hold ports <call>           # ports in use by the call's process group
+                            #  (own calls need no root: /proc socket inodes)
+hold stats <call>           # live resource usage stream (CPU, memory, pids)
 hold save <target>          # protect this call from purge; no unsave — see purge
 hold rename <target> <name> # rename a call (docker rename)
 hold purge [<target>] [-a] [--force]
@@ -116,8 +127,8 @@ when the log would otherwise be misleadingly empty.
 | --- | --- |
 | `run` verb and its parser paths | delete — flags move to the bare/`-d`/`-it` forms |
 | profiles, alias store, `profile`/`profiles`/`export`/`import`/`commit` | delete — replaced by save/rename on run records |
-| grants, sudoers pinning, elevation, `--cap` paths (`src/access/`) | shelve — out of the core; revisit only if a real need returns |
-| captive CLI (`src/runtime/captive.c`) | move to `hcli` |
+| grants, sudoers pinning, elevation, `--cap` paths (`src/access/`) | delete — cruft; do one thing well |
+| captive CLI (`src/runtime/captive.c`) and the `hcli` idea | delete — with profiles gone there is nothing to edit |
 | viewer (`src/viewer/`) and `logs --dynamic` plans | move to `hlog` |
 | `hold shell` | becomes `hold on` / `hold off` |
 
