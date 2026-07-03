@@ -427,7 +427,7 @@ int hold_cmd_rename_action(const struct hold_invocation *inv,
         hold_die_errno("hold: failed to write renamed call record");
     }
     if (target.store.kind == STORE_SYSTEM_MANAGED) {
-        (void)hold_write_public_index_atomic(&target.store, &r);
+        (void)hold_write_public_index_atomic(&target.store, &r, NULL);
     }
     char display_id[ID_DISPLAY_HEX_LEN + 1];
     hold_run_id_display(r.id, display_id);
@@ -496,7 +496,7 @@ int hold_cmd_save_action(const struct hold_invocation *inv,
         hold_die_errno("hold: failed to write saved call record");
     }
     if (target.store.kind == STORE_SYSTEM_MANAGED) {
-        (void)hold_write_public_index_atomic(&target.store, &r);
+        (void)hold_write_public_index_atomic(&target.store, &r, NULL);
     }
     hold_sig_note(inv, "hold: saved %s (%s)\n", display_id, label);
     hold_free_argv_alloc(argv, argc);
@@ -1828,7 +1828,7 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
             if (getenv("HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE")) {
                 errno = EIO;
                 public_rc = -1;
-            } else if (hold_write_public_index_atomic(store, &r) != 0) {
+            } else if (hold_write_public_index_atomic(store, &r, NULL) != 0) {
                 public_rc = -1;
             }
             if (public_rc != 0) {

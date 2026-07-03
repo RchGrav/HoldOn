@@ -40,13 +40,28 @@ struct hold_start_options {
 int hold_perform_start_options(const struct hold_invocation *inv,
                                  const struct hold_store *store,
                                  const struct hold_start_options *opts);
-int hold_cmd_list_normal(const struct hold_store *user_store,
-                           const struct hold_store *system_store,
-                           const char *alias_filter,
-                           bool include_all);
-int hold_cmd_list_system(const struct hold_store *system_store,
-                           const char *alias_filter,
-                           bool include_all);
+/* list is Hold's scoped ledger: which stores it draws from depends on the
+ * requested scope, resolved against the caller's privilege. */
+enum hold_list_scope {
+    HOLD_LIST_SCOPE_DEFAULT, /* non-root: the user's own store; root: the global store */
+    HOLD_LIST_SCOPE_USER,    /* -u/--user: personal calls only, even under sudo */
+    HOLD_LIST_SCOPE_SYSTEM,  /* -s/--system: the global/system store only */
+    HOLD_LIST_SCOPE_BOTH     /* -a/--all: user and system scopes together */
+};
+
+int hold_cmd_list(const struct hold_invocation *inv,
+                    const struct hold_store *user_store,
+                    const struct hold_store *system_store,
+                    const char *alias_filter,
+                    enum hold_list_scope scope,
+                    bool live_only);
+/* ps is Docker's machine-wide view: running calls (plus ended with -a) across
+ * both the caller's own store and the global store, no USER column. */
+int hold_cmd_ps(const struct hold_invocation *inv,
+                  const struct hold_store *user_store,
+                  const struct hold_store *system_store,
+                  const char *alias_filter,
+                  bool all);
 enum id_token_scope hold_parse_id_token(const char *token, const char **id_out);
 int hold_cmd_signal_action(const struct hold_invocation *inv,
                              const struct hold_store *user_store,
@@ -89,7 +104,8 @@ int hold_cmd_purge_action(const struct hold_invocation *inv,
                             const struct hold_store *system_store,
                             const char *target_token,
                             bool all,
-                            bool force);
+                            bool force,
+                            bool system_scope);
 int hold_cmd_shell_action(const struct hold_invocation *inv,
                             const struct hold_store *store);
 int hold_cmd_off_action(void);

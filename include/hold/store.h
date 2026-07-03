@@ -17,7 +17,8 @@ int hold_gen_id_for_store(const struct hold_store *primary,
                             char *out,
                             size_t out_n);
 int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, int argc, char **argv, char *out_json_path, size_t out_n);
-int hold_write_public_index_atomic(const struct hold_store *store, const struct hold_run_record *r);
+int hold_write_public_index_atomic(const struct hold_store *store, const struct hold_run_record *r,
+                                     const char *observed_ports_csv);
 int hold_mark_run_finished(const struct hold_store *store, const char *id, int status);
 int hold_load_record(const char *path, struct hold_run_record *r);
 void hold_free_run_record(struct hold_run_record *r);

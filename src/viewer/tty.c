@@ -799,11 +799,14 @@ static int render_header_polished(const struct viewer_state *state) {
     memset(bar, ' ', width);
     bar[width] = '\0';
     char idbuf[ID_DISPLAY_HEX_LEN + 1];
-    const char *name = state->context.profile && *state->context.profile
-                           ? state->context.profile
-                           : (state->context.run_id && *state->context.run_id
-                                  ? hold_run_id_display(state->context.run_id, idbuf)
-                                  : viewer_run_label(state));
+    /* Names are the human handle; the short id already lives in the footer. */
+    const char *name = state->context.name && *state->context.name
+                           ? state->context.name
+                           : (state->context.profile && *state->context.profile
+                                  ? state->context.profile
+                                  : (state->context.run_id && *state->context.run_id
+                                         ? hold_run_id_display(state->context.run_id, idbuf)
+                                         : viewer_run_label(state)));
     char left[128];
     snprintf(left, sizeof(left), "hold logs: %s", name);
     put_bar_text(bar, width, 0, left);

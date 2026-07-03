@@ -136,6 +136,7 @@ struct hold_public_index {
     char started_at[64];
     char created_at[64];
     char finished_at[64];
+    char observed_ports[HOLD_PATH_MAX]; /* live ports root last saw, ", "-joined */
     pid_t pid;
     pid_t pgid;
     pid_t sid;

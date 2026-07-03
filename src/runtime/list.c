@@ -12,6 +12,7 @@
 struct list_row {
     char id[ID_STR_LEN];
     char name[ALIAS_MAX_LEN + 1];
+    char owner[64];   /* set only for the root cross-user view's USER column */
     char state[16];
     char created[64];
     char status[96];
@@ -19,6 +20,7 @@ struct list_row {
     char cmd[HOLD_PATH_MAX];
     int64_t start_unix_ns;
     bool running;
+    bool redacted;    /* a projected global row: COMMAND and owner are hidden */
 };
 
 struct list_rows {
@@ -31,16 +33,22 @@ static int append_list_row(struct list_rows *rows, const struct list_row *row);
 static int compare_list_rows(const void *a, const void *b);
 static int collect_list_private(const struct hold_store *store,
                                 const char *alias_filter,
-                                bool include_all,
+                                bool running_only,
+                                bool system_scope,
                                 struct list_rows *rows);
 static int collect_list_public(const struct hold_store *store,
                                const char *alias_filter,
-                               bool include_all,
+                               bool running_only,
                                struct list_rows *rows);
-static int print_collected_table(struct list_rows *rows);
+static int collect_all_user_stores(const char *alias_filter,
+                                    bool running_only,
+                                    struct list_rows *rows);
+static void refresh_system_public_ports(const struct hold_store *store);
+static int print_collected_table(struct list_rows *rows, bool with_user);
 static void unlink_public_index(const struct hold_store *store, const char *id);
+struct prune_sweep_stats;
 static void unlink_log_index_for_log(const char *log_path);
-static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, int *removed_count);
+static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, struct prune_sweep_stats *stats);
 
 static void free_list_rows(struct list_rows *rows) {
     free(rows->items);
@@ -143,9 +151,35 @@ static void format_status(enum run_state st, const struct hold_run_record *r, ch
     }
 }
 
+/* The USER column value for a private record. A system-scope record (root's
+ * global view) is attributed to its recorded invoking user, falling back to
+ * "root" when none was recorded. A personal record is attributed to the
+ * account that owns it, resolved from the record's uid via /etc/passwd, with
+ * the numeric uid as an honest fallback when no passwd entry exists. */
+static void resolve_user_label(const struct hold_run_record *r, bool system_scope, char *out, size_t n) {
+    if (system_scope) {
+        if (r->has_invocation && r->invoked_by_user[0]) {
+            snprintf(out, n, "%.*s", (int)(n - 1), r->invoked_by_user);
+        } else {
+            snprintf(out, n, "root");
+        }
+        return;
+    }
+    struct hold_passwd_entry pw;
+    if (hold_lookup_passwd_by_uid(r->uid, &pw) == 0 && pw.name[0]) {
+        snprintf(out, n, "%.*s", (int)(n - 1), pw.name);
+    } else {
+        snprintf(out, n, "%u", (unsigned)r->uid);
+    }
+}
+
+/* Records from a private store (the caller's own, a peer's, or root's global
+ * store). running_only narrows to live calls; otherwise the full ledger, live
+ * and past. system_scope selects how the USER column is attributed. */
 static int collect_list_private(const struct hold_store *store,
                                 const char *alias_filter,
-                                bool include_all,
+                                bool running_only,
+                                bool system_scope,
                                 struct list_rows *rows) {
     DIR *d = opendir(store->record_dir);
     if (!d) {
@@ -178,7 +212,7 @@ static int collect_list_private(const struct hold_store *store,
             continue;
         }
         enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
-        if (!include_all && st != STATE_RUNNING) {
+        if (running_only && st != STATE_RUNNING) {
             hold_free_run_record(&r);
             continue;
         }
@@ -187,6 +221,7 @@ static int collect_list_private(const struct hold_store *store,
         char display_id[ID_DISPLAY_HEX_LEN + 1];
         hold_run_id_display(r.id, display_id);
         snprintf(row.id, sizeof(row.id), "%s", display_id);
+        resolve_user_label(&r, system_scope, row.owner, sizeof(row.owner));
         if (r.has_name && r.name[0]) snprintf(row.name, sizeof(row.name), "%s", r.name);
         snprintf(row.state, sizeof(row.state), "%s", hold_state_str(st));
         row.start_unix_ns = r.start_unix_ns;
@@ -218,13 +253,16 @@ static int collect_list_private(const struct hold_store *store,
     return 0;
 }
 
+/* The redacted global projection every user may see: the public index only,
+ * never the root-private records. The command line and the owner do not
+ * survive -- both read the literal "hidden", which says exists-but-not-yours-
+ * to-see rather than "-"'s none. A row carries the call id, its generated name
+ * if the entry has one, the honest projected status, CREATED, and the ports
+ * root last observed. */
 static int collect_list_public(const struct hold_store *store,
                                const char *alias_filter,
-                               bool include_all,
+                               bool running_only,
                                struct list_rows *rows) {
-    if (!include_all) {
-        return 0;
-    }
     DIR *d = opendir(store->public_dir);
     if (!d) {
         return 0;
@@ -255,16 +293,22 @@ static int collect_list_public(const struct hold_store *store,
         if (alias_filter && (!pi.has_alias || strcmp(pi.alias, alias_filter) != 0)) {
             continue;
         }
+        bool running = pi.state_hint[0] && strcmp(pi.state_hint, "running") == 0;
+        if (running_only && !running) {
+            continue;
+        }
         struct list_row row;
         memset(&row, 0, sizeof(row));
         char display_id[ID_DISPLAY_HEX_LEN + 1];
         hold_run_id_display(pi.id, display_id);
         snprintf(row.id, sizeof(row.id), "%s", display_id);
+        snprintf(row.owner, sizeof(row.owner), "hidden");
         if (pi.has_name && pi.name[0]) snprintf(row.name, sizeof(row.name), "%s", pi.name);
         snprintf(row.state, sizeof(row.state), "%s", pi.state_hint[0] ? pi.state_hint : "unknown");
-        row.running = !strcmp(row.state, "running");
+        row.running = running;
+        row.redacted = true;
         row.start_unix_ns = 0;
-        snprintf(row.cmd, sizeof(row.cmd), "%s", "<root-managed>");
+        snprintf(row.ports, sizeof(row.ports), "%s", pi.observed_ports);
         snprintf(row.status, sizeof(row.status), "%s", pi.state_hint[0] ? pi.state_hint : "Unknown");
         /* The table never shows a raw ISO stamp: humanize the public index's
          * created_at, falling back to "-" when unparseable. */
@@ -289,8 +333,12 @@ static int collect_list_public(const struct hold_store *store,
  * measures every column from the actual rows (never a fixed printf width that
  * shears a long value), a second pass prints. Columns are separated by a
  * two-space gutter; each column is at least as wide as its header; the final
- * NAMES column is never padded, so no line carries trailing spaces. */
-static int print_collected_table(struct list_rows *rows) {
+ * NAMES column is never padded, so no line carries trailing spaces.
+ *
+ * with_user adds the USER column in Docker's IMAGE slot (second, after CALL
+ * ID). It is exclusive to `list`: `ps` speaks only Docker, which has no USER
+ * concept, and does not repurpose IMAGE's position -- ps simply omits it. */
+static int print_collected_table(struct list_rows *rows, bool with_user) {
     if (rows->count > 1) {
         qsort(rows->items, rows->count, sizeof(rows->items[0]), compare_list_rows);
     }
@@ -304,13 +352,20 @@ static int print_collected_table(struct list_rows *rows) {
     }
 
     size_t w_id = strlen("CALL ID");
+    size_t w_user = strlen("USER");
     size_t w_cmd = strlen("COMMAND");
     size_t w_created = strlen("CREATED");
     size_t w_status = strlen("STATUS");
     size_t w_ports = strlen("PORTS");
     for (size_t i = 0; i < rows->count; i++) {
         const struct list_row *r = &rows->items[i];
-        quote_command(cmds[i], r->cmd);
+        /* A projected global row has no command to show: the COMMAND cell is a
+         * bare "hidden" (never quoted like a real command, never leaked). */
+        if (r->redacted) {
+            snprintf(cmds[i], sizeof(cmds[i]), "%s", "hidden");
+        } else {
+            quote_command(cmds[i], r->cmd);
+        }
         const char *created = r->created[0] ? r->created : "-";
         const char *status = r->status[0] ? r->status : r->state;
         if (strlen(r->id) > w_id) w_id = strlen(r->id);
@@ -318,57 +373,223 @@ static int print_collected_table(struct list_rows *rows) {
         if (strlen(created) > w_created) w_created = strlen(created);
         if (strlen(status) > w_status) w_status = strlen(status);
         if (strlen(r->ports) > w_ports) w_ports = strlen(r->ports);
+        if (with_user && strlen(r->owner) > w_user) w_user = strlen(r->owner);
     }
 
-    printf("%-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
-           (int)w_id, "CALL ID",
-           (int)w_cmd, "COMMAND",
-           (int)w_created, "CREATED",
-           (int)w_status, "STATUS",
-           (int)w_ports, "PORTS",
-           "NAMES");
+    if (with_user) {
+        printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
+               (int)w_id, "CALL ID",
+               (int)w_user, "USER",
+               (int)w_cmd, "COMMAND",
+               (int)w_created, "CREATED",
+               (int)w_status, "STATUS",
+               (int)w_ports, "PORTS",
+               "NAMES");
+    } else {
+        printf("%-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
+               (int)w_id, "CALL ID",
+               (int)w_cmd, "COMMAND",
+               (int)w_created, "CREATED",
+               (int)w_status, "STATUS",
+               (int)w_ports, "PORTS",
+               "NAMES");
+    }
     for (size_t i = 0; i < rows->count; i++) {
         const struct list_row *r = &rows->items[i];
-        printf("%-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
-               (int)w_id, r->id,
-               (int)w_cmd, cmds[i],
-               (int)w_created, r->created[0] ? r->created : "-",
-               (int)w_status, r->status[0] ? r->status : r->state,
-               (int)w_ports, r->ports,
-               r->name[0] ? r->name : "-");
+        if (with_user) {
+            printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
+                   (int)w_id, r->id,
+                   (int)w_user, r->owner[0] ? r->owner : "-",
+                   (int)w_cmd, cmds[i],
+                   (int)w_created, r->created[0] ? r->created : "-",
+                   (int)w_status, r->status[0] ? r->status : r->state,
+                   (int)w_ports, r->ports,
+                   r->name[0] ? r->name : "-");
+        } else {
+            printf("%-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
+                   (int)w_id, r->id,
+                   (int)w_cmd, cmds[i],
+                   (int)w_created, r->created[0] ? r->created : "-",
+                   (int)w_status, r->status[0] ? r->status : r->state,
+                   (int)w_ports, r->ports,
+                   r->name[0] ? r->name : "-");
+        }
     }
     free(cmds);
     return 0;
 }
 
-/* One call table for both `list` (canonical) and `ps` (its alias): running-only
- * by default, all states with include_all. Public root-index rows appear only
- * with include_all, matching their projected, may-be-stale nature. */
-int hold_cmd_list_normal(const struct hold_store *user_store,
-                           const struct hold_store *system_store,
-                           const char *alias_filter,
-                           bool include_all) {
+/* The home root the cross-user scan walks. A test override keeps the scan
+ * exercisable without writing under a real /home. */
+static const char *user_home_root(void) {
+#ifdef HOLD_TESTING
+    const char *override = getenv("HOLD_TEST_HOME_ROOT");
+    if (override && *override) {
+        return override;
+    }
+#endif
+    return "/home";
+}
+
+/* Enumerate every user's personal store under the home root. Each row's USER
+ * comes from the record's own uid (see resolve_user_label), so a home named
+ * differently from its account still attributes honestly. Unreadable stores
+ * are simply skipped. */
+static int collect_all_user_stores(const char *alias_filter,
+                                    bool running_only,
+                                    struct list_rows *rows) {
+    const char *home_root = user_home_root();
+    DIR *d = opendir(home_root);
+    if (!d) {
+        return 0;
+    }
+    int rc = 0;
+    const struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.') {
+            continue;
+        }
+        char home[HOLD_PATH_MAX];
+        if (hold_checked_snprintf(home, sizeof(home), "%s/%s", home_root, e->d_name) != 0) {
+            continue;
+        }
+        struct hold_store store;
+        if (hold_init_user_store_from_home(home, &store) != 0) {
+            continue;
+        }
+        if (collect_list_private(&store, alias_filter, running_only, false, rows) != 0) {
+            rc = -1;
+            break;
+        }
+    }
+    closedir(d);
+    return rc;
+}
+
+/* Refresh the public port projection of every live global call. Root can read
+ * the private records and observe the process group; non-root cannot, so this
+ * is where the PORTS a user sees in `list -a` come from. Best-effort and
+ * eventually consistent: a failure to observe or rewrite just leaves the last
+ * projection in place. */
+static void refresh_system_public_ports(const struct hold_store *store) {
+    if (store->kind != STORE_SYSTEM_MANAGED) {
+        return;
+    }
+    DIR *d = opendir(store->record_dir);
+    if (!d) {
+        return;
+    }
+    char boot[128] = {0};
+    bool have_boot = hold_current_boot_id(boot, sizeof(boot));
+    const struct dirent *e;
+    while ((e = readdir(d))) {
+        char file_id[ID_HEX_LEN + 1];
+        if (!hold_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
+            continue;
+        }
+        char path[HOLD_PATH_MAX];
+        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
+            continue;
+        }
+        struct hold_run_record r;
+        if (hold_load_record(path, &r) != 0) {
+            continue;
+        }
+        if (!hold_valid_record(&r) || strcmp(r.id, file_id) != 0) {
+            hold_free_run_record(&r);
+            continue;
+        }
+        if (hold_eval_state(&r, have_boot ? boot : NULL) == STATE_RUNNING) {
+            /* Only listening TCP and bound UDP sockets are observed here (the
+             * hold_observe_run_ports filter); outbound connections are never
+             * published, so the projection cannot leak who a call talks to. */
+            char ports[HOLD_PATH_MAX];
+            hold_observe_run_ports_column(&r, ports, sizeof(ports));
+            (void)hold_write_public_index_atomic(store, &r, ports);
+        }
+        hold_free_run_record(&r);
+    }
+    closedir(d);
+}
+
+/* list is Hold's scoped ledger. The requested scope resolves against privilege:
+ * a normal user's default is their own store, root's default is the global one.
+ * SYSTEM shows the global store (real for root, redacted for a normal user);
+ * USER shows personal calls only, even under sudo; BOTH (-a) unions the two.
+ * Every list view carries the USER column. */
+int hold_cmd_list(const struct hold_invocation *inv,
+                    const struct hold_store *user_store,
+                    const struct hold_store *system_store,
+                    const char *alias_filter,
+                    enum hold_list_scope scope,
+                    bool live_only) {
+    if (scope == HOLD_LIST_SCOPE_DEFAULT) {
+        scope = inv->euid_root ? HOLD_LIST_SCOPE_SYSTEM : HOLD_LIST_SCOPE_USER;
+    }
     struct list_rows rows = {0};
     int rc = 0;
-    if (collect_list_private(user_store, alias_filter, include_all, &rows) != 0 ||
-        collect_list_public(system_store, alias_filter, include_all, &rows) != 0) {
-        rc = 3;
-    } else {
-        rc = print_collected_table(&rows);
+    switch (scope) {
+    case HOLD_LIST_SCOPE_USER:
+        if (collect_list_private(user_store, alias_filter, live_only, false, &rows) != 0) {
+            rc = 3;
+        }
+        break;
+    case HOLD_LIST_SCOPE_SYSTEM:
+        if (inv->euid_root) {
+            refresh_system_public_ports(system_store);
+            if (collect_list_private(system_store, alias_filter, live_only, true, &rows) != 0) {
+                rc = 3;
+            }
+        } else if (collect_list_public(system_store, alias_filter, live_only, &rows) != 0) {
+            rc = 3;
+        }
+        break;
+    case HOLD_LIST_SCOPE_BOTH:
+        if (inv->euid_root) {
+            refresh_system_public_ports(system_store);
+            if (collect_list_private(system_store, alias_filter, live_only, true, &rows) != 0 ||
+                collect_all_user_stores(alias_filter, live_only, &rows) != 0) {
+                rc = 3;
+            }
+        } else if (collect_list_private(user_store, alias_filter, live_only, false, &rows) != 0 ||
+                   collect_list_public(system_store, alias_filter, live_only, &rows) != 0) {
+            rc = 3;
+        }
+        break;
+    case HOLD_LIST_SCOPE_DEFAULT:
+        break; /* resolved above */
+    }
+    if (rc == 0) {
+        rc = print_collected_table(&rows, true);
     }
     free_list_rows(&rows);
     return rc;
 }
 
-int hold_cmd_list_system(const struct hold_store *system_store,
-                           const char *alias_filter,
-                           bool include_all) {
+/* ps is Docker's machine-wide, running-first view. Docker has no user/system
+ * split -- one daemon, one namespace -- so a faithful ps shows everything
+ * running on the machine and speaks only Docker: no scope flags, no USER
+ * column. A normal user sees their own calls in full and the global calls
+ * redacted; root sees the global store directly. -a adds ended calls. */
+int hold_cmd_ps(const struct hold_invocation *inv,
+                  const struct hold_store *user_store,
+                  const struct hold_store *system_store,
+                  const char *alias_filter,
+                  bool all) {
+    bool running_only = !all;
     struct list_rows rows = {0};
     int rc = 0;
-    if (collect_list_private(system_store, alias_filter, include_all, &rows) != 0) {
+    if (inv->euid_root) {
+        refresh_system_public_ports(system_store);
+        if (collect_list_private(system_store, alias_filter, running_only, true, &rows) != 0) {
+            rc = 3;
+        }
+    } else if (collect_list_private(user_store, alias_filter, running_only, false, &rows) != 0 ||
+               collect_list_public(system_store, alias_filter, running_only, &rows) != 0) {
         rc = 3;
-    } else {
-        rc = print_collected_table(&rows);
+    }
+    if (rc == 0) {
+        rc = print_collected_table(&rows, false);
     }
     free_list_rows(&rows);
     return rc;
@@ -420,10 +641,15 @@ int hold_prune_one_run(const struct hold_store *store, const char *id, const cha
     return 0;
 }
 
-static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, int *removed_count) {
-    if (removed_count) {
-        *removed_count = 0;
-    }
+struct prune_sweep_stats {
+    int removed;
+    int kept_live;
+    int kept_stale;
+    int kept_saved;
+};
+
+static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, struct prune_sweep_stats *stats) {
+    memset(stats, 0, sizeof(*stats));
     char boot[128] = {0};
     bool have_boot = hold_current_boot_id(boot, sizeof(boot));
     const struct dirent *e;
@@ -451,9 +677,15 @@ static int cmd_prune_store_all(const struct hold_store *store, bool include_stal
             continue;
         }
         enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
-        /* A sweeping purge silently skips saved calls; only a targeted
-         * purge --force removes them. */
-        if (!r.saved && (st == STATE_EXITED || st == STATE_FAILED || (include_stale && st == STATE_STALE))) {
+        /* The sweep accounts for everything it sees: live calls are end's
+         * business, stale needs -a, and saved calls need a targeted --force. */
+        if (st == STATE_RUNNING) {
+            stats->kept_live++;
+        } else if (st == STATE_STALE && !include_stale) {
+            stats->kept_stale++;
+        } else if (r.saved && (st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE)) {
+            stats->kept_saved++;
+        } else if (st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE) {
             unlink(path);
             if (r.has_log) {
                 unlink(r.log_path);
@@ -462,9 +694,11 @@ static int cmd_prune_store_all(const struct hold_store *store, bool include_stal
                 unlink(r.console_sock);
             }
             unlink_public_index(store, r.id);
-            if (removed_count) {
-                (*removed_count)++;
-            }
+            char display_id[ID_DISPLAY_HEX_LEN + 1];
+            hold_run_id_display(r.id, display_id);
+            /* Docker prune prints what it deletes; so do we. */
+            printf("%s%s%s\n", display_id, r.has_name && r.name[0] ? "  " : "", r.has_name && r.name[0] ? r.name : "");
+            stats->removed++;
         }
         hold_free_run_record(&r);
     }
@@ -503,9 +737,7 @@ sweep_logs:
         if (access(json_path, F_OK) != 0) {
             unlink_log_index_for_log(log_path);
             unlink(log_path);
-            if (removed_count) {
-                (*removed_count)++;
-            }
+            stats->removed++;
         }
     }
     closedir(d);
@@ -540,9 +772,7 @@ sweep_consoles:
         }
         if (access(json_path, F_OK) != 0) {
             unlink(sock_path);
-            if (removed_count) {
-                (*removed_count)++;
-            }
+            stats->removed++;
         }
     }
     closedir(d);
@@ -578,9 +808,7 @@ sweep_public:
         /* A public index entry whose record is gone is an orphan; ps must not resurrect it. */
         if (access(json_path, F_OK) != 0) {
             unlink(public_path);
-            if (removed_count) {
-                (*removed_count)++;
-            }
+            stats->removed++;
         }
     }
     closedir(d);
@@ -592,19 +820,39 @@ int hold_cmd_purge_action(const struct hold_invocation *inv,
                             const struct hold_store *system_store,
                             const char *target_token,
                             bool all,
-                            bool force) {
+                            bool force,
+                            bool system_scope) {
     if (!target_token || strcmp(target_token, "all") == 0) {
-        /* A no-target sweep only clears already-ended calls and silently skips
-         * saved ones; --force adds nothing here (it never mass-ends live calls). */
-        const struct hold_store *store = inv->euid_root ? system_store : user_store;
-        int removed = 0;
+        /* A no-target sweep only clears already-ended calls and skips saved
+         * ones; --force adds nothing here (it never mass-ends live calls). The
+         * scope is explicit: -s/--system sweeps the global store (root only,
+         * non-root is re-execed through sudo before reaching here), everything
+         * else sweeps the caller's personal store. */
+        const struct hold_store *store = system_scope ? system_store : user_store;
+        struct prune_sweep_stats stats;
         bool include_stale = all || force || (target_token && strcmp(target_token, "all") == 0);
-        int rc = cmd_prune_store_all(store, include_stale, &removed);
+        int rc = cmd_prune_store_all(store, include_stale, &stats);
+        fflush(stdout); /* purged-call lines print before the summary note */
         if (rc == 0) {
-            if (removed > 0) {
-                hold_sig_note(inv, "hold: purged %d past call%s\n", removed, removed == 1 ? "" : "s");
+            /* Account for everything the sweep saw, so "purged 6" while the
+             * visible list still has entries is never a mystery. */
+            char kept[128] = "";
+            size_t off = 0;
+            if (stats.kept_live > 0) {
+                off += (size_t)snprintf(kept + off, sizeof(kept) - off, "%s%d live", off ? ", " : "; kept ", stats.kept_live);
+            }
+            if (stats.kept_stale > 0) {
+                off += (size_t)snprintf(kept + off, sizeof(kept) - off, "%s%d stale", off ? ", " : "; kept ", stats.kept_stale);
+            }
+            if (stats.kept_saved > 0) {
+                off += (size_t)snprintf(kept + off, sizeof(kept) - off, "%s%d saved", off ? ", " : "; kept ", stats.kept_saved);
+            }
+            const char *hint = stats.kept_stale > 0 ? " (purge -a sweeps stale)" : "";
+            if (stats.removed > 0) {
+                hold_sig_note(inv, "hold: purged %d past call%s%s%s\n",
+                              stats.removed, stats.removed == 1 ? "" : "s", kept, hint);
             } else {
-                hold_sig_note(inv, "hold: nothing to purge\n");
+                hold_sig_note(inv, "hold: nothing to purge%s%s\n", kept, hint);
             }
         }
         return rc;

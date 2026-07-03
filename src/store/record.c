@@ -407,7 +407,8 @@ out:
     return rc;
 }
 
-int hold_write_public_index_atomic(const struct hold_store *store, const struct hold_run_record *r) {
+int hold_write_public_index_atomic(const struct hold_store *store, const struct hold_run_record *r,
+                                     const char *observed_ports_csv) {
     char tmp[HOLD_PATH_MAX], fin[HOLD_PATH_MAX];
     int rc = -1;
     int fd = -1;
@@ -464,6 +465,14 @@ int hold_write_public_index_atomic(const struct hold_store *store, const struct 
     fprintf(f, "  \"created_at\": \"");
     hold_json_escape(f, created);
     fprintf(f, "\",\n");
+    /* Observed ports are root's projection of the live process group, refreshed
+     * whenever root lists; non-root `list -a` renders this field verbatim. An
+     * absent field simply means root has not observed ports for this call yet. */
+    if (observed_ports_csv && observed_ports_csv[0]) {
+        fprintf(f, "  \"observed_ports\": \"");
+        hold_json_escape(f, observed_ports_csv);
+        fprintf(f, "\",\n");
+    }
     write_state_object(f, r, "  ", "\n");
     fprintf(f, "}\n");
 
@@ -867,6 +876,9 @@ int hold_load_public_index(const char *path, struct hold_public_index *pi) {
         hold_json_get_str(j, "Created", pi->created_at, sizeof(pi->created_at)) != 0) {
         snprintf(pi->created_at, sizeof(pi->created_at), "%s", pi->started_at[0] ? pi->started_at : "-");
     }
+    if (hold_json_get_str(j, "observed_ports", pi->observed_ports, sizeof(pi->observed_ports)) != 0) {
+        pi->observed_ports[0] = '\0';
+    }
 
     const char *state_obj = NULL;
     if (hold_json_find_key(j, "State", &state_obj) == 0 && state_obj && *state_obj == '{') {
@@ -1061,7 +1073,8 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
         }
     }
     if (rc == 0 && store->kind == STORE_SYSTEM_MANAGED && store->public_dir[0]) {
-        rc = hold_write_public_index_atomic(store, &r);
+        /* A finishing call has no live ports; the projection clears them. */
+        rc = hold_write_public_index_atomic(store, &r, NULL);
     }
     hold_free_run_record(&r);
     return rc;

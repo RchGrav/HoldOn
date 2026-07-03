@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.6
+
+### Changed
+
+- `ps` and `list` now diverge instead of being aliases. `ps` is the Docker
+  mirror: a machine-wide, running-first view (`-a` adds ended) of both your
+  own calls and the global ones, with Docker's columns minus IMAGE and no
+  scope flags. `list` is Hold's scoped ledger: your calls live *and* past by
+  default, with a new `USER` column in Docker's IMAGE slot, and scope flags
+  `-s`/`--system` (global only), `-u`/`--user` (personal only, even under
+  sudo), `-a`/`--all` (both), and `-l`/`--live` (running only) that compose.
+- Calls a user may not read (global calls in a non-root view) render the
+  literal `hidden` in their USER and COMMAND cells rather than leaking, or
+  showing a misleading `-`.
+- As root, `hold list` shows the global calls only; `sudo hold list -a` also
+  walks every user's store under `/home/*` and the USER column names each
+  owner. Listing as root refreshes each live global call's observed ports
+  (listening TCP / bound UDP only) into its public entry, so a normal user's
+  `list -a` eventually shows real ports for root-managed calls.
+- Purge gains scope: `hold purge -u` (the default) sweeps your calls,
+  `hold purge -s` sweeps the global store — re-execing once through `sudo`
+  when you are not root so `sudo` can prompt. `-a` keeps its state meaning
+  (include stale). A sweeping purge still prints each call it removes and
+  accounts for what it kept: `hold: purged 6 past calls; kept 2 live, 8
+  stale (purge -a sweeps stale)`.
+- The log viewer's header shows the call's name when it has one; the short
+  id stays in the footer where it always was.
+
 ## 0.5.5
 
 ### Changed

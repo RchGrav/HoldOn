@@ -508,6 +508,9 @@ int hold_cli_main(int argc, char **argv) {
     bool console_mode = false;
     bool force_raw = false;
     bool all = false;
+    bool live_only = false;
+    bool want_system_scope = false;
+    bool want_user_scope = false;
     bool quiet = false;
     bool print_cmd = false;
     bool purge_force = false;
@@ -571,7 +574,13 @@ int hold_cli_main(int argc, char **argv) {
                 saw_owned_delimiter = true;
                 continue;
             }
-            if (!literal_owned_arg && !strcmp(argv[i], "--system")) {
+            bool is_list_cmd = !strcmp(command, "list");
+            bool is_ps_cmd = !strcmp(command, "ps");
+            bool purges = !strcmp(command, "purge") || !strcmp(command, "prune") ||
+                          !strcmp(command, "rm") || !strcmp(command, "drop");
+            /* --system is a scope selector for list/purge; ps speaks only Docker
+             * and takes no scope flag, so it does not swallow --system here. */
+            if (!literal_owned_arg && !is_ps_cmd && !strcmp(argv[i], "--system")) {
                 requested_system = true;
                 continue;
             }
@@ -579,17 +588,31 @@ int hold_cli_main(int argc, char **argv) {
                 quiet = true;
                 continue;
             }
-            bool sweeps = !strcmp(command, "list") || !strcmp(command, "ps") ||
-                          !strcmp(command, "purge") || !strcmp(command, "prune") ||
-                          !strcmp(command, "rm") || !strcmp(command, "drop");
-            bool purges = !strcmp(command, "purge") || !strcmp(command, "prune") ||
-                          !strcmp(command, "rm") || !strcmp(command, "drop");
+            /* Commands that accept the -s/--system and -u/--user scope flags. */
+            bool scoped = is_list_cmd || purges;
+            /* -a: Docker's include-ended on list/ps, the scope-widening BOTH on
+             * list, the include-stale widener on purge. */
+            bool sweeps = is_list_cmd || is_ps_cmd || purges;
             if (!literal_owned_arg && hold_cli_command_allows_all(command) && !strcmp(argv[i], "--all")) {
                 all = true;
                 continue;
             }
             if (!literal_owned_arg && sweeps && !strcmp(argv[i], "-a")) {
                 all = true;
+                continue;
+            }
+            /* -l/--live is a list-only filter; ps is already the live view and,
+             * as a pure Docker mirror, rejects it like any non-Docker flag. */
+            if (!literal_owned_arg && is_list_cmd && (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--live"))) {
+                live_only = true;
+                continue;
+            }
+            if (!literal_owned_arg && scoped && (!strcmp(argv[i], "-s") || !strcmp(argv[i], "--system"))) {
+                want_system_scope = true;
+                continue;
+            }
+            if (!literal_owned_arg && scoped && (!strcmp(argv[i], "-u") || !strcmp(argv[i], "--user"))) {
+                want_user_scope = true;
                 continue;
             }
             if (!literal_owned_arg && purges && !strcmp(argv[i], "--force")) {
@@ -604,6 +627,15 @@ int hold_cli_main(int argc, char **argv) {
             if (!literal_owned_arg && !strcmp(command, "stats") && !strcmp(argv[i], "--no-stream")) {
                 stats_no_stream = true;
                 continue;
+            }
+            /* list and ps reject any flag they did not consume, rather than
+             * misreading it as a name filter. */
+            if (!literal_owned_arg && (is_list_cmd || is_ps_cmd) && argv[i][0] == '-') {
+                fprintf(stderr, "hold: error: unknown flag '%s'\n", argv[i]);
+                print_command_usage_stderr(command);
+                free(cmd_argv);
+                free_run_options(&run);
+                return 1;
             }
             cmd_argv[cmd_argc++] = argv[i];
         }
@@ -677,22 +709,25 @@ int hold_cli_main(int argc, char **argv) {
     }
     bool interactive_stdin = run.interactive && !run.tty;
 
-    /* Fold aliases onto their canonical verb; dispatch below keys on canon. */
+    /* Fold aliases onto their canonical verb; dispatch below keys on canon.
+     * ps is deliberately NOT folded onto list: they now diverge (ps mirrors
+     * Docker's machine-wide running view, list is Hold's scoped ledger). */
     const char *canon = command;
     if (owned) {
-        if (!strcmp(command, "ps")) canon = "list";
-        else if (!strcmp(command, "shell")) canon = "on";
+        if (!strcmp(command, "shell")) canon = "on";
         else if (!strcmp(command, "stop")) canon = "end";
         else if (!strcmp(command, "console")) canon = "attach";
         else if (!strcmp(command, "logs")) canon = "__view";
         else if (!strcmp(command, "prune") || !strcmp(command, "rm") || !strcmp(command, "drop")) canon = "purge";
     }
-    bool is_list = owned && !strcmp(canon, "list");
+    /* Both read views may look at the system store without being root; only
+     * acting on it requires root. */
+    bool is_read_view = owned && (!strcmp(canon, "list") || !strcmp(canon, "ps"));
 
-    /* The root-managed store is visible to everyone (list stays open), but only
-     * root may act on it. Delegated execution is gone, so requesting it as a
-     * normal user is refused rather than re-run under sudo. */
-    if (requested_system && !inv.euid_root && !is_list) {
+    /* The root-managed store is visible to everyone (the read views stay open),
+     * but only root may act on it. Delegated execution is gone, so requesting it
+     * as a normal user is refused rather than re-run under sudo. */
+    if (requested_system && !inv.euid_root && !is_read_view && !(owned && !strcmp(canon, "purge"))) {
         fprintf(stderr, "hold: error: the root-managed store requires root; re-run as root or with sudo\n");
         if (owned) free(cmd_argv);
         free_run_options(&run);
@@ -709,6 +744,16 @@ int hold_cli_main(int argc, char **argv) {
     if (!inv.euid_root) {
         if (hold_ensure_user_store_for_current_user(&user_store) != 0) {
             hold_die_errno("hold: failed to init user storage");
+        }
+    } else {
+        /* Root has no store of its own in the normal flow (its calls are
+         * system-managed), but list -u / purge -u still need a personal store
+         * handle: the invoking user's under sudo, else root's own home. The
+         * paths are resolved without creating anything; an absent store simply
+         * lists empty. */
+        const char *home = inv.have_sudo_user && inv.invoking_home[0] ? inv.invoking_home : getenv("HOME");
+        if (home && *home) {
+            (void)hold_init_user_store_from_home(home, &user_store);
         }
     }
 
@@ -767,17 +812,37 @@ int hold_cli_main(int argc, char **argv) {
     }
 
     if (!strcmp(canon, "list")) {
-        /* One code path for `list` (canonical) and `ps` (its alias): the same
-         * Docker-shaped table, running-only unless -a/--all, with an optional
-         * name filter. */
+        /* list is Hold's scoped ledger. The scope flags select which stores it
+         * draws from; the command resolves DEFAULT against privilege. */
         const char *alias_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
         if (alias_filter && !hold_valid_alias(alias_filter)) {
             fprintf(stderr, "hold: error: invalid name '%s'\n", alias_filter);
             free(cmd_argv);
             return 5;
         }
-        int rc = inv.euid_root ? hold_cmd_list_system(&system_store, alias_filter, all)
-                               : hold_cmd_list_normal(&user_store, &system_store, alias_filter, all);
+        enum hold_list_scope scope = HOLD_LIST_SCOPE_DEFAULT;
+        if (want_user_scope) {
+            scope = HOLD_LIST_SCOPE_USER;
+        } else if (want_system_scope || requested_system) {
+            scope = HOLD_LIST_SCOPE_SYSTEM;
+        } else if (all) {
+            scope = HOLD_LIST_SCOPE_BOTH;
+        }
+        int rc = hold_cmd_list(&inv, &user_store, &system_store, alias_filter, scope, live_only);
+        free(cmd_argv);
+        return rc;
+    }
+
+    if (!strcmp(canon, "ps")) {
+        /* ps is Docker's machine-wide running view: both scopes, no USER column,
+         * only the -a (include-ended) flag. */
+        const char *alias_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
+        if (alias_filter && !hold_valid_alias(alias_filter)) {
+            fprintf(stderr, "hold: error: invalid name '%s'\n", alias_filter);
+            free(cmd_argv);
+            return 5;
+        }
+        int rc = hold_cmd_ps(&inv, &user_store, &system_store, alias_filter, all);
         free(cmd_argv);
         return rc;
     }
@@ -820,7 +885,34 @@ int hold_cli_main(int argc, char **argv) {
             free(cmd_argv);
             return 1;
         }
-        int rc = hold_cmd_purge_action(&inv, &user_store, &system_store, target, all, purge_force);
+        /* -u/--user forces the personal sweep; -s/--system (or --system) sweeps
+         * the global store. -a keeps its state meaning here (include stale). */
+        bool purge_system = (want_system_scope || requested_system) && !want_user_scope;
+        /* A non-root global sweep re-execs through sudo so sudo prompts for the
+         * password. This is NOT the deleted elevation subsystem: no sudoers
+         * pinning, no capability tokens — one auditable execvp, whose root child
+         * re-enters here already privileged and sweeps directly. */
+        if (purge_system && !target && !inv.euid_root) {
+            char self[HOLD_PATH_MAX];
+            ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+            if (n > 0) {
+                self[n] = '\0';
+                char *sudo_argv[8];
+                int k = 0;
+                sudo_argv[k++] = "sudo";
+                sudo_argv[k++] = self;
+                sudo_argv[k++] = "purge";
+                sudo_argv[k++] = "--system";
+                if (all) sudo_argv[k++] = "--all";
+                if (purge_force) sudo_argv[k++] = "--force";
+                sudo_argv[k] = NULL;
+                execvp("sudo", sudo_argv);
+            }
+            fprintf(stderr, "hold: global purge needs root: sudo hold purge --system\n");
+            free(cmd_argv);
+            return 3;
+        }
+        int rc = hold_cmd_purge_action(&inv, &user_store, &system_store, target, all, purge_force, purge_system);
         free(cmd_argv);
         return rc;
     }

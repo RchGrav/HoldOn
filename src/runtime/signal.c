@@ -855,7 +855,10 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         live.record_dir = target.store.record_dir;
         live.have_boot = hold_current_boot_id(live.boot, sizeof(live.boot));
         enum run_state view_state = hold_eval_state(&r, live.have_boot ? live.boot : NULL);
-        if (follow) {
+        /* The full-screen viewer follows live calls by default (the before-0.5
+         * design: open at the newest output, FOLLOWING ACTIVE). Plain non-TTY
+         * output keeps strict -f semantics for scripts. */
+        if (follow || view_state == STATE_RUNNING) {
             follow_opts.enabled = true;
             follow_opts.is_running = interactive_view_run_is_running;
             follow_opts.exit_code = interactive_view_exit_code;
@@ -866,6 +869,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         }
         struct hold_log_viewer_context viewer_context = {
             .run_id = r.id[0] ? r.id : target.id,
+            .name = r.has_name && r.name[0] ? r.name : NULL,
             .profile = r.has_alias ? r.alias : NULL,
             .command = r.cmdline,
             .log_path = r.log_path,
@@ -873,7 +877,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
             .has_exit_code = r.has_exit_code,
             .exit_code = r.exit_code,
         };
-        rc = hold_log_viewer_tty_fd(fd, target_token, &opts, follow ? &follow_opts : NULL, &viewer_context, debug_stats);
+        rc = hold_log_viewer_tty_fd(fd, target_token, &opts, follow_opts.enabled ? &follow_opts : NULL, &viewer_context, debug_stats);
         if (rc != 0) {
             close(fd);
             hold_free_run_record(&r);

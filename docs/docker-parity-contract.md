@@ -35,10 +35,19 @@ see `hold ports` and the PORTS column) and `-v` (host paths are just paths).
 
 ## The call table
 
-`hold list` (alias `ps`) renders Docker's table look:
+`ps` and `list` both render Docker's table look, but they are distinct verbs
+(`ps` is no longer an alias of `list`; see hold-on-identity.md). `ps` is the
+Docker mirror — a machine-wide, running-first view with Docker's own columns,
+minus IMAGE (Hold has no image analogue and does not fake one):
 
 ```text
 CALL ID   COMMAND   CREATED   STATUS   PORTS   NAMES
+```
+
+`list` is Hold's scoped ledger and adds a USER column in Docker's IMAGE slot:
+
+```text
+CALL ID   USER   COMMAND   CREATED   STATUS   PORTS   NAMES
 ```
 
 - Columns are content-sized, never fixed widths that shear.
@@ -48,8 +57,10 @@ CALL ID   COMMAND   CREATED   STATUS   PORTS   NAMES
   `Created` — plus Hold's honest extras: `Stale 2 days`, and a ` (saved)`
   suffix on protected calls.
 - COMMAND is double-quoted and ellipsized; NAMES is always present for a
-  user's calls.
-- PORTS shows sockets actually observed in use by the call's process group.
+  user's calls. A call the caller may not read (a global call in a normal
+  user's view) renders `hidden` in its USER and COMMAND cells.
+- PORTS shows sockets actually observed in use by the call's process group,
+  Docker-formatted: `127.0.0.1:8080/tcp`, `[::]:80/tcp`, comma-separated.
 
 ## Output discipline
 

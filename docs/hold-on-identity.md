@@ -46,7 +46,13 @@ hold <id|name>              # redial: restart a retained call from its recipe
                             #  (-it recipe reattaches, -d recipe detaches,
                             #   otherwise foreground)
 
-hold list                   # Docker-look table (ps is an alias)
+hold list                   # your ledger: your calls, live and past, with a USER column
+hold list -l                 #  --live: only the running ones
+hold list -a                 #  --all: your ledger plus the redacted global calls
+hold list -s                 #  --system: the global calls only (redacted for a user)
+hold list -u                 #  --user: your personal calls only, even under sudo
+hold ps                     # Docker's machine-wide view: running calls (add -a for ended),
+                            #  both your calls and the global ones; no USER column
 hold attach <target>        # pick the call back up (Ctrl-P Ctrl-Q detaches)
 hold end <target>           # end the call politely: TERM, then KILL
                             #  (stop is an alias)
@@ -67,9 +73,11 @@ hold stats <call>           # live resource usage stream (CPU, memory, pids)
 hold save <target>          # protect this call from purge; no unsave — see purge
 hold rename <target> <name> # rename a call (docker rename); naming a call
                             #  declares you want to keep it, so rename saves it
-hold purge [<target>] [-a] [--force]
+hold purge [<target>] [-a] [-s|-u] [--force]
                             # the one removal verb: no target sweeps ended
-                            #  calls (-a includes stale); a target removes one
+                            #  calls (-a includes stale); -u sweeps your calls
+                            #  (default), -s sweeps the global store (re-execs
+                            #  via sudo for a normal user); a target removes one
                             #  call; --force means "remove regardless of state"
                             #  (saved or still live). rm, prune, and drop are
                             #  accepted aliases.
@@ -84,19 +92,67 @@ hold: 'happy_tiger' is saved — purging a saved call requires --force
   hold purge happy_tiger --force
 ```
 
-Docker parity applies at the **flag level** (`-d`, `-i`, `-t`, `-e`,
-`--env-file`, `--name`, `--rm`, `--restart`, `--detach-keys`) and at the
-**output level**: `list`/`ps` renders Docker's table look — content-sized
-columns, `2 days ago`, `Exited (0) 2 days ago`, names always present —
-with the columns
+## ps speaks Docker; list speaks Hold
+
+There are two viewers, and they answer different questions.
+
+**`ps` is the Docker mirror.** Docker has no user/system split — one daemon,
+one namespace — so a faithful `ps` shows *everything running on the machine*
+and nothing else. `hold ps` therefore shows running calls from both scopes at
+once: your own calls in full, and the global (root-managed) calls redacted;
+`hold ps -a` adds the ended ones, exactly as Docker's `-a` does. Scope-
+awareness is not Docker vocabulary, so `ps` has no scope flags — it takes only
+`-a` — and no USER column. It renders Docker's columns minus IMAGE (which we
+have no analogue for and do not pretend to):
 
 ```text
 CALL ID   COMMAND   CREATED   STATUS   PORTS   NAMES
 ```
 
-There is no PROFILE column (profiles do not exist, and a column of `-`
-is noise). Verbs are Hold-native. `-p`/`-P`/`-v` remain honestly
-rejected.
+**`list` is Hold's scoped ledger.** Hold is a runner, and the ledger of past
+calls is the product, so `list` defaults to your whole personal ledger — live
+*and* past — and grows a USER column in Docker's IMAGE slot (second, after
+CALL ID):
+
+```text
+CALL ID   USER   COMMAND   CREATED   STATUS   PORTS   NAMES
+```
+
+The scope flags belong entirely to `list`:
+
+- **`hold list`** (a normal user) — your calls, live and past. `-l`/`--live`
+  narrows to running.
+- **`hold list -a`/`--all`** — your ledger plus every global call, redacted.
+- **`hold list -s`/`--system`** — the global calls only, none of yours.
+- **`hold list -u`/`--user`** — your personal calls only, even under sudo (the
+  invoking user's store, never root's).
+- **`sudo hold list`** (root) — the global calls only, authoritative. `sudo
+  hold list -a` also walks every user's store under `/home/*/.local/state/hold`
+  and the USER column names each owner. `-l` composes with all of these.
+
+A call a user is not entitled to read shows the literal `hidden` in its USER
+and COMMAND cells — not `-`. `-` reads as *none*; `hidden` reads as
+*exists, but not yours to see*, which is the truth. There is no PROFILE column
+(profiles do not exist). `-p`/`-P`/`-v` remain honestly rejected.
+
+The PORTS a user sees for a global call come from the public index, a
+projection: root refreshes each live global call's observed ports (listening
+TCP and bound UDP only, never outbound connections) into its public entry
+whenever root runs `list`/`ps`. It is therefore eventually consistent — a port
+that opened a moment ago appears the next time root lists, not instantly.
+
+Purge follows the same scope split as list, but `-a` keeps its Docker-ish
+*state* meaning (include stale) rather than becoming a scope flag: `hold purge`
+and `hold purge -u` sweep your own ended calls; `hold purge -s` sweeps the
+global store, re-execing once through `sudo` when you are not root so `sudo`
+can prompt for the password (a single audited re-exec, not a return of the
+old elevation machinery).
+
+Docker parity otherwise applies at the **flag level** (`-d`, `-i`, `-t`,
+`-e`, `--env-file`, `--name`, `--rm`, `--restart`, `--detach-keys`) and at the
+**output level**: both tables render Docker's look — content-sized columns,
+`2 days ago`, `Exited (0) 2 days ago`, names always present. Verbs are
+Hold-native.
 
 ## Saved calls replace profiles
 

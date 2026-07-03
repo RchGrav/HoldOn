@@ -139,6 +139,7 @@ as_user() {
   local name
   for name in \
     HOLD_BOOT_ID_PATH \
+    HOLD_TEST_HOME_ROOT \
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
@@ -165,6 +166,7 @@ as_root() {
   local name
   for name in \
     HOLD_BOOT_ID_PATH \
+    HOLD_TEST_HOME_ROOT \
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
@@ -195,6 +197,7 @@ as_sudo_from_user() {
   local name
   for name in \
     HOLD_BOOT_ID_PATH \
+    HOLD_TEST_HOME_ROOT \
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
@@ -222,6 +225,7 @@ env_args=(
 )
 for name in \
   HOLD_BOOT_ID_PATH \
+  HOLD_TEST_HOME_ROOT \
   HOLD_TEST_FAIL_RECORD_WRITE \
   HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
   HOLD_FAKE_SUDO_ARGV \
@@ -952,7 +956,9 @@ test_log_viewer_integrated_chrome_help_and_info() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
   local out id rc short
-  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo "chrome one"; echo "chrome two"; echo "chrome err" >&2; sleep 0.1' 2>&1) || return 1
+  # A named call: the header shows the call's name (the human handle), while the
+  # short id stays where it has always been, in the footer.
+  out=$("$HOLD_BIN" --name chrome_call -d -- /bin/sh -c 'echo "chrome one"; echo "chrome two"; echo "chrome err" >&2; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   short=$(printf '%s' "$id" | cut -c1-12)
@@ -967,7 +973,9 @@ test_log_viewer_integrated_chrome_help_and_info() {
   [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/viewer-chrome.err" >&2; return 1; }
   local plain="$TEST_ROOT/viewer-chrome.plain"
   python3 -c 'import re,sys; raw=open(sys.argv[1],"rb").read().decode("utf-8","ignore"); sys.stdout.write(re.sub(r"\x1b\[[0-9;?]*[A-Za-z~]","",raw).replace("\r",""))' "$TEST_ROOT/viewer-chrome.out" >"$plain"
-  grep -q "hold logs: $short" "$plain" || { cat "$plain" >&2; return 1; }
+  # Header carries the call name; footer still carries the short id.
+  grep -q "hold logs: chrome_call" "$plain" || { cat "$plain" >&2; return 1; }
+  grep -q "$short" "$plain" || { cat "$plain" >&2; return 1; }
   grep -q 'VIEWING EXITED (0)' "$plain" || { cat "$plain" >&2; return 1; }
   grep -q 'Ctrl-H Help' "$plain" || { cat "$plain" >&2; return 1; }
   grep -Eq 'ts:time local +src:all +wrap:off' "$plain" || { cat "$plain" >&2; return 1; }
@@ -2644,10 +2652,11 @@ test_raw_start_does_not_steal_trailing_system() {
 
 test_public_root_index_list_is_redacted() {
   write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z || return 1
-  # Public root-index rows appear with -a; the command is always the redacted
-  # <root-managed> placeholder and the STATUS reflects the projected state.
+  # Public root-index rows appear with -a in redacted form: the USER and COMMAND
+  # cells both read the literal "hidden" (exists-but-not-yours-to-see, not "-"),
+  # and the STATUS reflects the projected state.
   "$HOLD_BIN" list -a >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
-  grep -Eq '^abc12345cafe[[:space:]].*<root-managed>.*[[:space:]]running([[:space:]]|$)' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
+  grep -Eq '^abc12345cafe[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*[[:space:]]running([[:space:]]|$)' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
   ! grep -q 'secret' "$TEST_ROOT/list.out"
 }
 
@@ -2680,11 +2689,167 @@ test_public_root_index_list_reads_projected_state() {
 }
 JSON
   chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
-  # The projected State.Status ("exited") drives the STATUS column; the command
-  # stays redacted as <root-managed>. Ended public rows need -a to appear.
+  # The projected State.Status ("exited") drives the STATUS column; USER and
+  # COMMAND stay redacted to the literal "hidden". Ended public rows need -a.
   "$HOLD_BIN" list -a >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
-  grep -Eq '^deadbeefcafe[[:space:]].*<root-managed>.*[[:space:]]exited([[:space:]]|$)' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
+  grep -Eq '^deadbeefcafe[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*[[:space:]]exited([[:space:]]|$)' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
   ! grep -q 'secret' "$TEST_ROOT/list.out"
+}
+
+# `hold list` is the ledger: a user's own calls, live and past, by default, with
+# a USER column naming the caller; -l/--live narrows it to the running ones.
+test_list_default_is_full_ledger_live_narrows() {
+  local live_out ended_out live_id ended_id me
+  me=$(id -un)
+  live_out=$("$HOLD_BIN" -d --name ledger_live sleep 300 2>&1) || return 1
+  live_id=$(printf '%s\n' "$live_out" | extract_id); [ -n "$live_id" ] || return 1
+  ended_out=$("$HOLD_BIN" -d --name ledger_past /bin/sh -c 'exit 4' 2>&1) || return 1
+  ended_id=$(printf '%s\n' "$ended_out" | extract_id); [ -n "$ended_id" ] || return 1
+  record_ended_soon "$ended_id" || return 1
+  # Default view: the USER column, then both the live and the past call, each
+  # attributed to the calling user.
+  "$HOLD_BIN" list >"$TEST_ROOT/ledger.out" 2>&1 || return 1
+  grep -Eq "^CALL ID[[:space:]]+USER[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES$" "$TEST_ROOT/ledger.out" || { cat "$TEST_ROOT/ledger.out" >&2; return 1; }
+  grep -Eq "^$live_id[[:space:]]+$me[[:space:]].*Up " "$TEST_ROOT/ledger.out" || { cat "$TEST_ROOT/ledger.out" >&2; return 1; }
+  grep -Eq "^$ended_id[[:space:]]+$me[[:space:]].*Exited \\(4\\)" "$TEST_ROOT/ledger.out" || { cat "$TEST_ROOT/ledger.out" >&2; return 1; }
+  # -l (and its --live long form) drop the past call, keep the live one.
+  local flag
+  for flag in -l --live; do
+    "$HOLD_BIN" list "$flag" >"$TEST_ROOT/live.out" 2>&1 || return 1
+    grep -Eq "^$live_id[[:space:]].*Up " "$TEST_ROOT/live.out" || { cat "$TEST_ROOT/live.out" >&2; return 1; }
+    ! grep -q "^$ended_id" "$TEST_ROOT/live.out" || { echo "$flag still showed the past call" >&2; cat "$TEST_ROOT/live.out" >&2; return 1; }
+  done
+  "$HOLD_BIN" stop "$live_id" >/dev/null 2>&1 || true
+}
+
+# list -a renders the observed ports root projected into a global call's public
+# entry, in the same redacted row (USER and COMMAND both "hidden").
+test_list_all_renders_global_ports_projection() {
+  local id=facefeed1234
+  mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
+  chmod 755 "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
+  cat > "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" <<'JSON'
+{"id":"facefeed1234","root_managed":true,"name":"global_web","state_hint":"running","created_at":"2026-06-15T18:42:11Z","observed_ports":"127.0.0.1:8080/tcp, [::]:9090/tcp","argv":["secret"],"cmdline_display":"secret command"}
+JSON
+  chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
+  "$HOLD_BIN" list -a >"$TEST_ROOT/list.out" 2>&1 || return 1
+  # The redacted row shows the generated name and the projected ports; USER and
+  # COMMAND read "hidden" and the command line never appears.
+  grep -Eq "^$id[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*127\\.0\\.0\\.1:8080/tcp.*global_web$" "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
+  ! grep -q 'secret' "$TEST_ROOT/list.out"
+}
+
+# `hold list -s/--system` (and the equivalent `--system list`) is exactly the
+# redacted global view: no personal calls leak into it.
+test_system_list_is_redacted_global_only() {
+  local out personal_id gid=beadfeed5678 form
+  out=$("$HOLD_BIN" -d --name my_personal sleep 300 2>&1) || return 1
+  personal_id=$(printf '%s\n' "$out" | extract_id); [ -n "$personal_id" ] || return 1
+  mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
+  chmod 755 "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
+  cat > "$HOLD_TEST_SYSTEM_STATE_DIR/public/$gid.json" <<'JSON'
+{"id":"beadfeed5678","root_managed":true,"name":"global_only","state_hint":"running","created_at":"2026-06-15T18:42:11Z","argv":["secret"],"cmdline_display":"secret command"}
+JSON
+  chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$gid.json" || return 1
+  # -s, --system, and the pre-command --system spelling all mean the same view.
+  for form in "list -s" "list --system" "--system list"; do
+    # shellcheck disable=SC2086
+    "$HOLD_BIN" $form >"$TEST_ROOT/system-list.out" 2>&1 || { echo "form: $form" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
+    grep -Eq "^$gid[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*global_only$" "$TEST_ROOT/system-list.out" || { echo "form: $form" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
+    ! grep -q "^$personal_id" "$TEST_ROOT/system-list.out" || { echo "form '$form' leaked a personal call" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
+    ! grep -q 'my_personal' "$TEST_ROOT/system-list.out" || { echo "form: $form" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
+  done
+  "$HOLD_BIN" stop "$personal_id" >/dev/null 2>&1 || true
+}
+
+# ps is Docker's machine-wide running view: running calls from both scopes, the
+# global ones redacted, no USER column; -a adds ended; non-Docker flags reject.
+test_ps_is_docker_machine_wide_running_view() {
+  local live_out live_id ended_out ended_id gid=c1cadafeed99 rc
+  live_out=$("$HOLD_BIN" -d --name ps_live sleep 300 2>&1) || return 1
+  live_id=$(printf '%s\n' "$live_out" | extract_id); [ -n "$live_id" ] || return 1
+  ended_out=$("$HOLD_BIN" -d --name ps_past /bin/sh -c 'exit 2' 2>&1) || return 1
+  ended_id=$(printf '%s\n' "$ended_out" | extract_id); [ -n "$ended_id" ] || return 1
+  record_ended_soon "$ended_id" || return 1
+  mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
+  chmod 755 "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
+  cat > "$HOLD_TEST_SYSTEM_STATE_DIR/public/$gid.json" <<'JSON'
+{"id":"c1cadafeed99","root_managed":true,"name":"ps_global","state_hint":"running","created_at":"2026-06-15T18:42:11Z","argv":["secret"],"cmdline_display":"secret command"}
+JSON
+  chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$gid.json" || return 1
+  # ps: Docker's header (no USER column), running personal + global, past hidden.
+  "$HOLD_BIN" ps >"$TEST_ROOT/ps.out" 2>&1 || return 1
+  grep -Eq "^CALL ID[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES$" "$TEST_ROOT/ps.out" || { cat "$TEST_ROOT/ps.out" >&2; return 1; }
+  grep -Eq "^$live_id[[:space:]].*Up .*ps_live$" "$TEST_ROOT/ps.out" || { cat "$TEST_ROOT/ps.out" >&2; return 1; }
+  grep -Eq "^$gid[[:space:]]+hidden[[:space:]].*ps_global$" "$TEST_ROOT/ps.out" || { cat "$TEST_ROOT/ps.out" >&2; return 1; }
+  ! grep -q "^$ended_id" "$TEST_ROOT/ps.out" || { echo "ps default showed an ended call" >&2; cat "$TEST_ROOT/ps.out" >&2; return 1; }
+  ! grep -q 'secret' "$TEST_ROOT/ps.out"
+  # ps -a includes the ended personal call.
+  "$HOLD_BIN" ps -a >"$TEST_ROOT/ps-a.out" 2>&1 || return 1
+  grep -Eq "^$ended_id[[:space:]].*Exited \\(2\\)" "$TEST_ROOT/ps-a.out" || { cat "$TEST_ROOT/ps-a.out" >&2; return 1; }
+  # ps speaks only Docker: -l and -s are rejected as unknown flags.
+  local badflag
+  for badflag in -l -s -u; do
+    set +e; "$HOLD_BIN" ps "$badflag" >/dev/null 2>"$TEST_ROOT/ps-bad.err"; rc=$?; set -e
+    [ "$rc" -eq 1 ] || { echo "ps $badflag: rc=$rc (want 1)" >&2; return 1; }
+    grep -q "unknown flag '$badflag'" "$TEST_ROOT/ps-bad.err" || { cat "$TEST_ROOT/ps-bad.err" >&2; return 1; }
+  done
+  "$HOLD_BIN" stop "$live_id" >/dev/null 2>&1 || true
+}
+
+# `hold purge -s` as a normal user re-execs through sudo (so sudo can prompt),
+# passing exactly `<self> purge --system` (plus any state flags).
+test_purge_system_reexecs_through_sudo() {
+  make_fake_sudo || return 1
+  export HOLD_FAKE_SUDO_RC=0
+  # The re-exec replaces the process with (fake) sudo, which records its argv,
+  # one entry per line: the self binary path, then purge, then --system.
+  set +e
+  "$HOLD_BIN" purge -s >/dev/null 2>&1
+  set -e
+  grep -qx 'purge' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv missing 'purge'" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
+  grep -qx -- '--system' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv missing '--system'" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
+  grep -q 'hold' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv missing the self binary path" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
+  ! grep -qx -- '--all' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv carried an unrequested --all" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
+  # -a is forwarded as a state widener when requested.
+  : > "$HOLD_FAKE_SUDO_ARGV"
+  set +e
+  "$HOLD_BIN" purge -s -a >/dev/null 2>&1
+  set -e
+  grep -qx -- '--all' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv missing forwarded '--all'" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
+}
+
+# As root, `list` is the global working view; `list -a` also walks every user's
+# personal store and adds a USER column so ownership is clear.
+test_root_list_all_labels_owner_and_walks_homes() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "root actor unavailable"
+  local homes="$TEST_ROOT/homes" uid owner
+  uid=$(id -u); owner=$(id -un)
+  # A fabricated personal store under a test home root, holding one call owned by
+  # the invoking user (so its USER resolves via /etc/passwd). The record shape
+  # mirrors the minimal valid record, with a live-looking pgid so it is a row.
+  mkdir -p "$homes/somebody/.local/state/hold" || return 1
+  cat > "$homes/somebody/.local/state/hold/aa11bb22cc33.json" <<JSON
+{"version":1,"id":"aa11bb22cc33","pid":2,"pgid":2,"sid":2,"start_unix_ns":0,"argv":["peer-cmd"],"cmdline_display":"peer-cmd","uid":$uid,"gid":$uid,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0,"name":"peer_call"}
+JSON
+  chmod -R 755 "$homes" || return 1
+  # A global call in the system store (root's own view).
+  local out gid_call
+  out=$(as_root env HOLD_TEST_HOME_ROOT="$homes" "$HOLD_REAL_BIN" -d --name global_root sleep 300 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  gid_call=$(printf '%s\n' "$out" | extract_id); [ -n "$gid_call" ] || { printf '%s\n' "$out" >&2; return 1; }
+  # Plain root list: the global call only, no personal rows.
+  as_root env HOLD_TEST_HOME_ROOT="$homes" "$HOLD_REAL_BIN" list >"$TEST_ROOT/root-list.out" 2>&1 || return 1
+  grep -Eq "^$gid_call[[:space:]].*global_root$" "$TEST_ROOT/root-list.out" || { cat "$TEST_ROOT/root-list.out" >&2; return 1; }
+  ! grep -q 'peer_call' "$TEST_ROOT/root-list.out" || { echo "plain root list walked personal stores" >&2; cat "$TEST_ROOT/root-list.out" >&2; return 1; }
+  # Root list -a: USER column (second, after CALL ID); the peer call attributed
+  # to its record owner, the global call to its recorded invoking user. Under
+  # sudo that is the invoking account; run directly as root it would be "root".
+  # In both cases the label equals `id -un` in this harness, so assert that.
+  as_root env HOLD_TEST_HOME_ROOT="$homes" "$HOLD_REAL_BIN" list -a >"$TEST_ROOT/root-list-a.out" 2>&1 || return 1
+  grep -Eq "^CALL ID[[:space:]]+USER[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES$" "$TEST_ROOT/root-list-a.out" || { cat "$TEST_ROOT/root-list-a.out" >&2; return 1; }
+  grep -Eq "^aa11bb22cc33[[:space:]]+$owner[[:space:]].*peer_call$" "$TEST_ROOT/root-list-a.out" || { cat "$TEST_ROOT/root-list-a.out" >&2; return 1; }
+  grep -Eq "^$gid_call[[:space:]]+$owner[[:space:]].*global_root$" "$TEST_ROOT/root-list-a.out" || { cat "$TEST_ROOT/root-list-a.out" >&2; return 1; }
+  as_root "$HOLD_REAL_BIN" stop "system:$gid_call" >/dev/null 2>&1 || true
 }
 
 test_user_local_wins_over_public_root_collision() {
@@ -3096,10 +3261,10 @@ test_ps_table_humanized_status_and_saved() {
   ps_out=$("$HOLD_BIN" ps -a) || return 1
   printf '%s\n' "$ps_out" | grep -Eq "^$id[[:space:]].*Up .*\(saved\)" || { printf '%s\n' "$ps_out" >&2; return 1; }
 
-  # list is the canonical verb and ps its alias: both render the same Docker
-  # table with the same header and Up/Exited/(saved) STATUS phrasing.
+  # list carries the same Up/Exited/(saved) STATUS phrasing as ps, but its own
+  # header adds the USER column in Docker's IMAGE slot (second, after CALL ID).
   list_out=$("$HOLD_BIN" list -a) || return 1
-  printf '%s\n' "$list_out" | grep -Eq "^CALL ID[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES$" ||
+  printf '%s\n' "$list_out" | grep -Eq "^CALL ID[[:space:]]+USER[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES$" ||
     { printf '%s\n' "$list_out" >&2; return 1; }
   printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]].*Up .*\(saved\)" || { printf '%s\n' "$list_out" >&2; return 1; }
   printf '%s\n' "$list_out" | grep -Eq "^$exit_id[[:space:]].*Exited \(5\) .*ago" || { printf '%s\n' "$list_out" >&2; return 1; }
@@ -3822,8 +3987,8 @@ test_misc_action_guards() {
   set +e; "$HOLD_BIN" help bogustopic >/dev/null 2>"$TEST_ROOT/h.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "help bogustopic: rc=$rc (want 5)" >&2; return 1; }
   grep -q 'unknown help topic' "$TEST_ROOT/h.err" || { cat "$TEST_ROOT/h.err" >&2; return 1; }
-  # The legacy --iso/-l list surface is gone: list renders only the Docker-shaped
-  # table, never the STARTED_AT ISO header, regardless of the old -l token.
+  # -l is now the --live filter, not the legacy --iso surface: list renders only
+  # the Docker-shaped table, never the old STARTED_AT ISO header.
   "$HOLD_BIN" list -l >"$TEST_ROOT/l.out" 2>&1 || true
   ! grep -q 'STARTED_AT' "$TEST_ROOT/l.out" || { echo "list still emits the legacy ISO header" >&2; cat "$TEST_ROOT/l.out" >&2; return 1; }
 }
@@ -3982,6 +4147,12 @@ run_test "sudo --system home argv paths use invoking-user store" test_sudo_syste
 run_test "sudo context can stop unique invoking-user local run" test_sudo_context_can_stop_unique_user_local_run
 run_test "public root index rows are redacted in normal list" test_public_root_index_list_is_redacted
 run_test "public root index list reads projected State" test_public_root_index_list_reads_projected_state
+run_test "list is the ledger with a USER column; -l/--live narrows to running" test_list_default_is_full_ledger_live_narrows
+run_test "list -a renders the projected global ports" test_list_all_renders_global_ports_projection
+run_test "list -s/--system shows the redacted global view only" test_system_list_is_redacted_global_only
+run_test "ps is Docker's machine-wide running view" test_ps_is_docker_machine_wide_running_view
+run_test "purge -s re-execs the global sweep through sudo" test_purge_system_reexecs_through_sudo
+run_test "root list -a labels owners and walks user homes" test_root_list_all_labels_owner_and_walks_homes
 run_test "normal run does not self-elevate on local/root ID conflict" test_user_local_wins_over_public_root_collision
 run_test "explicit user:<id> targets user-local run" test_explicit_user_target
 run_test "root capability drop-all then add applies requested cap" test_root_capability_drop_all_then_add_preserves_added_cap

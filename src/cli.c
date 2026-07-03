@@ -23,7 +23,7 @@ struct hold_cli_command_spec {
 };
 
 static const struct hold_cli_command_spec command_specs[] = {
-    {"list", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold list [-a|--all] [name]", "list"},
+    {"list", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold list [-a|--all] [-s|--system] [-u|--user] [-l|--live] [name]", "list"},
     {"ps", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold ps [-a|--all] [name]", "ps"},
     {"on", 0, 0, 0, "usage: hold on", "on"},
     {"off", 0, 0, 0, "usage: hold off", "off"},
@@ -79,10 +79,14 @@ static int help_system(void) {
            "  Linux: /var/lib/hold\n"
            "  macOS: /var/db/hold\n\n"
            "Private root records and logs stay root-only. Normal users see only the\n"
-           "redacted public index. Acting on a root-managed target requires root;\n"
-           "user-local targets win over root-public collisions.\n\n"
+           "redacted public index, where a call's USER and COMMAND read 'hidden'.\n"
+           "Acting on a root-managed target requires root; user-local targets win\n"
+           "over root-public collisions.\n\n"
            "  sudo hold <cmd...>           start in root-managed state\n"
-           "  sudo hold list               list authoritative root records\n");
+           "  sudo hold list               list the global calls (authoritative)\n"
+           "  sudo hold list -a            global calls plus every user's calls\n"
+           "  hold list -s                 the redacted global view, as a normal user\n"
+           "  hold purge -s                sweep the global store (re-execs via sudo)\n");
     return 0;
 }
 
@@ -105,8 +109,24 @@ static int help_scripting(void) {
 }
 
 static int help_action(const char *action) {
-    if (!strcmp(action, "list") || !strcmp(action, "ps")) {
-        printf("usage: hold list [-a|--all] [name]\n\nList calls as a Docker-shaped table (CALL ID, COMMAND, CREATED, STATUS, PORTS, NAMES). Running calls only by default; -a/--all includes ended and stale calls. An optional name narrows the listing. (ps is an alias of list.)\n");
+    if (!strcmp(action, "list")) {
+        printf("usage: hold list [-a|--all] [-s|--system] [-u|--user] [-l|--live] [name]\n\n"
+               "list is Hold's scoped ledger, with a USER column (CALL ID, USER, COMMAND, CREATED,\n"
+               "STATUS, PORTS, NAMES). By default you see your own calls, live and past. Scope flags:\n"
+               "  -u/--user     your personal calls only (even under sudo: the invoking user's)\n"
+               "  -s/--system   the global (root-managed) calls only\n"
+               "  -a/--all      both scopes together\n"
+               "  -l/--live     narrow any of the above to running calls (composes)\n\n"
+               "Global calls a normal user is not entitled to read appear redacted: USER and COMMAND\n"
+               "read 'hidden'. Run as root, list defaults to the global calls; -a also walks every\n"
+               "user's store. An optional name narrows the listing. (For Docker's running view, see ps.)\n");
+    } else if (!strcmp(action, "ps")) {
+        printf("usage: hold ps [-a|--all] [name]\n\n"
+               "ps is Docker's machine-wide view: running calls (add -a for ended too) across both your\n"
+               "own calls and the global ones, rendered as Docker's table without an IMAGE or USER\n"
+               "column (CALL ID, COMMAND, CREATED, STATUS, PORTS, NAMES). Global calls you cannot read\n"
+               "show a 'hidden' COMMAND. ps speaks only Docker: it takes no scope flags. For Hold's\n"
+               "scoped, past-inclusive ledger with a USER column, use list.\n");
     } else if (!strcmp(action, "on") || !strcmp(action, "shell")) {
         printf("usage: hold on\n\nStart a guarded shell under Hold's PTY/session wrapper. Hold holds the line: pressing the classic detach sequence Ctrl-P Ctrl-Q puts the current foreground program on hold as a call and returns to the shell. 'hold off' or exit ends the session. (shell is an alias of on.)\n");
     } else if (!strcmp(action, "off")) {
@@ -124,7 +144,12 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "__view")) {
         printf("usage: hold __view <target> [internal viewer test options]\n\nInternal regression/debug entrypoint for the log viewer engine. The product UX is hold logs <target>, then type inside the full-screen viewer to filter dynamically.\n");
     } else if (!strcmp(action, "purge") || !strcmp(action, "prune") || !strcmp(action, "rm") || !strcmp(action, "drop")) {
-        printf("usage: hold purge [<target>] [-a|--all] [--force]\n\nThe one removal verb. With no target it sweeps ended calls (-a includes stale); a target removes one call; --force removes regardless of state (live or saved). rm, prune, and drop are accepted aliases.\n");
+        printf("usage: hold purge [<target>] [-a|--all] [-s|--system] [-u|--user] [--force]\n\n"
+               "The one removal verb. With no target it sweeps ended calls; -a includes stale (a state\n"
+               "widener, not a scope one). Scope: -u/--user sweeps your personal calls (the default);\n"
+               "-s/--system sweeps the global store and, if you are not root, re-execs through sudo so\n"
+               "sudo can prompt for the password. A target removes one call; --force removes regardless\n"
+               "of state (live or saved). rm, prune, and drop are accepted aliases.\n");
     } else if (!strcmp(action, "inspect")) {
         printf("usage: hold inspect <target>\n\nPrint structured JSON details for a call. For a live call the output includes a Stdio object showing where fds 0/1/2 currently point. Log text belongs to hold logs <target> --plain.\n");
     } else if (!strcmp(action, "ports")) {

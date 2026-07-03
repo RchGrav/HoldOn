@@ -65,6 +65,7 @@ struct hold_log_viewer_follow {
 
 struct hold_log_viewer_context {
     const char *run_id;
+    const char *name;    /* the call's name: the header's preferred label */
     const char *profile;
     const char *command;
     const char *log_path;
