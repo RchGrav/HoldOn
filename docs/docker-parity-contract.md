@@ -1,131 +1,58 @@
-# Docker parity contract
+# Docker familiarity contract
 
-[Docs index](index.md) | [0.4 UX spec](HOLD_0_4_UX_SPEC.md)
+[Docs index](index.md) | [Hold On identity](hold-on-identity.md)
 
-Status: normative. This document is the source of truth for Hold's public
-command surface. When Hold output or behavior disagrees with this document,
-Hold is wrong. Tests should assert the shapes written here.
+Status: normative, subordinate to [hold-on-identity.md](hold-on-identity.md).
+Hold's verbs are its own; what it borrows from Docker is **flag behavior**
+and **table appearance**, because that muscle memory is worth keeping. When
+Hold's behavior disagrees with this document, Hold is wrong. Tests assert the
+shapes written here.
 
-## Hold core invariants
+## Flags
 
-The Docker-shaped CLI is a value-add skin. The core of Hold is holding host
-processes — including `hold shell` adoption of a live foreground process.
-These invariants belong to that core and bind **every** path that creates a
-run (`run`, the bare convenience form, `shell` adoption, captive-CLI starts,
-restarts):
+These flags behave exactly like their `docker run` counterparts, on Hold's
+bare launch form (`hold [flags] <cmd> ...`):
 
-- every run has a full 64-hex run ID;
-- every run gets a generated `adjective_noun` name at creation;
-- every run has a captured log (raw bytes + sidecar index);
-- every live console/TTY run is reattachable by ID or name.
+```text
+-d, --detach        detached; stdout is exactly one line: the full 64-hex
+                    call id, nothing else
+-i, --interactive   keep non-PTY stdin open
+-t, --tty           allocate a PTY/console
+-e, --env           set launch environment (KEY=VALUE)
+    --env-file      load KEY=VALUE lines
+    --name          choose the call's name (otherwise generated)
+    --rm            remove call record/log after exit
+    --restart       no | always | unless-stopped | on-failure[:N]
+    --detach-keys   detach sequence (default ctrl-p,ctrl-q)
+```
 
-A new launch path that skips one of these is a bug, not a variant.
+Foreground launches print **nothing** of their own — only the process
+output. Detach with `Ctrl-P Ctrl-Q`, exactly like Docker.
 
-## The one rule
+Flags that would require a container substrate are rejected with an honest
+message, never faked: `-p`/`-P` (Hold observes real host ports instead;
+see `hold ports` and the PORTS column) and `-v` (host paths are just paths).
 
-For every Docker verb Hold mimics, Hold behaves **byte-for-byte like Docker**,
-with exactly two vocabulary substitutions:
+## The call table
 
-| Docker | Hold |
-| --- | --- |
-| image | profile |
-| container ID | run ID |
+`hold list` (alias `ps`) renders Docker's table look:
 
-There is no third difference. If `docker run -d` prints one line containing
-the full 64-hex ID and nothing else, so does `hold run -d`. If `docker ps -a`
-humanizes times as `2 days ago`, so does `hold ps -a`. If Docker sends a
-message to stderr, Hold sends it to stderr.
+```text
+CALL ID   COMMAND   CREATED   STATUS   PORTS   NAMES
+```
 
-## Target resolution
-
-`hold <token> [args...]` resolves `<token>` in strict priority order:
-
-1. **Profile name** — launch the profile.
-2. **Run ID / run name** — a retained (not yet pruned) run relaunches with its
-   recorded recipe: a `-it` recipe reattaches as a console, a `-d` recipe
-   detaches, otherwise it runs foreground-attached.
-3. **Command** — resolve on `PATH` and launch as a new convenience run.
-
-Escapes from resolution:
-
-- `hold run -- <cmd>` and `hold console -- <cmd>` force command
-  interpretation; nothing after `--` is treated as a profile or run ID.
-- `hold console -- <cmd>` launches a **new** attached console run (PTY),
-  bypassing profile/run resolution entirely.
-- `hold attach <target>` (the Docker verb) and `hold console <target>` both
-  attach to an existing run's console.
-- `hold save` does not exist and must not be added with a profile-saving
-  meaning: `docker save` exports an image, which is Hold's `export`. The
-  run-to-profile verb is `hold commit <run> <profile>` (Docker `commit`).
-
-A run's recorded flags are its recipe. Relaunching by ID or name replays the
-recipe exactly, Docker-restart-style.
-
-## Launch semantics
-
-- `hold run <cmd|profile>` — foreground, attached, streams output. Prints
-  **nothing** of its own before the process output (Docker parity).
-- `hold run -d ...` — detached. stdout is exactly one line: the full 64-hex
-  run ID. No banner, no help note.
-- `hold run -it ...` — attached PTY/console.
-- Any run creates a recorded recipe that can be relaunched by run ID or run
-  name, and saved as a profile (`hold commit <run> <profile>`, mirroring
-  `docker commit <container> <image>`).
-- The bare convenience form (`hold <cmd>`, `hold -d <cmd>`) is Hold-native,
-  not Docker-shaped: it may keep the 12-hex scripting ID on stdout and the
-  stderr help note.
-
-## Listing
-
-`hold ps` / `hold ps -a` renders exactly Docker's table:
-
-- Columns: `RUN ID  PROFILE  COMMAND  CREATED  STATUS  PORTS  NAMES`
-  (Docker's layout with the two vocabulary substitutions).
-- Column widths computed from content, as Docker does — never fixed printf
-  widths that shear when a value is long.
-- `CREATED` is always humanized: `6 minutes ago`, `2 days ago`. Never a raw
-  ISO timestamp in the table.
-- `STATUS` uses Docker phrasing: `Up 2 minutes`, `Exited (0) 2 days ago`,
-  `Created`.
-- `NAMES` is never empty for a user-visible run; every run gets a generated
-  name at creation.
-- Root-managed runs the invoking user cannot inspect do **not** appear in a
-  normal user's `ps` output. They are visible with the `system:` scope or
-  under sudo.
-
-## Cleanup
-
-- `hold rm <target>` removes one inactive run (Docker `rm`).
-- `hold prune` prompts/clears all inactive past-run data; `-a`, `--all`, and
-  `all` are all accepted and equivalent. A flag spelling variant must never
-  be parsed as a target name.
-- Every run visible in `ps -a` must be removable by the user who can see it,
-  through `rm` or `prune`, with a clear error when it is not.
-
-## Bare invocation and the captive CLI
-
-- `hold` with no arguments prints help and exits 0, exactly like `docker`.
-- The Cisco-IOS-style captive CLI (profile and grant editor) lives behind
-  `hold cli`. It is never the default entry point.
-- Inside the captive CLI, IOS conventions apply: `show running-config`-style
-  dumps of a profile's exact stored configuration, `wr t`-style shorthands.
+- Columns are content-sized, never fixed widths that shear.
+- CREATED is humanized: `Less than a second ago`, `2 minutes ago`,
+  `2 days ago`. Never a raw ISO timestamp in the table.
+- STATUS uses Docker phrasing: `Up 2 minutes`, `Exited (0) 2 days ago`,
+  `Created` — plus Hold's honest extras: `Stale 2 days`, and a ` (saved)`
+  suffix on protected calls.
+- COMMAND is double-quoted and ellipsized; NAMES is always present for a
+  user's calls.
+- PORTS shows sockets actually observed in use by the call's process group.
 
 ## Output discipline
 
-- stdout carries machine data only: IDs, tables, logs, JSON.
-- Human banners, hints, confirmations, and errors go to stderr; `--quiet`
-  suppresses the normal human status.
-- Docker-verb invocations print nothing Docker would not print.
-
-## Help
-
-`hold --help` (and bare `hold`) is structured like Docker's help:
-
-1. Usage line.
-2. The Docker-mimicked verbs, grouped and phrased the way Docker phrases
-   them, so a Docker user can transfer their habits directly.
-3. Hold-native additions (convenience launch, `cli`, `grant`, `shell`)
-   clearly separated below.
-
-Help text, parser behavior, and this contract must agree for every public
-command. A command that exists must be in help; a command in help must parse.
+stdout carries machine data only: IDs, tables, logs, JSON. Human notes,
+hints, and errors go to stderr; `--quiet` suppresses normal human status.
+Docker-familiar surfaces print nothing Docker would not print.
