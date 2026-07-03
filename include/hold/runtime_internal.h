@@ -40,6 +40,7 @@ int hold_resolve_target(const struct hold_invocation *inv,
                           const char *token,
                           struct hold_resolved_target *out);
 int hold_report_not_found(const char *token);
+int hold_report_requires_root(const char *token);
 int hold_resolve_action_token(const struct hold_invocation *inv,
                                 const struct hold_store *current_user_store,
                                 const struct hold_store *system_store,
@@ -48,18 +49,5 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
                                 bool all,
                                 struct hold_resolved_target **targets_out,
                                 int *count_out);
-int hold_elevate_with_sudo_targets(const char *program,
-                               const char *command,
-                               char **original_tokens,
-                               const struct hold_resolved_target *targets,
-                               int ntargets,
-                               bool all,
-                               bool print_cmd);
-int hold_perform_profile_start(const struct hold_invocation *inv,
-                                 const struct hold_store *store,
-                                 bool tail,
-                                 bool console_mode,
-                                 const char *hash,
-                                 const char *alias);
 
 #endif /* HOLD_RUNTIME_INTERNAL_H */

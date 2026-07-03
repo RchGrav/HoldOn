@@ -335,7 +335,6 @@ static int do_print_signal_command(const struct hold_store *store, const char *i
 int hold_cmd_signal_action(const struct hold_invocation *inv,
                              const struct hold_store *user_store,
                              const struct hold_store *system_store,
-                             const char *program,
                              const char *command,
                              int argc,
                              char **argv,
@@ -376,14 +375,12 @@ int hold_cmd_signal_action(const struct hold_invocation *inv,
         hold_sig_note(inv, "hold: nothing to %s\n", command);
         return 0;
     }
-    bool need_elevation = false;
     for (int i = 0; i < ntargets; i++) {
-        need_elevation = need_elevation || targets[i].needs_elevation;
-    }
-    if (need_elevation) {
-        int rc = hold_elevate_with_sudo_targets(program, command, NULL, targets, ntargets, all, print_cmd);
-        free(targets);
-        return rc;
+        if (targets[i].requires_root) {
+            int rc = hold_report_requires_root(targets[i].id);
+            free(targets);
+            return rc;
+        }
     }
     int worst = 0;
     for (int i = 0; i < ntargets; i++) {
@@ -408,7 +405,6 @@ int hold_cmd_signal_action(const struct hold_invocation *inv,
 int hold_cmd_tail_action(const struct hold_invocation *inv,
                            const struct hold_store *user_store,
                            const struct hold_store *system_store,
-                           const char *program,
                            const char *id_token) {
     struct hold_resolved_target *targets = NULL;
     int ntargets = 0;
@@ -423,10 +419,9 @@ int hold_cmd_tail_action(const struct hold_invocation *inv,
         return 0;
     }
     struct hold_resolved_target target = targets[0];
-    if (target.needs_elevation) {
-        rc = hold_elevate_with_sudo_targets(program, "tail", NULL, &target, 1, false, false);
+    if (target.requires_root) {
         free(targets);
-        return rc;
+        return hold_report_requires_root(target.id);
     }
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
@@ -452,7 +447,6 @@ int hold_cmd_tail_action(const struct hold_invocation *inv,
 int hold_cmd_dump_action(const struct hold_invocation *inv,
                            const struct hold_store *user_store,
                            const struct hold_store *system_store,
-                           const char *program,
                            const char *id_token) {
     struct hold_resolved_target *targets = NULL;
     int ntargets = 0;
@@ -467,10 +461,9 @@ int hold_cmd_dump_action(const struct hold_invocation *inv,
         return 0;
     }
     struct hold_resolved_target target = targets[0];
-    if (target.needs_elevation) {
-        rc = hold_elevate_with_sudo_targets(program, "dump", NULL, &target, 1, false, false);
+    if (target.requires_root) {
         free(targets);
-        return rc;
+        return hold_report_requires_root(target.id);
     }
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
@@ -647,53 +640,6 @@ static int stream_view_follow_until_exit(int fd,
     return 0;
 }
 
-static int elevate_view_target(const char *program,
-                               const struct hold_resolved_target *target,
-                               const struct hold_log_filter_options *opts,
-                               bool debug_stats,
-                               bool interactive,
-                               bool follow) {
-    const char *prefix = target->scope == RESOLVE_SYSTEM_MANAGED ? "system:" : "user:";
-    char token[sizeof("system:") + sizeof(target->id)];
-    snprintf(token, sizeof(token), "%s%s", prefix, target->id);
-
-    int canonical_argc = 2 + (opts->literal ? 2 : 0) + (int)(opts->similar_example_count * 2) +
-                         (opts->max_results ? 2 : 0) + (debug_stats ? 1 : 0) + (interactive ? 1 : 0) +
-                         (follow ? 1 : 0);
-    char **canon = calloc((size_t)canonical_argc, sizeof(char *));
-    char limit_buf[32];
-    if (!canon) return 3;
-
-    int n = 0;
-    canon[n++] = "__view";
-    canon[n++] = token;
-    if (opts->literal) {
-        canon[n++] = "--filter";
-        canon[n++] = (char *)opts->literal;
-    }
-    for (size_t i = 0; i < opts->similar_example_count; i++) {
-        canon[n++] = "--similar";
-        canon[n++] = (char *)opts->similar_examples[i];
-    }
-    if (opts->max_results) {
-        snprintf(limit_buf, sizeof(limit_buf), "%zu", opts->max_results);
-        canon[n++] = "--limit";
-        canon[n++] = limit_buf;
-    }
-    if (debug_stats) {
-        canon[n++] = "--debug-stats";
-    }
-    if (interactive) {
-        canon[n++] = "--interactive";
-    }
-    if (follow) {
-        canon[n++] = "--follow";
-    }
-    int rc = hold_elevate_with_sudo_canonical(program, n, canon);
-    free(canon);
-    return rc;
-}
-
 static int write_file_as_json_array_object(const char *path) {
     int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) return -1;
@@ -726,7 +672,6 @@ static int write_file_as_json_array_object(const char *path) {
 int hold_cmd_inspect_action(const struct hold_invocation *inv,
                               const struct hold_store *user_store,
                               const struct hold_store *system_store,
-                              const char *program,
                               const char *id_token) {
     struct hold_resolved_target *targets = NULL;
     int ntargets = 0;
@@ -741,10 +686,9 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
         return 0;
     }
     struct hold_resolved_target target = targets[0];
-    if (target.needs_elevation) {
-        rc = hold_elevate_with_sudo_targets(program, "inspect", NULL, &target, 1, false, false);
+    if (target.requires_root) {
         free(targets);
-        return rc;
+        return hold_report_requires_root(target.id);
     }
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
@@ -766,7 +710,6 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
 int hold_cmd_view_action(const struct hold_invocation *inv,
                            const struct hold_store *user_store,
                            const struct hold_store *system_store,
-                           const char *program,
                            int argc,
                            char **argv) {
     if (argc < 1) {
@@ -852,10 +795,9 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         free(targets);
         return 5;
     }
-    if (target.needs_elevation) {
-        rc = elevate_view_target(program, &target, &opts, debug_stats, interactive, follow);
+    if (target.requires_root) {
         free(targets);
-        return rc;
+        return hold_report_requires_root(target.id);
     }
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];

@@ -122,10 +122,6 @@ int hold_parse_gid_env(const char *s, gid_t *out) {
     return 0;
 }
 
-bool hold_valid_runid_selector(const char *sel) {
-    return sel && (hold_valid_id(sel) || strcmp(sel, "000000000000") == 0 || strcmp(sel, "ffffffffffff") == 0);
-}
-
 bool hold_valid_target_atom(const char *id) {
     return hold_valid_id_prefix(id) || hold_valid_alias(id);
 }

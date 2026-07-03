@@ -110,7 +110,6 @@ struct hold_store {
 struct hold_invocation {
     bool euid_root;
     bool requested_system;
-    bool elevated;
     bool quiet;
     bool docker_run; /* invoked via the Docker-shaped `run` verb: Docker-exact output */
     bool have_sudo_user;
@@ -125,11 +124,8 @@ enum resolve_scope { RESOLVE_USER_LOCAL, RESOLVE_SYSTEM_MANAGED, RESOLVE_NOT_FOU
 struct hold_resolved_target {
     enum resolve_scope scope;
     char id[ALIAS_MAX_LEN + 1 + PROFILE_HASH_STR_LEN];
-    char cap_alias[ALIAS_MAX_LEN + 1];
-    char cap_hash[PROFILE_HASH_STR_LEN];
     struct hold_store store;
-    bool needs_elevation;
-    bool has_capability;
+    bool requires_root;
 };
 
 struct hold_public_index {
@@ -137,7 +133,6 @@ struct hold_public_index {
     char alias[ALIAS_MAX_LEN + 1];
     char name[ALIAS_MAX_LEN + 1];
     bool root_managed;
-    bool requires_elevation;
     bool has_alias;
     bool has_name;
     char state_hint[16];

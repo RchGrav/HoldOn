@@ -109,12 +109,6 @@ void hold_free_run_record(struct hold_run_record *r);
 int hold_load_public_index(const char *path, struct hold_public_index *pi);
 int hold_load_public_index_by_id(const struct hold_store *store, const char *id, struct hold_public_index *pi);
 int hold_load_record_by_id(const char *dir, const char *id, struct hold_run_record *r, char *path, size_t n);
-int hold_parse_alias_cap_atom(const char *atom,
-                                char alias[ALIAS_MAX_LEN + 1],
-                                char hash[PROFILE_HASH_STR_LEN]);
-int hold_verify_system_alias_cap(const struct hold_store *system_store,
-                                   const char *alias,
-                                   const char *hash);
 bool hold_alias_exists_in_store(const struct hold_store *store, const char *alias);
 int hold_profile_exists_in_store(const struct hold_store *store, const char *hash);
 

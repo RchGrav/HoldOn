@@ -1,7 +1,7 @@
 /* Profile-hash compatibility test.
  *
- * The profile hash is a stable capability key: existing aliases, profiles and
- * sudoers grants are keyed to exactly the binary-path + argv framing in
+ * The profile hash is a stable key: existing aliases and profiles are keyed to
+ * exactly the binary-path + argv framing in
  * hold_profile_hash_for_argv. These golden vectors fail loudly if that
  * framing ever changes (added context, reordered fields, different separators).
  * If you intend to change the hash, that is a breaking change to on-disk state;

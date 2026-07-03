@@ -24,7 +24,7 @@ struct start_profile_target {
     bool has_hash;
     bool has_alias;
     bool has_recipe;
-    bool needs_elevation;
+    bool requires_root;
 };
 
 static volatile sig_atomic_t g_restart_stop = 0;
@@ -49,12 +49,11 @@ static int start_target_set_hash(struct start_profile_target *target,
                                  const struct hold_store *store,
                                  const char *hash,
                                  const char *alias,
-                                 bool needs_elevation);
+                                 bool requires_root);
 static int count_running_alias(const struct hold_store *store, const char *alias, size_t *count_out);
 static int reconnect_running_console_alias(const struct hold_invocation *inv,
                                            const struct hold_store *user_store,
                                            const struct hold_store *system_store,
-                                           const char *program,
                                            const struct hold_store *store,
                                            const char *alias,
                                            bool *handled);
@@ -1953,7 +1952,7 @@ static int start_target_set_hash(struct start_profile_target *target,
                                  const struct hold_store *store,
                                  const char *hash,
                                  const char *alias,
-                                 bool needs_elevation) {
+                                 bool requires_root) {
     if (!hold_valid_profile_hash(hash)) {
         errno = EINVAL;
         return -1;
@@ -1963,7 +1962,7 @@ static int start_target_set_hash(struct start_profile_target *target,
         return -1;
     }
     target->has_hash = true;
-    target->needs_elevation = needs_elevation;
+    target->requires_root = requires_root;
     start_target_set_alias(target, alias);
     return 1;
 }
@@ -1981,7 +1980,6 @@ static int count_running_alias(const struct hold_store *store, const char *alias
 static int reconnect_running_console_alias(const struct hold_invocation *inv,
                                            const struct hold_store *user_store,
                                            const struct hold_store *system_store,
-                                           const char *program,
                                            const struct hold_store *store,
                                            const char *alias,
                                            bool *handled) {
@@ -1999,10 +1997,10 @@ static int reconnect_running_console_alias(const struct hold_invocation *inv,
         char id[sizeof(matches.items[0].id)];
         snprintf(id, sizeof(id), "%s", matches.items[0].id);
         hold_free_alias_match_list(&matches);
-        return hold_cmd_console_action(inv, user_store, system_store, program, id);
+        return hold_cmd_console_action(inv, user_store, system_store, id);
     }
     hold_free_alias_match_list(&matches);
-    return hold_cmd_console_action(inv, user_store, system_store, program, alias);
+    return hold_cmd_console_action(inv, user_store, system_store, alias);
 }
 
 static int resolve_start_profile_target(const struct hold_invocation *inv,
@@ -2013,17 +2011,6 @@ static int resolve_start_profile_target(const struct hold_invocation *inv,
     memset(out, 0, sizeof(*out));
     const char *atom = NULL;
     enum id_token_scope scope = hold_parse_id_token(token, &atom);
-    char cap_alias[ALIAS_MAX_LEN + 1];
-    char cap_hash[PROFILE_HASH_STR_LEN];
-    bool cap_token = false;
-    if (scope == ID_TOKEN_SYSTEM && hold_parse_alias_cap_atom(atom, cap_alias, cap_hash) == 0) {
-        if (!inv->euid_root || hold_verify_system_alias_cap(system_store, cap_alias, cap_hash) != 0) {
-            fprintf(stderr, "hold: error: profile for '%s' is unavailable\n", token);
-            return -1;
-        }
-        atom = cap_alias;
-        cap_token = true;
-    }
     if (scope == ID_TOKEN_INVALID) {
         return 0;
     }
@@ -2054,15 +2041,6 @@ static int resolve_start_profile_target(const struct hold_invocation *inv,
             return 0;
         }
         if (scope == ID_TOKEN_SYSTEM) {
-            if (cap_token) {
-                bool matched = false;
-                int rc = private_start_hash_for_token(system_store, cap_hash, out->hash, &matched);
-                if (rc == 1) {
-                    return start_target_set_hash(out, system_store, out->hash, cap_alias, false);
-                }
-                fprintf(stderr, "hold: error: profile for '%s' is unavailable\n", token);
-                return -1;
-            }
             bool matched = false;
             int rc = private_start_hash_for_token(system_store, atom, out->hash, &matched);
             if (rc == 1) {
@@ -2133,49 +2111,6 @@ static int resolve_start_profile_target(const struct hold_invocation *inv,
     return 0;
 }
 
-int hold_elevate_start_token(const char *program,
-                               bool tail,
-                               bool console_mode,
-                               bool interactive_stdin,
-                               const char *token_atom,
-                               const char *hash,
-                               bool multi,
-                               int multi_count) {
-    char token[8 + ALIAS_MAX_LEN + 1 + PROFILE_HASH_STR_LEN];
-    char count_buf[32];
-    char *canon[10];
-    int n = 0;
-    canon[n++] = "start";
-    if (tail) {
-        canon[n++] = "--tail";
-    }
-    if (console_mode) {
-        canon[n++] = "--console";
-    }
-    if (interactive_stdin) {
-        canon[n++] = "--interactive";
-    }
-    if (multi) {
-        if (multi_count == 1) {
-            canon[n++] = "--force";
-        } else {
-            canon[n++] = "--multi";
-            snprintf(count_buf, sizeof(count_buf), "%d", multi_count);
-            canon[n++] = count_buf;
-        }
-    }
-    if (hash && hold_valid_alias(token_atom) && hold_valid_profile_hash(hash)) {
-        canon[n++] = "000000000000";
-        canon[n++] = (char *)token_atom;
-        canon[n++] = (char *)hash;
-        return hold_elevate_with_sudo_canonical(program, n, canon);
-    } else if (hold_checked_snprintf(token, sizeof(token), "system:%s", token_atom) != 0) {
-        return 3;
-    }
-    canon[n++] = token;
-    return hold_elevate_with_sudo_canonical(program, n, canon);
-}
-
 static int hold_perform_profile_start_options(const struct hold_invocation *inv,
                                                 const struct hold_store *store,
                                                 bool tail,
@@ -2226,20 +2161,9 @@ static int hold_perform_profile_start_options(const struct hold_invocation *inv,
     return rc;
 }
 
-
-int hold_perform_profile_start(const struct hold_invocation *inv,
-                                 const struct hold_store *store,
-                                 bool tail,
-                                 bool console_mode,
-                                 const char *hash,
-                                 const char *alias) {
-    return hold_perform_profile_start_options(inv, store, tail, console_mode, false, false, hash, alias, NULL, 0, NULL);
-}
-
 int hold_cmd_start_action(const struct hold_invocation *inv,
                             const struct hold_store *user_store,
                             const struct hold_store *system_store,
-                            const char *program,
                             const struct hold_store *fallback_store,
                             bool tail,
                             bool console_mode,
@@ -2247,13 +2171,12 @@ int hold_cmd_start_action(const struct hold_invocation *inv,
                             int multi_count,
                             int argc,
                             char **argv) {
-    return hold_cmd_start_action_options(inv, user_store, system_store, program, fallback_store, tail, console_mode, false, false, multi, multi_count, NULL, 0, argc, argv);
+    return hold_cmd_start_action_options(inv, user_store, system_store, fallback_store, tail, console_mode, false, false, multi, multi_count, NULL, 0, argc, argv);
 }
 
 int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                     const struct hold_store *user_store,
                                     const struct hold_store *system_store,
-                                    const char *program,
                                     const struct hold_store *fallback_store,
                                     bool tail,
                                     bool console_mode,
@@ -2265,7 +2188,7 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                     int restart_delay_seconds,
                                     int argc,
                                     char **argv) {
-    return hold_cmd_start_action_name_options(inv, user_store, system_store, program, fallback_store, tail, console_mode,
+    return hold_cmd_start_action_name_options(inv, user_store, system_store, fallback_store, tail, console_mode,
                                               auto_remove, interactive_stdin, multi, multi_count, restart_policy,
                                               restart_delay_seconds, NULL, NULL, true, argc, argv);
 }
@@ -2273,7 +2196,6 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
 int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
                                         const struct hold_store *user_store,
                                         const struct hold_store *system_store,
-                                        const char *program,
                                         const struct hold_store *fallback_store,
                                         bool tail,
                                         bool console_mode,
@@ -2341,28 +2263,15 @@ int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
                 free_start_profile_target(&target);
                 return 5;
             }
-            if (target.needs_elevation) {
-                start_rc = 0;
-                for (int i = 0; i < starts; i++) {
-                    start_rc = hold_elevate_start_token(program,
-                                                   tail,
-                                                   console_mode,
-                                                   interactive_stdin,
-                                                   target.has_alias ? target.alias : target.hash,
-                                                   target.has_alias ? target.hash : NULL,
-                                                   false,
-                                                   1);
-                    if (start_rc != 0) {
-                        break;
-                    }
-                }
+            if (target.requires_root) {
+                free_start_profile_target(&target);
+                return hold_report_requires_root(argv[0]);
             } else {
                 if (console_mode && target.has_alias && !multi) {
                     bool reconnected = false;
                     int reconnect_rc = reconnect_running_console_alias(inv,
                                                                         user_store,
                                                                         system_store,
-                                                                        program,
                                                                         &target.store,
                                                                         target.alias,
                                                                         &reconnected);

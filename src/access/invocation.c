@@ -5,11 +5,10 @@
 #include "hold/platform.h"
 #include "hold/store.h"
 
-int hold_detect_invocation(struct hold_invocation *inv, bool requested_system, bool elevated) {
+int hold_detect_invocation(struct hold_invocation *inv, bool requested_system) {
     memset(inv, 0, sizeof(*inv));
     inv->euid_root = (geteuid() == 0);
     inv->requested_system = requested_system;
-    inv->elevated = elevated;
     inv->invoking_uid = getuid();
     inv->invoking_gid = getgid();
     snprintf(inv->invoking_user, sizeof(inv->invoking_user), "%s", "");

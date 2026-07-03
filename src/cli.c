@@ -5,7 +5,6 @@
 
 static int help_profiles(void);
 static int help_targets(void);
-static int help_access(void);
 static int help_system(void);
 static int help_scripting(void);
 static int help_console(void);
@@ -52,8 +51,6 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"doctor", 0, 0, 0, "usage: hold doctor", "doctor"},
     {"shell", 0, 0, 0, "usage: hold shell", "shell"},
     {"cli", 0, 0, 0, "usage: hold cli", "cli"},
-    {"grant", 2, 4, 0, "usage: hold grant [--secure|--force] <profile> <user> [start,stop,kill,tail,dump,prune,console]", "grant"},
-    {"revoke", 2, 3, 0, "usage: hold revoke <profile> <user> [start,stop,kill,tail,dump,prune,console]", "revoke"},
     {"help", 0, 1, 0, "usage: hold help [topic]", "help"},
 };
 
@@ -123,31 +120,15 @@ static int help_targets(void) {
     return 0;
 }
 
-static int help_access(void) {
-    printf("hold help access\n\n"
-           "Grant another user permission to act on a specific root-managed profile as\n"
-           "root, without a password, scoped to one immutable protected profile.\n\n"
-           "  hold grant  <profile> <user> [actions]\n"
-           "  hold revoke <profile> <user> [actions]\n\n"
-           "actions = any of: start,stop,kill,tail,dump,prune,console   (default: all)\n\n"
-           "The <user> field may be a username, %%group, or all. On Hold stores one\n"
-           "managed sudoers file per profile/user pair. The file contains the current\n"
-           "protected profile hash for that profile, an anchored action alternation, and\n"
-           "a 12-hex run selector slot. If root updates the profile and the hash\n"
-           "changes, grant rewrites the same managed file via temp file, visudo check,\n"
-           "and atomic rename.\n");
-    return 0;
-}
-
 static int help_system(void) {
     printf("hold help system\n\n"
            "Root, sudo, and --system runs use the root-managed store:\n\n"
            "  Linux: /var/lib/hold\n"
            "  macOS: /var/db/hold\n\n"
            "Private root records, logs, and profiles stay root-only. Normal users see\n"
-           "only the redacted public index and public profile dictionary. A normal action\n"
-           "on a root-only public target self-elevates through sudo; user-local targets\n"
-           "win over root-public collisions.\n\n"
+           "only the redacted public index and public profile dictionary. Acting on a\n"
+           "root-managed target requires root; user-local targets win over root-public\n"
+           "collisions.\n\n"
            "  hold --system <cmd...>       start in root-managed state\n"
            "  hold --system list           list authoritative root records\n");
     return 0;
@@ -241,8 +222,6 @@ static int help_action(const char *action) {
         printf("usage: hold doctor\n\nCheck local On Hold/Hold paths and build identity.\n");
     } else if (!strcmp(action, "shell")) {
         printf("usage: hold shell\n\nStart an ordinary user shell under Hold's PTY/session wrapper. Typing `exit` returns without creating a runid. Pressing the classic detach sequence Ctrl-P Ctrl-Q captures the current foreground process group as a Hold run and returns to the caller.\n");
-    } else if (!strcmp(action, "grant") || !strcmp(action, "revoke")) {
-        printf("usage: hold %s <profile> <user> [start,stop,kill,tail,dump,prune,console]\n\nManage On Hold-owned sudoers access for a root-managed profile.\n", action);
     } else {
         return -1;
     }
@@ -256,7 +235,6 @@ int hold_show_help(const char *topic) {
     }
     if (!strcmp(topic, "profiles")) return help_profiles();
     if (!strcmp(topic, "targets")) return help_targets();
-    if (!strcmp(topic, "access")) return help_access();
     if (!strcmp(topic, "system")) return help_system();
     if (!strcmp(topic, "scripting")) return help_scripting();
     if (!strcmp(topic, "console")) return help_console();

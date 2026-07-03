@@ -9,7 +9,6 @@
 #include "hold/core.h"
 
 static void print_command_usage_stderr(const char *command);
-static int build_cap_request_token(const char *op, bool force, bool detach, char *out, size_t n);
 static bool parse_docker_run_flag(const char *arg,
                                   bool *detach,
                                   bool *interactive,
@@ -112,26 +111,6 @@ static struct hold_start_options start_options_from_run(const struct cli_run_opt
         .restart_delay_seconds = run->restart_delay_seconds,
         .log_destination = run->log_destination,
     };
-}
-
-static int build_cap_request_token(const char *op, bool force, bool detach, char *out, size_t n) {
-    if (!op || !*op) {
-        errno = EINVAL;
-        return -1;
-    }
-    char json[160];
-    if (detach) {
-        if (hold_checked_snprintf(json, sizeof(json),
-                                  "{\"v\":1,\"op\":\"%s\",\"force\":%s,\"detach\":true}",
-                                  op, force ? "true" : "false") != 0) {
-            return -1;
-        }
-    } else if (hold_checked_snprintf(json, sizeof(json),
-                                     "{\"v\":1,\"op\":\"%s\",\"force\":%s}",
-                                     op, force ? "true" : "false") != 0) {
-        return -1;
-    }
-    return hold_base64url_encode((const unsigned char *)json, strlen(json), out, n);
 }
 
 static void print_command_usage_stderr(const char *command) {
@@ -618,7 +597,6 @@ int hold_cli_main(int argc, char **argv) {
 
     int argi = 1;
     bool requested_system = false;
-    bool elevated = false;
     bool tail = false;
     bool console_mode = false;
     bool force_raw = false;
@@ -643,12 +621,6 @@ int hold_cli_main(int argc, char **argv) {
             continue;
         }
         if (!strcmp(argv[argi], "--system")) {
-            requested_system = true;
-            argi++;
-            continue;
-        }
-        if (!strcmp(argv[argi], "--elevated")) {
-            elevated = true;
             requested_system = true;
             argi++;
             continue;
@@ -690,11 +662,6 @@ int hold_cli_main(int argc, char **argv) {
                 continue;
             }
             if (!literal_owned_arg && !strcmp(argv[i], "--system")) {
-                requested_system = true;
-                continue;
-            }
-            if (!literal_owned_arg && !strcmp(argv[i], "--elevated")) {
-                elevated = true;
                 requested_system = true;
                 continue;
             }
@@ -779,9 +746,6 @@ int hold_cli_main(int argc, char **argv) {
         cmd_argv = argv + argi;
     }
 
-    bool cap_run_form = owned && !strcmp(command, "run") && !saw_owned_delimiter &&
-                        cmd_argc == 4 && !strcmp(cmd_argv[1], "--cap");
-
     if (!owned && !force_raw && !tail && !strcmp(argv[argi], "--version")) {
         puts(HOLD_VERSION);
         return 0;
@@ -845,7 +809,7 @@ int hold_cli_main(int argc, char **argv) {
     }
 
     struct hold_invocation inv;
-    if (hold_detect_invocation(&inv, requested_system, elevated) != 0) {
+    if (hold_detect_invocation(&inv, requested_system) != 0) {
         hold_die_errno("hold: failed to resolve invocation context");
     }
     inv.quiet = quiet;
@@ -861,13 +825,6 @@ int hold_cli_main(int argc, char **argv) {
         tail = false;
     }
     bool interactive_stdin = run.interactive && !run.tty;
-    if (inv.elevated && !inv.euid_root) {
-        int rc = hold_elevate_with_sudo_parsed(argv[0], owned, command, tail, console_mode, run.auto_remove, interactive_stdin, all, print_cmd, multi, multi_count, force_raw, cmd_argc, cmd_argv);
-        if (owned) {
-            free(cmd_argv);
-        }
-        return rc;
-    }
 
     bool docker_ps_command = owned && !strcmp(command, "ps");
     if (owned && !strcmp(command, "logs")) {
@@ -881,66 +838,14 @@ int hold_cli_main(int argc, char **argv) {
     if (owned && !strcmp(command, "clean")) command = "prune";
 
     bool is_list = owned && !strcmp(command, "list");
-    if (requested_system && !inv.euid_root && owned && command_supports_multiplicity(command) && cmd_argc == 1) {
-        struct hold_store pre_system_store;
-        if (hold_init_system_store(&pre_system_store) == 0) {
-            const char *atom = NULL;
-            enum id_token_scope start_scope = hold_parse_id_token(cmd_argv[0], &atom);
-            if ((start_scope == ID_TOKEN_PLAIN || start_scope == ID_TOKEN_SYSTEM) && atom &&
-                (hold_valid_profile_hash(atom) || hold_valid_alias(atom))) {
-                char hash[PROFILE_HASH_STR_LEN];
-                if (hold_resolve_public_profile_token(&pre_system_store, atom, hash) == 1) {
-                    if (hold_valid_alias(atom)) {
-                        struct hold_passwd_entry pw;
-                        char subject[128];
-                        if (hold_lookup_passwd_by_uid(geteuid(), &pw) == 0 && pw.name[0] &&
-                            hold_checked_snprintf(subject, sizeof(subject), "%s", pw.name) == 0) {
-                            char grant_hash[PROFILE_HASH_STR_LEN];
-                            if (hold_subject_grant_hash_for(&pre_system_store, subject, atom, grant_hash) == 0) {
-                                char token[1024];
-                                if (build_cap_request_token("start", multi, !tail, token, sizeof(token)) != 0) {
-                                    free(cmd_argv);
-                                    return 3;
-                                }
-                                char *canon[5] = {"run", (char *)atom, "--cap", grant_hash, token};
-                                int rc = hold_elevate_with_sudo_direct(argv[0], 5, canon);
-                                free(cmd_argv);
-                                return rc;
-                            }
-                        }
-                    }
-                    int rc = 0;
-                    int starts = multi ? multi_count : 1;
-                    for (int i = 0; i < starts; i++) {
-                        rc = hold_elevate_start_token(argv[0],
-                                                 tail,
-                                                 console_mode,
-                                                 interactive_stdin,
-                                                 hold_valid_alias(atom) ? atom : hash,
-                                                 hold_valid_alias(atom) ? hash : NULL,
-                                                 false,
-                                                 1);
-                        if (rc != 0) {
-                            break;
-                        }
-                    }
-                    free(cmd_argv);
-                    return rc;
-                }
-            }
-        }
-    }
+    /* The root-managed store is visible to everyone (list stays open), but only
+     * root may act on it. Delegated execution is gone, so requesting it as a
+     * normal user is refused rather than re-run under sudo. */
     if (requested_system && !inv.euid_root && !is_list) {
-        int canonical_rc = 0;
-        if (owned && hold_maybe_elevate_requested_system_targets(argv[0], command, cmd_argc, cmd_argv, all, &canonical_rc)) {
-            free(cmd_argv);
-            return canonical_rc;
-        }
-        int rc = hold_elevate_with_sudo_parsed(argv[0], owned, command, tail, console_mode, run.auto_remove, interactive_stdin, all, print_cmd, multi, multi_count, force_raw, cmd_argc, cmd_argv);
-        if (owned) {
-            free(cmd_argv);
-        }
-        return rc;
+        fprintf(stderr, "hold: error: the root-managed store requires root; re-run as root or with sudo\n");
+        if (owned) free(cmd_argv);
+        free_run_options(&run);
+        return 3;
     }
 
     struct hold_store user_store;
@@ -963,25 +868,6 @@ int hold_cli_main(int argc, char **argv) {
         }
     }
 
-    if (cap_run_form && inv.euid_root) {
-        int rc = hold_cmd_cap_request_action(&inv, &system_store, tail, console_mode, cmd_argc, cmd_argv);
-        free(cmd_argv);
-        return rc >= 0 ? rc : 5;
-    }
-
-    if (inv.elevated && inv.euid_root && owned && cmd_argc == 3 &&
-        (!strcmp(command, "start") || !strcmp(command, "stop") || !strcmp(command, "kill") ||
-         !strcmp(command, "tail") || !strcmp(command, "dump") || !strcmp(command, "prune") ||
-         !strcmp(command, "console"))) {
-        int sig = !strcmp(command, "kill") ? SIGKILL : SIGTERM;
-        bool graceful = !strcmp(command, "stop");
-        int rc = hold_cmd_elevated_capability_action(&inv, &system_store, command, tail, console_mode, sig, graceful, cmd_argc, cmd_argv);
-        if (rc >= 0) {
-            free(cmd_argv);
-            return rc;
-        }
-    }
-
     if (owned && !strcmp(command, "run")) {
         struct hold_store start_store;
         if (hold_ensure_start_store_for_command(&inv, requested_system, false, NULL, cmd_argc, cmd_argv, &start_store) != 0) {
@@ -998,7 +884,7 @@ int hold_cli_main(int argc, char **argv) {
             run_tail = false;
         }
         if (run.name && !saw_owned_delimiter && run.envc == 0 && run.portc == 0 && run.volumec == 0 && run.cap_addc == 0 && run.cap_dropc == 0) {
-            rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, argv[0], &start_store,
+            rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, &start_store,
                                                     run_tail, console_mode, run.auto_remove, interactive_stdin,
                                                     multi, multi_count,
                                                     run.restart_policy[0] ? run.restart_policy : NULL,
@@ -1019,7 +905,7 @@ int hold_cli_main(int argc, char **argv) {
                 rc = 5;
             } else if (!saw_owned_delimiter && cmd_argc == 1 && token_names_existing_profile(&user_store, &system_store, cmd_argv[0]) &&
                        run.log_destination) {
-                rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, argv[0], &start_store,
+                rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, &start_store,
                                                         run_tail, console_mode, run.auto_remove, interactive_stdin,
                                                         multi, multi_count,
                                                         run.restart_policy[0] ? run.restart_policy : NULL,
@@ -1048,7 +934,7 @@ int hold_cli_main(int argc, char **argv) {
                 rc = hold_perform_start_options(&inv, &start_store, &opts);
             }
         } else {
-            rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, argv[0], &start_store,
+            rc = hold_cmd_start_action_name_options(&inv, &user_store, &system_store, &start_store,
                                                     run_tail, console_mode, run.auto_remove, interactive_stdin,
                                                     multi, multi_count,
                                                     run.restart_policy[0] ? run.restart_policy : NULL,
@@ -1077,7 +963,7 @@ int hold_cli_main(int argc, char **argv) {
 
     if (owned && !strcmp(command, "commit")) {
         /* Docker parity: commit turns a run into a profile, like container -> image. */
-        int rc = hold_cmd_alias_action(&inv, &user_store, &system_store, argv[0], cmd_argc, cmd_argv);
+        int rc = hold_cmd_alias_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
         free(cmd_argv);
         return rc;
     }
@@ -1111,7 +997,6 @@ int hold_cli_main(int argc, char **argv) {
             int rc = hold_cmd_start_action_options(&inv,
                                                    &user_store,
                                                    &system_store,
-                                                   argv[0],
                                                    &start_store,
                                                    tail,
                                                    console_mode,
@@ -1209,7 +1094,7 @@ int hold_cli_main(int argc, char **argv) {
             save_argv[0] = cmd_argv[1];
             save_argv[1] = cmd_argv[3];
             save_argv[2] = verbose ? cmd_argv[4] : NULL;
-            int rc = hold_cmd_alias_action(&inv, &user_store, &system_store, argv[0], verbose ? 3 : 2, save_argv);
+            int rc = hold_cmd_alias_action(&inv, &user_store, &system_store, verbose ? 3 : 2, save_argv);
             free(cmd_argv);
             return rc;
         }
@@ -1607,7 +1492,7 @@ int hold_cli_main(int argc, char **argv) {
             if (hold_ensure_start_store_for_command(&inv, requested_system, true, "start", 1, start_argv, &start_store) != 0) {
                 hold_die_errno("hold: failed to init start storage");
             }
-            int rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, p_tail, p_console, run.auto_remove, interactive_stdin, p_multi, p_multi_count, run.restart_policy[0] ? run.restart_policy : NULL, run.restart_delay_seconds, 1, start_argv);
+            int rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, &start_store, p_tail, p_console, run.auto_remove, interactive_stdin, p_multi, p_multi_count, run.restart_policy[0] ? run.restart_policy : NULL, run.restart_delay_seconds, 1, start_argv);
             free(cmd_argv);
             return rc;
         }
@@ -1640,7 +1525,7 @@ int hold_cli_main(int argc, char **argv) {
             }
             hold_die_errno("hold: failed to init start storage");
         }
-        int rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, argv[0], &start_store, tail, console_mode, run.auto_remove, interactive_stdin, multi, multi_count, run.restart_policy[0] ? run.restart_policy : NULL, run.restart_delay_seconds, cmd_argc, cmd_argv);
+        int rc = hold_cmd_start_action_options(&inv, &user_store, &system_store, &start_store, tail, console_mode, run.auto_remove, interactive_stdin, multi, multi_count, run.restart_policy[0] ? run.restart_policy : NULL, run.restart_delay_seconds, cmd_argc, cmd_argv);
         free(cmd_argv);
         return rc;
     }
@@ -1684,7 +1569,7 @@ int hold_cli_main(int argc, char **argv) {
             free(cmd_argv);
             return 5;
         }
-        int rc = hold_cmd_tail_action(&inv, &user_store, &system_store, argv[0], cmd_argv[0]);
+        int rc = hold_cmd_tail_action(&inv, &user_store, &system_store, cmd_argv[0]);
         free(cmd_argv);
         return rc;
     }
@@ -1694,7 +1579,7 @@ int hold_cli_main(int argc, char **argv) {
             free(cmd_argv);
             return 5;
         }
-        int rc = hold_cmd_inspect_action(&inv, &user_store, &system_store, argv[0], cmd_argv[0]);
+        int rc = hold_cmd_inspect_action(&inv, &user_store, &system_store, cmd_argv[0]);
         free(cmd_argv);
         return rc;
     }
@@ -1704,12 +1589,12 @@ int hold_cli_main(int argc, char **argv) {
             free(cmd_argv);
             return 5;
         }
-        int rc = hold_cmd_dump_action(&inv, &user_store, &system_store, argv[0], cmd_argv[0]);
+        int rc = hold_cmd_dump_action(&inv, &user_store, &system_store, cmd_argv[0]);
         free(cmd_argv);
         return rc;
     }
     if (!strcmp(command, "__view")) {
-        int rc = hold_cmd_view_action(&inv, &user_store, &system_store, argv[0], cmd_argc, cmd_argv);
+        int rc = hold_cmd_view_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
         free(cmd_argv);
         return rc;
     }
@@ -1719,7 +1604,7 @@ int hold_cli_main(int argc, char **argv) {
             free(cmd_argv);
             return 5;
         }
-        int rc = hold_cmd_console_action(&inv, &user_store, &system_store, argv[0], cmd_argv[0]);
+        int rc = hold_cmd_console_action(&inv, &user_store, &system_store, cmd_argv[0]);
         free(cmd_argv);
         return rc;
     }
@@ -1731,7 +1616,7 @@ int hold_cli_main(int argc, char **argv) {
             free(cmd_argv);
             return 1;
         }
-        int rc = hold_cmd_prune_action(&inv, &user_store, &system_store, argv[0], target, all);
+        int rc = hold_cmd_prune_action(&inv, &user_store, &system_store, target, all);
         free(cmd_argv);
         return rc;
     }
@@ -1744,13 +1629,13 @@ int hold_cli_main(int argc, char **argv) {
             return rc;
         }
         if (rm_force) {
-            rc = hold_cmd_signal_action(&inv, &user_store, &system_store, argv[0], "stop", 1, cmd_argv, SIGTERM, true, false, false);
+            rc = hold_cmd_signal_action(&inv, &user_store, &system_store, "stop", 1, cmd_argv, SIGTERM, true, false, false);
             if (rc != 0) {
                 free(cmd_argv);
                 return rc;
             }
         }
-        rc = hold_cmd_prune_action(&inv, &user_store, &system_store, argv[0], target, false);
+        rc = hold_cmd_prune_action(&inv, &user_store, &system_store, target, false);
         free(cmd_argv);
         return rc;
     }
@@ -1767,29 +1652,13 @@ int hold_cli_main(int argc, char **argv) {
         free(cmd_argv);
         return rc;
     }
-    if (!strcmp(command, "grant")) {
-        if (hold_ensure_system_store(&system_store) != 0) {
-            hold_die_errno("hold: failed to init system storage");
-        }
-        int rc = hold_cmd_grant_revoke_action(&inv, &system_store, argv[0], true, cmd_argc, cmd_argv);
-        free(cmd_argv);
-        return rc;
-    }
-    if (!strcmp(command, "revoke")) {
-        if (hold_ensure_system_store(&system_store) != 0) {
-            hold_die_errno("hold: failed to init system storage");
-        }
-        int rc = hold_cmd_grant_revoke_action(&inv, &system_store, argv[0], false, cmd_argc, cmd_argv);
-        free(cmd_argv);
-        return rc;
-    }
     if (!strcmp(command, "stop")) {
-        int rc = hold_cmd_signal_action(&inv, &user_store, &system_store, argv[0], "stop", cmd_argc, cmd_argv, SIGTERM, true, all, print_cmd);
+        int rc = hold_cmd_signal_action(&inv, &user_store, &system_store, "stop", cmd_argc, cmd_argv, SIGTERM, true, all, print_cmd);
         free(cmd_argv);
         return rc;
     }
     if (!strcmp(command, "kill")) {
-        int rc = hold_cmd_signal_action(&inv, &user_store, &system_store, argv[0], "kill", cmd_argc, cmd_argv, SIGKILL, false, all, print_cmd);
+        int rc = hold_cmd_signal_action(&inv, &user_store, &system_store, "kill", cmd_argc, cmd_argv, SIGKILL, false, all, print_cmd);
         free(cmd_argv);
         return rc;
     }

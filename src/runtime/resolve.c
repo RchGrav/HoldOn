@@ -7,14 +7,6 @@
 #include "hold/store.h"
 #include "hold/console.h"
 #include "hold/access.h"
-#include <pwd.h>
-
-bool hold_command_accepts_target_tokens(const char *command) {
-    return command && (!strcmp(command, "stop") || !strcmp(command, "kill") ||
-                       !strcmp(command, "tail") || !strcmp(command, "dump") ||
-                       !strcmp(command, "inspect") || !strcmp(command, "prune") ||
-                       !strcmp(command, "console"));
-}
 
 static int resolve_run_id(const char *dir, const char *input, char *resolved, size_t n);
 static int resolve_user_store_id(const struct hold_store *store, const char *id, char *resolved, size_t n);
@@ -24,8 +16,7 @@ static void fill_target(struct hold_resolved_target *out,
                         enum resolve_scope scope,
                         const struct hold_store *store,
                         const char *id,
-                        bool needs_elevation);
-static int set_target_capability(struct hold_resolved_target *target, const char *alias, const char *hash);
+                        bool requires_root);
 static int append_alias_match(struct alias_match_list *list,
                               const struct hold_run_record *r,
                               enum run_state st,
@@ -37,13 +28,7 @@ static int append_resolved_target(struct hold_resolved_target **targets,
                                   enum resolve_scope scope,
                                   const struct hold_store *store,
                                   const char *id,
-                                  bool needs_elevation);
-static int append_capability_target(struct hold_resolved_target **targets,
-                                    int *count,
-                                    const struct hold_store *store,
-                                    const char *runid_sel,
-                                    const char *alias,
-                                    const char *hash);
+                                  bool requires_root);
 static int append_private_alias_targets(struct hold_resolved_target **targets,
                                         int *count,
                                         enum resolve_scope scope,
@@ -54,12 +39,12 @@ static int append_private_alias_targets(struct hold_resolved_target **targets,
 static int collect_public_alias_matches(const struct hold_store *store,
                                         const char *alias,
                                         struct alias_match_list *list);
-static int append_public_alias_elevation_target(struct hold_resolved_target **targets,
-                                                int *count,
-                                                const struct hold_store *system_store,
-                                                const char *alias,
-                                                const char *command,
-                                                bool all);
+static int append_public_alias_denied_target(struct hold_resolved_target **targets,
+                                             int *count,
+                                             const struct hold_store *system_store,
+                                             const char *alias,
+                                             const char *command,
+                                             bool all);
 static int append_private_run_name_target(struct hold_resolved_target **targets,
                                           int *count,
                                           enum resolve_scope scope,
@@ -175,25 +160,12 @@ static void fill_target(struct hold_resolved_target *out,
                         enum resolve_scope scope,
                         const struct hold_store *store,
                         const char *id,
-                        bool needs_elevation) {
+                        bool requires_root) {
     memset(out, 0, sizeof(*out));
     out->scope = scope;
     out->store = *store;
-    out->needs_elevation = needs_elevation;
+    out->requires_root = requires_root;
     hold_checked_snprintf(out->id, sizeof(out->id), "%s", id);
-}
-
-static int set_target_capability(struct hold_resolved_target *target, const char *alias, const char *hash) {
-    if (!target || !hold_valid_alias(alias) || !hold_valid_profile_hash(hash)) {
-        errno = EINVAL;
-        return -1;
-    }
-    if (hold_checked_snprintf(target->cap_alias, sizeof(target->cap_alias), "%s", alias) != 0 ||
-        hold_checked_snprintf(target->cap_hash, sizeof(target->cap_hash), "%s", hash) != 0) {
-        return -1;
-    }
-    target->has_capability = true;
-    return 0;
 }
 
 void hold_free_alias_match_list(struct alias_match_list *list) {
@@ -375,29 +347,14 @@ static int append_resolved_target(struct hold_resolved_target **targets,
                                   enum resolve_scope scope,
                                   const struct hold_store *store,
                                   const char *id,
-                                  bool needs_elevation) {
+                                  bool requires_root) {
     struct hold_resolved_target *next = realloc(*targets, (size_t)(*count + 1) * sizeof(**targets));
     if (!next) {
         return -1;
     }
     *targets = next;
-    fill_target(&(*targets)[*count], scope, store, id, needs_elevation);
+    fill_target(&(*targets)[*count], scope, store, id, requires_root);
     (*count)++;
-    return 0;
-}
-
-static int append_capability_target(struct hold_resolved_target **targets,
-                                    int *count,
-                                    const struct hold_store *store,
-                                    const char *runid_sel,
-                                    const char *alias,
-                                    const char *hash) {
-    if (append_resolved_target(targets, count, RESOLVE_SYSTEM_MANAGED, store, runid_sel, true) != 0) {
-        return -1;
-    }
-    if (set_target_capability(&(*targets)[*count - 1], alias, hash) != 0) {
-        return -1;
-    }
     return 0;
 }
 
@@ -554,54 +511,34 @@ static int append_public_run_name_target(struct hold_resolved_target **targets,
     return append_resolved_target(targets, count, RESOLVE_SYSTEM_MANAGED, system_store, matched, true) == 0 ? 1 : -1;
 }
 
-static int append_public_alias_elevation_target(struct hold_resolved_target **targets,
-                                                int *count,
-                                                const struct hold_store *system_store,
-                                                const char *alias,
-                                                const char *command,
-                                                bool all) {
-    char hash[PROFILE_HASH_STR_LEN];
-    if (hold_alias_lookup_hash(system_store, alias, hash) != 0) {
-        if (!public_alias_visible(system_store, alias)) {
-            return 0;
-        }
-        return 1;
-    }
-    if (command && hold_valid_alias(alias)) {
-        struct hold_passwd_entry pw;
-        if (hold_lookup_passwd_by_uid(geteuid(), &pw) == 0 && pw.name[0]) {
-            char grant_hash[PROFILE_HASH_STR_LEN];
-            struct hold_profile grant_probe;
-            if (hold_subject_grant_hash_for(system_store, pw.name, alias, grant_hash) == 0 &&
-                hold_load_subject_grant_profile(system_store, pw.name, alias, grant_hash, command, &grant_probe) == 0) {
-                snprintf(hash, sizeof(hash), "%s", grant_hash);
-                hold_free_profile(&grant_probe);
-            }
-        }
+/* Non-root resolution of a root-managed profile name. Delegated execution is
+ * gone: a match is appended only to carry the requires_root flag so the command
+ * reports permission denied. A known name with nothing running resolves to zero
+ * targets (nothing to do); an unknown name falls through to "not found". */
+static int append_public_alias_denied_target(struct hold_resolved_target **targets,
+                                             int *count,
+                                             const struct hold_store *system_store,
+                                             const char *alias,
+                                             const char *command,
+                                             bool all) {
+    if (!public_alias_visible(system_store, alias)) {
+        return 0;
     }
     struct alias_match_list matches;
     if (collect_public_alias_matches(system_store, alias, &matches) != 0) {
         return -1;
     }
-    if (!matches.alias_known) {
-        hold_free_alias_match_list(&matches);
-        return 0;
-    }
     if (matches.count == 0) {
         hold_free_alias_match_list(&matches);
         return 1;
     }
-    if (matches.count > 1) {
-        if (!all || !hold_command_all_allowed(command)) {
-            report_alias_ambiguity(command, alias, &matches);
-            hold_free_alias_match_list(&matches);
-            return -2;
-        }
-        int rc = append_capability_target(targets, count, system_store, "ffffffffffff", alias, hash) == 0 ? 1 : -1;
+    if (matches.count > 1 && (!all || !hold_command_all_allowed(command))) {
+        report_alias_ambiguity(command, alias, &matches);
         hold_free_alias_match_list(&matches);
-        return rc;
+        return -2;
     }
-    int rc = append_capability_target(targets, count, system_store, matches.items[0].id, alias, hash) == 0 ? 1 : -1;
+    int rc = append_resolved_target(targets, count, RESOLVE_SYSTEM_MANAGED, system_store,
+                                    matches.items[0].id, true) == 0 ? 1 : -1;
     hold_free_alias_match_list(&matches);
     return rc;
 }
@@ -701,6 +638,11 @@ int hold_report_not_found(const char *token) {
     return 5;
 }
 
+int hold_report_requires_root(const char *token) {
+    fprintf(stderr, "hold: error: '%s' is root-managed; operate on it as root\n", token ? token : "");
+    return 3;
+}
+
 int hold_resolve_action_token(const struct hold_invocation *inv,
                                 const struct hold_store *current_user_store,
                                 const struct hold_store *system_store,
@@ -714,22 +656,12 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
 
     const char *atom = NULL;
     enum id_token_scope scope = hold_parse_id_token(token, &atom);
-    char cap_alias[ALIAS_MAX_LEN + 1];
-    char cap_hash[PROFILE_HASH_STR_LEN];
-    bool cap_token = false;
-    if (scope == ID_TOKEN_SYSTEM && hold_parse_alias_cap_atom(atom, cap_alias, cap_hash) == 0) {
-        if (!inv->euid_root || hold_verify_system_alias_cap(system_store, cap_alias, cap_hash) != 0) {
-            return hold_report_not_found(token);
-        }
-        atom = cap_alias;
-        cap_token = true;
-    }
     if (scope == ID_TOKEN_INVALID || (!hold_valid_id_prefix(atom) && !hold_valid_alias(atom))) {
         fprintf(stderr, "hold: error: invalid target '%s'\n", token ? token : "");
         return 5;
     }
 
-    if (!cap_token && hold_valid_alias(atom)) {
+    if (hold_valid_alias(atom)) {
         int name_rc = 0;
         if (inv->euid_root) {
             if (scope == ID_TOKEN_USER) {
@@ -763,7 +695,7 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
         if (name_rc < 0) return 3;
     }
 
-    if (!cap_token && hold_valid_id_prefix(atom)) {
+    if (hold_valid_id_prefix(atom)) {
         char resolved[ID_STR_LEN];
         if (inv->euid_root) {
             if (scope == ID_TOKEN_USER) {
@@ -894,182 +826,10 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
     }
 
     if (scope == ID_TOKEN_SYSTEM || scope == ID_TOKEN_PLAIN) {
-        rc = append_public_alias_elevation_target(targets_out, count_out, system_store, atom, command, all);
+        rc = append_public_alias_denied_target(targets_out, count_out, system_store, atom, command, all);
         if (rc == 1) return 0;
         if (rc == -2) return 6;
         if (rc < 0) return 3;
     }
     return hold_report_not_found(token);
-}
-
-int hold_elevate_with_sudo_targets(const char *program,
-                               const char *command,
-                               char **original_tokens,
-                               const struct hold_resolved_target *targets,
-                               int ntargets,
-                               bool all,
-                               bool print_cmd) {
-    int target_argc = 0;
-    bool has_capability = false;
-    for (int i = 0; i < ntargets; i++) {
-        if (targets[i].has_capability) {
-            target_argc += 3;
-            has_capability = true;
-        } else {
-            target_argc += 1;
-        }
-    }
-    int canonical_argc = 1 + ((!has_capability && all) ? 1 : 0) + (print_cmd ? 1 : 0) + target_argc;
-    char **canon = calloc((size_t)canonical_argc, sizeof(char *));
-    char **tokens = calloc((size_t)ntargets, sizeof(char *));
-    if (!canon || !tokens) {
-        free(canon);
-        free(tokens);
-        return 3;
-    }
-
-    int n = 0;
-    canon[n++] = (char *)command;
-    if (!has_capability && all) {
-        canon[n++] = "--all";
-    }
-    if (print_cmd) {
-        canon[n++] = "--print";
-    }
-    for (int i = 0; i < ntargets; i++) {
-        if (targets[i].has_capability) {
-            canon[n++] = (char *)targets[i].id;
-            canon[n++] = (char *)targets[i].cap_alias;
-            canon[n++] = (char *)targets[i].cap_hash;
-            continue;
-        }
-        const char *orig_id = NULL;
-        enum id_token_scope orig_scope = hold_parse_id_token(original_tokens ? original_tokens[i] : NULL, &orig_id);
-        const char *prefix = "";
-        if (targets[i].scope == RESOLVE_USER_LOCAL) {
-            prefix = "user:";
-        } else if (targets[i].scope == RESOLVE_SYSTEM_MANAGED &&
-                   (orig_scope == ID_TOKEN_SYSTEM || targets[i].needs_elevation)) {
-            prefix = "system:";
-        }
-        size_t need = strlen(prefix) + strlen(targets[i].id) + 1;
-        tokens[i] = malloc(need);
-        if (!tokens[i]) {
-            for (int j = 0; j < i; j++) free(tokens[j]);
-            free(tokens);
-            free(canon);
-            return 3;
-        }
-        snprintf(tokens[i], need, "%s%s", prefix, targets[i].id);
-        canon[n++] = tokens[i];
-    }
-
-    int rc = hold_elevate_with_sudo_canonical(program, canonical_argc, canon);
-    for (int i = 0; i < ntargets; i++) free(tokens[i]);
-    free(tokens);
-    free(canon);
-    return rc;
-}
-
-int hold_maybe_elevate_requested_system_targets(const char *program,
-                                                  const char *command,
-                                                  int argc,
-                                                  char **argv,
-                                                  bool all,
-                                                  int *rc_out) {
-    if (!hold_command_accepts_target_tokens(command) || argc <= 0) {
-        return 0;
-    }
-    struct hold_store system_store;
-    if (hold_init_system_store(&system_store) != 0) {
-        return 0;
-    }
-    char **canon = calloc((size_t)argc * 3 + 3, sizeof(char *));
-    char **owned_tokens = calloc((size_t)argc * 3, sizeof(char *));
-    if (!canon || !owned_tokens) {
-        free(canon);
-        free(owned_tokens);
-        *rc_out = 3;
-        return 1;
-    }
-    bool changed = false;
-    int n = 0;
-    canon[n++] = (char *)command;
-    for (int i = 0; i < argc; i++) {
-        const char *token = argv[i];
-        const char *atom = NULL;
-        enum id_token_scope scope = hold_parse_id_token(token, &atom);
-        if (!strcmp(command, "prune") && strcmp(token, "all") == 0) {
-            canon[n++] = argv[i];
-            continue;
-        }
-        if ((scope == ID_TOKEN_PLAIN || scope == ID_TOKEN_SYSTEM) && atom && hold_valid_alias(atom)) {
-            char hash[PROFILE_HASH_STR_LEN];
-            if (hold_alias_lookup_hash(&system_store, atom, hash) == 0) {
-                struct alias_match_list matches;
-                if (collect_public_alias_matches(&system_store, atom, &matches) != 0) {
-                    for (int j = 0; j < argc * 3; j++) free(owned_tokens[j]);
-                    free(owned_tokens);
-                    free(canon);
-                    *rc_out = 3;
-                    return 1;
-                }
-                const char *selector = NULL;
-                char selector_buf[ID_STR_LEN];
-                if (matches.count == 0) {
-                    hold_free_alias_match_list(&matches);
-                    *rc_out = 0;
-                    for (int j = 0; j < argc * 3; j++) free(owned_tokens[j]);
-                    free(owned_tokens);
-                    free(canon);
-                    return 1;
-                }
-                if (matches.count > 1) {
-                    if (!all || !hold_command_all_allowed(command)) {
-                        report_alias_ambiguity(command, atom, &matches);
-                        hold_free_alias_match_list(&matches);
-                        *rc_out = 6;
-                        for (int j = 0; j < argc * 3; j++) free(owned_tokens[j]);
-                        free(owned_tokens);
-                        free(canon);
-                        return 1;
-                    }
-                    selector = "ffffffffffff";
-                } else {
-                    snprintf(selector_buf, sizeof(selector_buf), "%s", matches.items[0].id);
-                    selector = selector_buf;
-                }
-                size_t slot = (size_t)i * 3;
-                owned_tokens[slot] = strdup(selector);
-                owned_tokens[slot + 1] = strdup(atom);
-                owned_tokens[slot + 2] = strdup(hash);
-                hold_free_alias_match_list(&matches);
-                if (!owned_tokens[slot] || !owned_tokens[slot + 1] || !owned_tokens[slot + 2]) {
-                    for (int j = 0; j < argc * 3; j++) free(owned_tokens[j]);
-                    free(owned_tokens);
-                    free(canon);
-                    *rc_out = 3;
-                    return 1;
-                }
-                canon[n++] = owned_tokens[slot];
-                canon[n++] = owned_tokens[slot + 1];
-                canon[n++] = owned_tokens[slot + 2];
-                changed = true;
-                continue;
-            }
-        }
-        canon[n++] = argv[i];
-    }
-    if (!changed) {
-        free(owned_tokens);
-        free(canon);
-        return 0;
-    }
-    *rc_out = hold_elevate_with_sudo_canonical(program, n, canon);
-    for (int i = 0; i < argc * 3; i++) {
-        free(owned_tokens[i]);
-    }
-    free(owned_tokens);
-    free(canon);
-    return 1;
 }

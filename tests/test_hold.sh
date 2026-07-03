@@ -142,10 +142,7 @@ as_user() {
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
-    HOLD_FAKE_SUDO_RC \
-    HOLD_TEST_SUDOERS_DIR \
-    HOLD_TEST_VISUDO_PROG \
-    HOLD_TEST_SUDO_PROG; do
+    HOLD_FAKE_SUDO_RC; do
     if [ "${!name+x}" = x ]; then
       env_args+=("$name=${!name}")
     fi
@@ -171,10 +168,7 @@ as_root() {
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
-    HOLD_FAKE_SUDO_RC \
-    HOLD_TEST_SUDOERS_DIR \
-    HOLD_TEST_VISUDO_PROG \
-    HOLD_TEST_SUDO_PROG; do
+    HOLD_FAKE_SUDO_RC; do
     if [ "${!name+x}" = x ]; then
       env_args+=("$name=${!name}")
     fi
@@ -204,10 +198,7 @@ as_sudo_from_user() {
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
-    HOLD_FAKE_SUDO_RC \
-    HOLD_TEST_SUDOERS_DIR \
-    HOLD_TEST_VISUDO_PROG \
-    HOLD_TEST_SUDO_PROG; do
+    HOLD_FAKE_SUDO_RC; do
     if [ "${!name+x}" = x ]; then
       env_args+=("$name=${!name}")
     fi
@@ -234,10 +225,7 @@ for name in \
   HOLD_TEST_FAIL_RECORD_WRITE \
   HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
   HOLD_FAKE_SUDO_ARGV \
-  HOLD_FAKE_SUDO_RC \
-  HOLD_TEST_SUDOERS_DIR \
-  HOLD_TEST_VISUDO_PROG \
-  HOLD_TEST_SUDO_PROG; do
+  HOLD_FAKE_SUDO_RC; do
   if [ "${!name+x}" = x ]; then
     env_args+=("$name=${!name}")
   fi
@@ -352,132 +340,6 @@ sha256_stdin() {
     printf '%s\n' 'missing sha256sum or shasum for SHA-256 test helper' >&2
     return 127
   fi
-}
-
-grant_canonical_digest_file() {
-  command -v python3 >/dev/null 2>&1 || return 127
-  as_root cat "$1" | python3 -c '
-import hashlib, json, sys
-actions_order = ["start", "stop", "kill", "tail", "dump", "prune", "console"]
-obj = json.load(sys.stdin)
-if obj.get("schema") != "hold.subject-grant.v1":
-    raise SystemExit(2)
-
-def config_obj():
-    cfg = obj.get("Config")
-    return cfg if isinstance(cfg, dict) else {}
-
-def mode_obj():
-    mode = obj.get("mode")
-    return mode if isinstance(mode, dict) else {}
-
-def array_value(*keys):
-    cfg = config_obj()
-    for key in keys:
-        if key in obj and obj[key] is not None:
-            return obj[key]
-        if key in cfg and cfg[key] is not None:
-            return cfg[key]
-    return []
-
-def normalized_binary_path():
-    return obj.get("binary_path") or obj.get("bin") or obj["Path"]
-
-def normalized_argv():
-    binary = normalized_binary_path()
-    if "args" in obj and obj["args"] is not None:
-        argv = list(obj["args"] or [])
-        return argv if argv and argv[0] == binary else [binary] + argv
-    if "argv" in obj and obj["argv"] is not None:
-        argv = list(obj["argv"] or [])
-        return argv if argv and argv[0] == binary else [binary] + argv
-    return [obj["Path"]] + list(obj.get("Args") or [])
-
-def normalized_bool(name, config_key=None):
-    value = bool(obj.get(name, False))
-    mode = mode_obj()
-    if name in mode:
-        value = bool(mode[name])
-    if name == "allow_multi" and "multi" in mode:
-        value = bool(mode["multi"])
-    cfg = config_obj()
-    if config_key and config_key in cfg:
-        value = bool(cfg[config_key])
-    return value
-
-def normalized_log_destination():
-    value = obj.get("log_destination") or ""
-    cfg = config_obj()
-    log_cfg = cfg.get("LogConfig") if isinstance(cfg.get("LogConfig"), dict) else {}
-    if not value:
-        value = log_cfg.get("Type") or ""
-    return "" if value == "local" else value
-
-h = hashlib.sha256()
-def field(v):
-    h.update(str(v).encode("utf-8"))
-    h.update(b"\0")
-field("hold-subject-grant-canonical-v1")
-for key in ("schema", "subject", "profile"):
-    field(key)
-    field(obj[key])
-field("binary_path")
-field(normalized_binary_path())
-
-def array_field(name):
-    if name == "env":
-        values = array_value("env", "Env")
-    elif name == "cap_add":
-        values = array_value("cap_add", "CapAdd")
-    elif name == "cap_drop":
-        values = array_value("cap_drop", "CapDrop")
-    else:
-        values = obj.get(name) or []
-    if not values:
-        return
-    field(name)
-    field(len(values))
-    for i, value in enumerate(values):
-        field(i)
-        field(value)
-
-argv = normalized_argv()
-field("argv")
-field(len(argv))
-for i, arg in enumerate(argv):
-    field(i)
-    field(arg)
-for key in ("env", "ports", "volumes", "cap_add", "cap_drop"):
-    array_field(key)
-if normalized_bool("interactive", "OpenStdin"):
-    field("interactive")
-    field("true")
-if normalized_bool("tty", "Tty"):
-    field("tty")
-    field("true")
-if normalized_bool("detach"):
-    field("detach")
-    field("true")
-if normalized_bool("allow_multi"):
-    field("allow_multi")
-    field("true")
-if obj.get("restart") and obj.get("restart") != "no":
-    field("restart")
-    field(obj["restart"])
-    if "restart_delay_seconds" in obj:
-        field("restart_delay_seconds")
-        field(obj["restart_delay_seconds"])
-log_destination = normalized_log_destination()
-if log_destination:
-    field("log_destination")
-    field(log_destination)
-action_set = set(obj["actions"])
-field("actions")
-for action in actions_order:
-    if action in action_set:
-        field(action)
-print(h.hexdigest())
-'
 }
 
 profile_bin_for_hash() {
@@ -3372,579 +3234,7 @@ test_short_hex_alias_name_allowed() {
   grep -Fq "$sh_bin -c :" "$TEST_ROOT/aliases-db.out"
 }
 
-test_system_alias_action_self_elevates_alias() {
-  local hash rc
-  hash=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-  write_public_alias_fixture web-test "$hash" || return 1
-  write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z web-test || return 1
-  make_fake_sudo || return 1
-  set +e
-  "$HOLD_BIN" stop web-test >"$TEST_ROOT/stdout" 2>"$TEST_ROOT/stderr"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[4]}" = "stop" ] || return 1
-  [ "${args[5]}" = "abc12345cafe" ] || return 1
-  [ "${args[6]}" = "web-test" ] || return 1
-  [ "${args[7]}" = "$hash" ] || return 1
-}
 
-test_system_alias_start_self_elevates_alias() {
-  local hash rc
-  hash=abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd
-  write_public_alias_fixture web-test "$hash" || return 1
-  make_fake_sudo || return 1
-  set +e
-  "$HOLD_BIN" --system start web-test >"$TEST_ROOT/stdout" 2>"$TEST_ROOT/stderr"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[4]}" = "start" ] || return 1
-  [ "${args[5]}" = "000000000000" ] || return 1
-  [ "${args[6]}" = "web-test" ] || return 1
-  [ "${args[7]}" = "$hash" ] || return 1
-}
-
-test_system_profile_save_preserves_capability_metadata() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local out id hash started cap_id cap_record profiles safe sudoers_dir visudo_ok grant_hash grant_private grant_public cap_token cap_out rc
-
-  safe=$(root_safe_hold_copy hold-grant-cap) || return 1
-
-  out=$(as_root "$safe" run -d --cap-drop ALL -- /bin/sleep 60 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-
-  as_root "$safe" profile save "$id" as sys-cap-meta \
-    >"$TEST_ROOT/sys-cap-save.out" 2>"$TEST_ROOT/sys-cap-save.err" || {
-      cat "$TEST_ROOT/sys-cap-save.out" "$TEST_ROOT/sys-cap-save.err" >&2
-      return 1
-    }
-  profiles="$HOLD_TEST_SYSTEM_STATE_DIR/profiles.json"
-  root_grep '"cap_drop": ["ALL"]' "$profiles" || { as_root cat "$profiles" >&2; return 1; }
-  hash=$(system_alias_hash sys-cap-meta)
-  [ -n "$hash" ] || return 1
-
-  as_root "$safe" stop "$id" >/dev/null || return 1
-  as_root "$safe" prune "$id" >/dev/null || return 1
-
-  started=$(as_root "$safe" --system --elevated start 000000000000 sys-cap-meta "$hash" 2>&1) || {
-    printf '%s\n' "$started" >&2
-    return 1
-  }
-  cap_id=$(printf '%s\n' "$started" | extract_id)
-  [ -n "$cap_id" ] || { printf '%s\n' "$started" >&2; return 1; }
-  cap_record=$(root_record_path "$cap_id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
-  root_grep '"cap_drop": ["ALL"]' "$cap_record" || { as_root cat "$cap_record" >&2; return 1; }
-  root_grep '"CapDrop": ["ALL"]' "$cap_record" || { as_root cat "$cap_record" >&2; return 1; }
-  as_root "$safe" stop "$cap_id" >/dev/null || return 1
-
-  sudoers_dir="$TEST_ROOT/sudoers-cap.d"
-  mkdir -p "$sudoers_dir" || return 1
-  chmod 755 "$sudoers_dir" || return 1
-  export HOLD_TEST_SUDOERS_DIR="$sudoers_dir"
-  visudo_ok="$TEST_ROOT/visudo-cap-ok"
-  printf '#!/usr/bin/env sh\nexit 0\n' >"$visudo_ok" || return 1
-  chmod 755 "$visudo_ok" || return 1
-  export HOLD_TEST_VISUDO_PROG="$visudo_ok"
-
-  as_root "$safe" grant sys-cap-meta "$TEST_USER" start >"$TEST_ROOT/grant-cap.out" 2>"$TEST_ROOT/grant-cap.err" || {
-    cat "$TEST_ROOT/grant-cap.out" "$TEST_ROOT/grant-cap.err" >&2
-    return 1
-  }
-  grant_private="$HOLD_TEST_SYSTEM_STATE_DIR/grants/users/$TEST_USER/sys-cap-meta.json"
-  grant_public="$HOLD_TEST_SYSTEM_STATE_DIR/public/grants/users/$TEST_USER/sys-cap-meta.json"
-  root_grep '"cap_drop": ["ALL"]' "$grant_private" || { as_root cat "$grant_private" >&2; return 1; }
-  root_grep '"detach": true' "$grant_private" || { as_root cat "$grant_private" >&2; return 1; }
-  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
-  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
-  grant_digest=$(grant_canonical_digest_file "$grant_private") || return 1
-  [ "$grant_hash" = "$grant_digest" ] || { echo "grant hash $grant_hash != canonical private digest $grant_digest" >&2; as_root cat "$grant_private" >&2; return 1; }
-
-  cap_token="eyJ2IjoxLCJvcCI6InN0YXJ0IiwiZm9yY2UiOmZhbHNlLCJkZXRhY2giOnRydWV9"
-  cap_out=$(as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run sys-cap-meta --cap "$grant_hash" "$cap_token" 2>&1) || { printf '%s\n' "$cap_out" >&2; return 1; }
-  cap_id=$(printf '%s\n' "$cap_out" | extract_id)
-  [ -n "$cap_id" ] || { printf '%s\n' "$cap_out" >&2; return 1; }
-  cap_record=$(root_record_path "$cap_id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
-  root_grep '"cap_drop": ["ALL"]' "$cap_record" || { as_root cat "$cap_record" >&2; return 1; }
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run sys-cap-meta --cap "$grant_hash" "$cap_token" >"$TEST_ROOT/grant-cap-second.out" 2>"$TEST_ROOT/grant-cap-second.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 6 ] || { echo "second singular grant start rc=$rc (want 6)" >&2; cat "$TEST_ROOT/grant-cap-second.out" "$TEST_ROOT/grant-cap-second.err" >&2; return 1; }
-  grep -q 'already has a running process' "$TEST_ROOT/grant-cap-second.err" || { cat "$TEST_ROOT/grant-cap-second.err" >&2; return 1; }
-  as_root "$safe" stop "$cap_id" >/dev/null || return 1
-
-  as_root env GRANT_PRIVATE="$grant_private" python3 - <<'PY' || return 1
-import json, os
-path = os.environ["GRANT_PRIVATE"]
-with open(path, "r", encoding="utf-8") as f:
-    obj = json.load(f)
-obj.pop("cap_drop", None)
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(obj, f, sort_keys=True)
-    f.write("\n")
-PY
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run sys-cap-meta --cap "$grant_hash" "$cap_token" >"$TEST_ROOT/grant-cap-tamper.out" 2>"$TEST_ROOT/grant-cap-tamper.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || { echo "grant capability survived cap_drop removal" >&2; return 1; }
-  grep -q 'capability' "$TEST_ROOT/grant-cap-tamper.err" || { cat "$TEST_ROOT/grant-cap-tamper.err" >&2; return 1; }
-}
-
-
-test_grant_refuses_user_writable_profile_paths() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local safe out id script sudoers_dir visudo_ok rc grant_private grant_public grant_hash cap_token
-
-  safe=$(root_safe_hold_copy hold-grant-paths) || return 1
-
-  script="$TEST_ROOT/user-writable-target.sh"
-  printf '#!/bin/sh\nsleep 60\n' >"$script" || return 1
-  chmod 755 "$script" || return 1
-
-  out=$(as_root "$safe" run -d -- /bin/sh "$script" 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  as_root "$safe" profile save "$id" as unsafe-path >/dev/null 2>"$TEST_ROOT/unsafe-save.err" || {
-    cat "$TEST_ROOT/unsafe-save.err" >&2
-    return 1
-  }
-
-  sudoers_dir="$TEST_ROOT/sudoers-paths.d"
-  mkdir -p "$sudoers_dir" || return 1
-  chmod 755 "$sudoers_dir" || return 1
-  export HOLD_TEST_SUDOERS_DIR="$sudoers_dir"
-  visudo_ok="$TEST_ROOT/visudo-paths-ok"
-  printf '#!/usr/bin/env sh\nexit 0\n' >"$visudo_ok" || return 1
-  chmod 755 "$visudo_ok" || return 1
-  export HOLD_TEST_VISUDO_PROG="$visudo_ok"
-
-  set +e
-  as_root "$safe" grant unsafe-path "$TEST_USER" start >"$TEST_ROOT/grant-paths.out" 2>"$TEST_ROOT/grant-paths.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/grant-paths.out" "$TEST_ROOT/grant-paths.err" >&2; return 1; }
-  grep -q 'refusing sudoers grant' "$TEST_ROOT/grant-paths.err" || { cat "$TEST_ROOT/grant-paths.err" >&2; return 1; }
-  grep -q -- '--secure unsafe-path' "$TEST_ROOT/grant-paths.err" || { cat "$TEST_ROOT/grant-paths.err" >&2; return 1; }
-  grep -q -- '--force unsafe-path' "$TEST_ROOT/grant-paths.err" || { cat "$TEST_ROOT/grant-paths.err" >&2; return 1; }
-  grant_private="$HOLD_TEST_SYSTEM_STATE_DIR/grants/users/$TEST_USER/unsafe-path.json"
-  grant_public="$HOLD_TEST_SYSTEM_STATE_DIR/public/grants/users/$TEST_USER/unsafe-path.json"
-  root_path_absent "$grant_private" || return 1
-  root_path_absent "$grant_public" || return 1
-
-  as_root "$safe" grant --force unsafe-path "$TEST_USER" start >"$TEST_ROOT/grant-paths-force.out" 2>"$TEST_ROOT/grant-paths-force.err" || {
-    cat "$TEST_ROOT/grant-paths-force.out" "$TEST_ROOT/grant-paths-force.err" >&2
-    return 1
-  }
-  grep -q -- '--force bypasses grant path ownership checks' "$TEST_ROOT/grant-paths-force.err" || {
-    cat "$TEST_ROOT/grant-paths-force.err" >&2
-    return 1
-  }
-  root_file_exists "$grant_private" || return 1
-  root_file_exists "$grant_public" || return 1
-  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
-  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
-  cap_token="eyJ2IjoxLCJvcCI6InN0YXJ0IiwiZm9yY2UiOmZhbHNlfQ"
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run unsafe-path --cap "$grant_hash" "$cap_token" >"$TEST_ROOT/grant-path-runtime.out" 2>"$TEST_ROOT/grant-path-runtime.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || { echo "forced unsafe grant was accepted at runtime" >&2; cat "$TEST_ROOT/grant-path-runtime.out" "$TEST_ROOT/grant-path-runtime.err" >&2; return 1; }
-  grep -Eq 'unsafe path|not grant-safe|capability' "$TEST_ROOT/grant-path-runtime.err" || { cat "$TEST_ROOT/grant-path-runtime.err" >&2; return 1; }
-  as_root "$safe" stop "$id" >/dev/null || return 1
-}
-
-
-test_granted_start_pins_privileged_cwd() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local safe out id hash sudoers_dir visudo_ok grant_public grant_hash cap_token hostile cap_out cap_id log
-
-  safe=$(root_safe_hold_copy hold-grant-cwd) || return 1
-
-  out=$(as_root "$safe" run -d -- /bin/pwd 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  as_root "$safe" profile save "$id" as cwd-pin >/dev/null 2>"$TEST_ROOT/cwd-pin-save.err" || {
-    cat "$TEST_ROOT/cwd-pin-save.err" >&2
-    return 1
-  }
-  hash=$(system_alias_hash cwd-pin)
-  [ -n "$hash" ] || return 1
-
-  sudoers_dir="$TEST_ROOT/sudoers-cwd.d"
-  mkdir -p "$sudoers_dir" || return 1
-  chmod 755 "$sudoers_dir" || return 1
-  export HOLD_TEST_SUDOERS_DIR="$sudoers_dir"
-  visudo_ok="$TEST_ROOT/visudo-cwd-ok"
-  printf '#!/usr/bin/env sh\nexit 0\n' >"$visudo_ok" || return 1
-  chmod 755 "$visudo_ok" || return 1
-  export HOLD_TEST_VISUDO_PROG="$visudo_ok"
-
-  as_root "$safe" grant cwd-pin "$TEST_USER" start >"$TEST_ROOT/grant-cwd.out" 2>"$TEST_ROOT/grant-cwd.err" || {
-    cat "$TEST_ROOT/grant-cwd.out" "$TEST_ROOT/grant-cwd.err" >&2
-    return 1
-  }
-  grant_public="$HOLD_TEST_SYSTEM_STATE_DIR/public/grants/users/$TEST_USER/cwd-pin.json"
-  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
-  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
-  cap_token="eyJ2IjoxLCJvcCI6InN0YXJ0IiwiZm9yY2UiOmZhbHNlLCJkZXRhY2giOnRydWV9"
-  hostile="$ACTOR_HOME/hostile-cwd"
-  mkdir -p "$hostile" || return 1
-  cap_out=$(cd "$hostile" && as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run cwd-pin --cap "$grant_hash" "$cap_token" 2>&1) || { printf '%s\n' "$cap_out" >&2; return 1; }
-  cap_id=$(printf '%s\n' "$cap_out" | extract_id)
-  [ -n "$cap_id" ] || { printf '%s\n' "$cap_out" >&2; return 1; }
-  log=$(root_log_path "$cap_id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs") || return 1
-  for _ in $(seq 1 30); do
-    as_root cat "$log" >"$TEST_ROOT/cwd-pin.log" 2>/dev/null || true
-    if grep -qx '/' "$TEST_ROOT/cwd-pin.log"; then
-      break
-    fi
-    sleep 0.1
-  done
-  grep -qx '/' "$TEST_ROOT/cwd-pin.log" || { as_root cat "$log" >&2; return 1; }
-  ! grep -Fxq "$hostile" "$TEST_ROOT/cwd-pin.log" || { cat "$TEST_ROOT/cwd-pin.log" >&2; return 1; }
-}
-
-test_grant_revoke_writes_hash_scoped_sudoers() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local safe safe_real out id hash grant_hash old_grant_hash grant_digest raw_digest cap_token cap_out cap_id sudoers_dir sudoers_file grant_private grant_public grant_private_saved grant_public_saved public_bad_hash semantic_digest rc visudo_ok sh_bin source_profiles source_profiles_before vector_json vector_digest docker_vector_digest docker_grant_hash
-  vector_json="$TEST_ROOT/grant-vector.json"
-  cat >"$vector_json" <<'EOF' || return 1
-{
-  "actions": ["stop", "start"],
-  "argv": ["/usr/bin/python3", "/srv/app/server.py", "--port", "3000"],
-  "binary_path": "/usr/bin/python3",
-  "profile": "web",
-  "subject": "alice",
-  "schema": "hold.subject-grant.v1"
-}
-EOF
-  vector_digest=$(grant_canonical_digest_file "$vector_json") || return 1
-  [ "$vector_digest" = "9b1a3df24cf16eedc7604919ede6e5f972e9a86bf9c5e37e95339298b4481e72" ] || {
-    echo "canonical grant digest vector mismatch: $vector_digest" >&2
-    return 1
-  }
-  cat >"$vector_json.docker" <<'EOF' || return 1
-{
-  "actions": ["stop", "start"],
-  "Path": "/usr/bin/python3",
-  "Args": ["/srv/app/server.py", "--port", "3000"],
-  "profile": "web",
-  "subject": "alice",
-  "schema": "hold.subject-grant.v1"
-}
-EOF
-  docker_vector_digest=$(grant_canonical_digest_file "$vector_json.docker") || return 1
-  [ "$docker_vector_digest" = "$vector_digest" ] || {
-    echo "Docker-shaped grant digest vector mismatch: $docker_vector_digest != $vector_digest" >&2
-    return 1
-  }
-  safe=$(root_safe_hold_copy hold-safe) || return 1
-  sh_bin="$(resolve_path /bin/sh)" || return 1
-  safe_real="$(cd "$(dirname "$safe")" && pwd -P)/$(basename "$safe")" || return 1
-  sudoers_dir="$TEST_ROOT/sudoers.d"
-  mkdir -p "$sudoers_dir" || return 1
-  chmod 755 "$sudoers_dir" || return 1
-  export HOLD_TEST_SUDOERS_DIR="$sudoers_dir"
-  visudo_ok="$TEST_ROOT/visudo-ok"
-  printf '#!/usr/bin/env sh\nexit 0\n' >"$visudo_ok" || return 1
-  chmod 755 "$visudo_ok" || return 1
-  export HOLD_TEST_VISUDO_PROG="$visudo_ok"
-
-  out=$(as_root "$safe" -d /bin/sh -c ':' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  as_root "$safe" profile save "$id" as web-sys >"$TEST_ROOT/root-alias.out" 2>"$TEST_ROOT/root-alias.err" || return 1
-  [ ! -s "$TEST_ROOT/root-alias.out" ] || return 1
-  grep -Fqx "hold: pinned 'web-sys' -> $sh_bin -c :" "$TEST_ROOT/root-alias.err" || return 1
-  hash=$(system_alias_hash web-sys)
-  [ -n "$hash" ] || return 1
-  source_profiles="$HOLD_TEST_SYSTEM_STATE_DIR/profiles.json"
-  source_profiles_before="$TEST_ROOT/source-profiles.before"
-  as_root cp "$source_profiles" "$source_profiles_before" || return 1
-  ! root_grep '"source_hash"' "$source_profiles" || { echo "source profile store persisted source_hash" >&2; as_root cat "$source_profiles" >&2; return 1; }
-  ! root_grep '"hash":' "$source_profiles" || { echo "source profile store persisted object-local hash field" >&2; as_root cat "$source_profiles" >&2; return 1; }
-  set +e
-  as_root "$safe" grant "$hash" "$TEST_USER" start >"$TEST_ROOT/grant-hash.out" 2>"$TEST_ROOT/grant-hash.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/grant-hash.out" "$TEST_ROOT/grant-hash.err" >&2; return 1; }
-  grep -q 'existing system profile' "$TEST_ROOT/grant-hash.err" || { cat "$TEST_ROOT/grant-hash.err" >&2; return 1; }
-  as_root "$safe" grant web-sys "$TEST_USER" start,stop >"$TEST_ROOT/grant.out" 2>"$TEST_ROOT/grant.err" || { cat "$TEST_ROOT/grant.out" "$TEST_ROOT/grant.err" >&2; return 1; }
-  sudoers_file="$sudoers_dir/hold_web-sys_$TEST_USER"
-  root_file_exists "$sudoers_file" || { echo "missing $sudoers_file" >&2; cat "$TEST_ROOT/grant.err" >&2; return 1; }
-  grant_private="$HOLD_TEST_SYSTEM_STATE_DIR/grants/users/$TEST_USER/web-sys.json"
-  grant_public="$HOLD_TEST_SYSTEM_STATE_DIR/public/grants/users/$TEST_USER/web-sys.json"
-  root_file_exists "$grant_private" || { echo "missing $grant_private" >&2; return 1; }
-  root_file_exists "$grant_public" || { echo "missing $grant_public" >&2; return 1; }
-  ! root_grep '"source_hash"' "$grant_private" || { echo "private grant persisted source_hash" >&2; as_root cat "$grant_private" >&2; return 1; }
-  ! root_grep '"hash"' "$grant_private" || { echo "private grant persisted hash" >&2; as_root cat "$grant_private" >&2; return 1; }
-  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
-  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
-  grant_digest=$(grant_canonical_digest_file "$grant_private") || return 1
-  [ "$grant_hash" = "$grant_digest" ] || { echo "grant hash $grant_hash != canonical private digest $grant_digest" >&2; return 1; }
-  raw_digest=$(as_root cat "$grant_private" | sha256_stdin) || return 1
-  root_grep '# actions-list: start,stop' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$safe_real ^run web-sys --cap $grant_hash [A-Za-z0-9_-]{1,768}$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$safe_real ^--system --elevated stop ([A-Fa-f0-9]{12,64}|ffffffffffff) web-sys $grant_hash$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-
-  make_fake_sudo || return 1
-  set +e
-  as_user "$safe" --system start web-sys >"$TEST_ROOT/granted-start.out" 2>"$TEST_ROOT/granted-start.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || { cat "$TEST_ROOT/granted-start.out" "$TEST_ROOT/granted-start.err" >&2; return 1; }
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[0]}" = "--" ] || return 1
-  [ "${args[1]}" = "$safe_real" ] || return 1
-  [ "${args[2]}" = "run" ] || return 1
-  [ "${args[3]}" = "web-sys" ] || return 1
-  [ "${args[4]}" = "--cap" ] || return 1
-  [ "${args[5]}" = "$grant_hash" ] || return 1
-  [ "${args[6]}" = "eyJ2IjoxLCJvcCI6InN0YXJ0IiwiZm9yY2UiOmZhbHNlLCJkZXRhY2giOnRydWV9" ] || return 1
-  ! grep -qx -- '--system' "$HOLD_FAKE_SUDO_ARGV" || return 1
-  ! grep -qx -- '--elevated' "$HOLD_FAKE_SUDO_ARGV" || return 1
-
-  cap_token="eyJ2IjoxLCJvcCI6InN0YXJ0IiwiZm9yY2UiOmZhbHNlfQ"
-  cap_out=$(as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$grant_hash" "$cap_token" 2>&1) || { printf '%s\n' "$cap_out" >&2; return 1; }
-  cap_id=$(printf '%s\n' "$cap_out" | extract_id)
-  [ -n "$cap_id" ] || { printf '%s\n' "$cap_out" >&2; return 1; }
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" --system --elevated kill "$cap_id" web-sys "$grant_hash" >"$TEST_ROOT/grant-kill-denied.out" 2>"$TEST_ROOT/grant-kill-denied.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || { echo "kill action unexpectedly accepted by start,stop grant" >&2; return 1; }
-  grep -q 'capability' "$TEST_ROOT/grant-kill-denied.err" || { cat "$TEST_ROOT/grant-kill-denied.err" >&2; return 1; }
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" --system --elevated stop "$cap_id" web-sys "$grant_hash" >/dev/null 2>"$TEST_ROOT/grant-stop.err" || {
-      cat "$TEST_ROOT/grant-stop.err" >&2
-      return 1
-    }
-  grant_private_saved="$grant_private.saved"
-  as_root cp "$grant_private" "$grant_private_saved" || return 1
-  grant_public_saved="$grant_public.saved"
-  as_root cp "$grant_public" "$grant_public_saved" || return 1
-  as_root env GRANT_PUBLIC="$grant_public" python3 - <<'PY' || return 1
-import json, os
-path = os.environ["GRANT_PUBLIC"]
-with open(path, "r", encoding="utf-8") as f:
-    obj = json.load(f)
-obj["hash"] = "0" * 64
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(obj, f, sort_keys=True)
-    f.write("\n")
-PY
-  public_bad_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
-  [ "$public_bad_hash" = "0000000000000000000000000000000000000000000000000000000000000000" ] || return 1
-  cap_out=$(as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$grant_hash" "$cap_token" 2>&1) || { printf '%s\n' "$cap_out" >&2; return 1; }
-  cap_id=$(printf '%s\n' "$cap_out" | extract_id)
-  [ -n "$cap_id" ] || { printf '%s\n' "$cap_out" >&2; return 1; }
-  as_root "$safe" stop "$cap_id" >/dev/null 2>&1 || true
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$public_bad_hash" "$cap_token" >"$TEST_ROOT/cap-public-cache-tamper.out" 2>"$TEST_ROOT/cap-public-cache-tamper.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || { echo "corrupted public digest cache was accepted as authority" >&2; return 1; }
-  grep -q 'capability' "$TEST_ROOT/cap-public-cache-tamper.err" || { cat "$TEST_ROOT/cap-public-cache-tamper.err" >&2; return 1; }
-  as_root cp "$grant_public_saved" "$grant_public" || return 1
-  as_root env GRANT_PRIVATE="$grant_private" python3 - <<'PY' || return 1
-import json, os
-path = os.environ["GRANT_PRIVATE"]
-with open(path, "r", encoding="utf-8") as f:
-    obj = json.load(f)
-with open(path, "w", encoding="utf-8") as f:
-    f.write("{\n")
-    f.write('  "actions": ' + json.dumps(obj["actions"]) + ",\n")
-    f.write('  "argv": ' + json.dumps(obj["argv"]) + ",\n")
-    f.write('  "binary_path": ' + json.dumps(obj["binary_path"]) + ",\n")
-    for key in ("env", "ports", "volumes", "cap_add", "cap_drop", "interactive", "tty", "detach", "allow_multi", "restart", "restart_delay_seconds", "log_destination"):
-        if key in obj:
-            f.write('  ' + json.dumps(key) + ': ' + json.dumps(obj[key]) + ",\n")
-    f.write('  "profile": ' + json.dumps(obj["profile"]) + ",\n")
-    f.write('  "subject": ' + json.dumps(obj["subject"]) + ",\n")
-    f.write('  "schema": ' + json.dumps(obj["schema"]) + "\n")
-    f.write("}\n")
-PY
-  [ "$(grant_canonical_digest_file "$grant_private")" = "$grant_hash" ] || return 1
-  [ "$(as_root cat "$grant_private" | sha256_stdin)" != "$raw_digest" ] || { echo "reformat did not change raw file digest; test setup invalid" >&2; return 1; }
-  cap_out=$(as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$grant_hash" "$cap_token" 2>&1) || { printf '%s\n' "$cap_out" >&2; return 1; }
-  cap_id=$(printf '%s\n' "$cap_out" | extract_id)
-  [ -n "$cap_id" ] || { printf '%s\n' "$cap_out" >&2; return 1; }
-  as_root "$safe" stop "$cap_id" >/dev/null 2>&1 || true
-
-  as_root cp "$grant_private_saved" "$grant_private" || return 1
-  as_root env GRANT_PRIVATE="$grant_private" python3 - <<'PY' || return 1
-import json, os
-path = os.environ["GRANT_PRIVATE"]
-with open(path, "r", encoding="utf-8") as f:
-    obj = json.load(f)
-argv = list(obj["argv"])
-out = {
-    "schema": obj["schema"],
-    "subject": obj["subject"],
-    "profile": obj["profile"],
-    "actions": obj["actions"],
-    "Path": argv[0],
-    "Args": argv[1:],
-    "Config": {
-        "OpenStdin": bool(obj.get("interactive", False)),
-        "Tty": bool(obj.get("tty", False)),
-        "Env": obj.get("env", []),
-        "CapAdd": obj.get("cap_add"),
-        "CapDrop": obj.get("cap_drop"),
-        "LogConfig": {"Type": obj.get("log_destination", "local")},
-    },
-}
-for key in ("ports", "volumes", "detach", "allow_multi", "restart", "restart_delay_seconds"):
-    if key in obj:
-        out[key] = obj[key]
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(out, f, sort_keys=True)
-    f.write("\n")
-PY
-  docker_grant_hash=$(grant_canonical_digest_file "$grant_private") || return 1
-  [ "$docker_grant_hash" = "$grant_hash" ] || { echo "Docker-shaped private grant digest mismatch: $docker_grant_hash != $grant_hash" >&2; as_root cat "$grant_private" >&2; return 1; }
-  cap_out=$(as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$docker_grant_hash" "$cap_token" 2>&1) || { printf '%s\n' "$cap_out" >&2; as_root cat "$grant_private" >&2; return 1; }
-  cap_id=$(printf '%s\n' "$cap_out" | extract_id)
-  [ -n "$cap_id" ] || { printf '%s\n' "$cap_out" >&2; as_root cat "$grant_private" >&2; return 1; }
-  as_root "$safe" stop "$cap_id" >/dev/null 2>&1 || true
-  as_root cp "$grant_private_saved" "$grant_private" || return 1
-
-  as_root env GRANT_PRIVATE="$grant_private" python3 - <<'PY' || return 1
-import json, os
-path = os.environ["GRANT_PRIVATE"]
-with open(path, "r", encoding="utf-8") as f:
-    obj = json.load(f)
-obj["argv"] = list(obj["argv"])
-obj["argv"][-1] = obj["argv"][-1] + "-semantic-drift"
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(obj, f, sort_keys=True)
-    f.write("\n")
-PY
-  semantic_digest=$(grant_canonical_digest_file "$grant_private") || return 1
-  [ "$semantic_digest" != "$grant_hash" ] || { echo "argv semantic drift did not change canonical digest" >&2; return 1; }
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$grant_hash" "$cap_token" >"$TEST_ROOT/cap-argv-tamper.out" 2>"$TEST_ROOT/cap-argv-tamper.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || { echo "old capability survived argv semantic drift" >&2; return 1; }
-  grep -q 'capability' "$TEST_ROOT/cap-argv-tamper.err" || { cat "$TEST_ROOT/cap-argv-tamper.err" >&2; return 1; }
-  as_root cp "$grant_private_saved" "$grant_private" || return 1
-  as_root sh -c '
-    tmp="$1.tmp"
-    while IFS= read -r line; do
-      case "$line" in
-        *\"actions\"*) printf "%s\n" "  \"actions\": [\"stop\"]" ;;
-        *) printf "%s\n" "$line" ;;
-      esac
-    done < "$1" > "$tmp" &&
-    cat "$tmp" > "$1" &&
-    rm -f "$tmp"
-  ' sh "$grant_private" || return 1
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$grant_hash" "$cap_token" >"$TEST_ROOT/cap-action-tamper.out" 2>"$TEST_ROOT/cap-action-tamper.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || return 1
-  grep -q 'capability' "$TEST_ROOT/cap-action-tamper.err" || { cat "$TEST_ROOT/cap-action-tamper.err" >&2; return 1; }
-  as_root cp "$grant_private_saved" "$grant_private" || return 1
-  as_root sh -c 'printf "\n" >> "$1"' sh "$grant_private" || return 1
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$grant_hash" "$cap_token" >"$TEST_ROOT/cap-tamper.out" 2>"$TEST_ROOT/cap-tamper.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/cap-tamper.err" >&2; return 1; }
-  cap_id=$(cat "$TEST_ROOT/cap-tamper.out" | extract_id)
-  [ -n "$cap_id" ] || { cat "$TEST_ROOT/cap-tamper.out" >&2; return 1; }
-  as_root "$safe" stop "$cap_id" >/dev/null 2>&1 || true
-
-  old_grant_hash="$grant_hash"
-  as_root "$safe" revoke web-sys "$TEST_USER" start >"$TEST_ROOT/revoke.out" 2>"$TEST_ROOT/revoke.err" || { cat "$TEST_ROOT/revoke.out" "$TEST_ROOT/revoke.err" >&2; return 1; }
-  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
-  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
-  [ "$grant_hash" != "$old_grant_hash" ] || { echo "grant digest did not change after action narrowing" >&2; return 1; }
-  [ "$grant_hash" = "$(grant_canonical_digest_file "$grant_private")" ] || return 1
-  root_grep '# actions-list: stop' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  ! root_grep '^run web-sys --cap' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$safe_real ^--system --elevated stop ([A-Fa-f0-9]{12,64}|ffffffffffff) web-sys $grant_hash$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  set +e
-  as_root env SUDO_UID="$TEST_UID" SUDO_GID="$TEST_GID" SUDO_USER="$TEST_USER" HOLD_TEST_INVOKING_HOME="$ACTOR_HOME" \
-    "$safe" run web-sys --cap "$grant_hash" "$cap_token" >"$TEST_ROOT/cap-start-with-stop-only.out" 2>"$TEST_ROOT/cap-start-with-stop-only.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || return 1
-  grep -q 'capability' "$TEST_ROOT/cap-start-with-stop-only.err" || { cat "$TEST_ROOT/cap-start-with-stop-only.err" >&2; return 1; }
-
-  as_root "$safe" grant web-sys "$TEST_USER" >"$TEST_ROOT/grant-all.out" 2>"$TEST_ROOT/grant-all.err" || { cat "$TEST_ROOT/grant-all.out" "$TEST_ROOT/grant-all.err" >&2; return 1; }
-  grant_hash=$(as_root sed -n 's/.*"hash": "\([0-9a-f][0-9a-f]*\)".*/\1/p' "$grant_public")
-  [ -n "$grant_hash" ] || { as_root cat "$grant_public" >&2; return 1; }
-  root_grep '# actions: ALL' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep '# actions-list: start,stop,kill,tail,dump,prune,console' "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$safe_real ^run web-sys --cap $grant_hash [A-Za-z0-9_-]{1,768}$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  root_grep "$safe_real ^--system --elevated console [A-Fa-f0-9]{12,64} web-sys $grant_hash$" "$sudoers_file" || { as_root cat "$sudoers_file" >&2; return 1; }
-  as_root cmp "$source_profiles_before" "$source_profiles" || { echo "source profile store changed during grant-specific edits" >&2; return 1; }
-  as_root "$safe" revoke web-sys "$TEST_USER" >"$TEST_ROOT/revoke-all.out" 2>"$TEST_ROOT/revoke-all.err" || { cat "$TEST_ROOT/revoke-all.out" "$TEST_ROOT/revoke-all.err" >&2; return 1; }
-  root_path_absent "$sudoers_file"
-  root_path_absent "$grant_private"
-  root_path_absent "$grant_public"
-}
-
-test_elevated_capability_start_and_stop_validate_alias_hash() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local safe out id hash start_out cap_id rc
-  safe=$(root_safe_hold_copy hold-cap) || return 1
-
-  out=$(as_root "$safe" -d /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  as_root "$safe" profile save "$id" as web-cap >"$TEST_ROOT/cap-alias.out" 2>"$TEST_ROOT/cap-alias.err" || return 1
-  [ ! -s "$TEST_ROOT/cap-alias.out" ] || return 1
-  hash=$(system_alias_hash web-cap)
-  [ -n "$hash" ] || return 1
-  as_root "$safe" stop "$id" >/dev/null || return 1
-  as_root "$safe" prune "$id" >/dev/null || return 1
-
-  start_out=$(as_root "$safe" --system --elevated start 000000000000 web-cap "$hash" 2>&1) || return 1
-  cap_id=$(printf '%s\n' "$start_out" | extract_id)
-  [ -n "$cap_id" ] || return 1
-  cap_record=$(root_record_path "$cap_id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
-  root_grep '"alias": "web-cap"' "$cap_record" || return 1
-  ! root_grep '"profile_hash":' "$cap_record" || return 1
-
-  set +e
-  as_root "$safe" --system --elevated stop "$cap_id" web-cap 0000000000000000000000000000000000000000000000000000000000000000 >/dev/null 2>"$TEST_ROOT/cap-bad.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || return 1
-  grep -q 'capability' "$TEST_ROOT/cap-bad.err" || return 1
-
-  as_root "$safe" --system --elevated stop "$cap_id" web-cap "$hash" >/dev/null || return 1
-}
 
 test_raw_start_does_not_steal_trailing_system() {
   local out id log
@@ -4023,51 +3313,6 @@ test_explicit_user_target() {
 
 
 
-test_action_self_elevation_uses_argv_fork_wait() {
-  local rc
-  write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z || return 1
-  make_fake_sudo || return 1
-  set +e
-  "$HOLD_BIN" stop abc12345cafe >"$TEST_ROOT/stdout" 2>"$TEST_ROOT/stderr"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${#args[@]}" -eq 6 ] || return 1
-  [ "${args[0]}" = "--" ] || return 1
-  [ -x "${args[1]}" ] || return 1
-  [ "${args[2]}" = "--system" ] || return 1
-  [ "${args[3]}" = "--elevated" ] || return 1
-  [ "${args[4]}" = "stop" ] || return 1
-  [ "${args[5]}" = "system:abc12345cafe" ] || return 1
-  ! grep -qx -- 'sh\|-c' "$HOLD_FAKE_SUDO_ARGV"
-}
-
-test_elevated_action_returns_child_status() {
-  local rc
-  write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z || return 1
-  make_fake_sudo || return 1
-  export HOLD_FAKE_SUDO_RC=42
-  set +e
-  "$HOLD_BIN" kill abc12345cafe >"$TEST_ROOT/stdout" 2>"$TEST_ROOT/stderr"
-  rc=$?
-  set -e
-  [ "$rc" -eq 42 ]
-}
-
-test_sudo_exec_failure_returns_clean_error() {
-  local rc
-  write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z || return 1
-  export HOLD_TEST_SUDO_PROG="$TEST_ROOT/missing-sudo"
-  set +e
-  "$HOLD_BIN" stop abc12345cafe >"$TEST_ROOT/stdout" 2>"$TEST_ROOT/stderr"
-  rc=$?
-  set -e
-  [ "$rc" -eq 127 ] || return 1
-  grep -q 'failed to exec sudo' "$TEST_ROOT/stderr"
-}
-
 test_tail_ctrl_c_detaches_from_tail_and_keeps_run() {
   command -v setsid >/dev/null 2>&1 || skip "setsid not available"
   local out id pgid tail_pid rc
@@ -4087,118 +3332,6 @@ test_tail_ctrl_c_detaches_from_tail_and_keeps_run() {
   kill -0 "-$pgid" 2>/dev/null || return 1
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
   pgid_terminated "$pgid"
-}
-
-test_system_switch_canonicalizes_owned_command() {
-  local rc
-  make_fake_sudo || return 1
-  set +e
-  "$HOLD_BIN" --system stop abc12345cafe >/dev/null 2>"$TEST_ROOT/one.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  cp "$HOLD_FAKE_SUDO_ARGV" "$TEST_ROOT/one.argv" || return 1
-  set +e
-  "$HOLD_BIN" stop abc12345cafe --system >/dev/null 2>"$TEST_ROOT/two.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  cmp -s "$TEST_ROOT/one.argv" "$HOLD_FAKE_SUDO_ARGV" || return 1
-  grep -qx -- '--system' "$TEST_ROOT/one.argv" || return 1
-  grep -qx -- '--elevated' "$TEST_ROOT/one.argv" || return 1
-  tail -n 2 "$TEST_ROOT/one.argv" | grep -qx 'abc12345cafe'
-
-  set +e
-  "$HOLD_BIN" --system run -d -- /bin/true --child-flag >/dev/null 2>"$TEST_ROOT/run-system.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[4]}" = "run" ] || return 1
-  [ "${args[5]}" = "--" ] || return 1
-  [ "${args[6]}" = "/bin/true" ] || return 1
-  [ "${args[7]}" = "--child-flag" ] || return 1
-
-  set +e
-  "$HOLD_BIN" --system run --tail --console -- /bin/true >/dev/null 2>"$TEST_ROOT/run-system-flags.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[4]}" = "run" ] || return 1
-  [ "${args[5]}" = "--tail" ] || return 1
-  [ "${args[6]}" = "--console" ] || return 1
-  [ "${args[7]}" = "--" ] || return 1
-  [ "${args[8]}" = "/bin/true" ] || return 1
-
-  set +e
-  "$HOLD_BIN" --system start web-prof --force >/dev/null 2>"$TEST_ROOT/start-force.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[4]}" = "start" ] || return 1
-  [ "${args[5]}" = "--force" ] || return 1
-  [ "${args[6]}" = "web-prof" ] || return 1
-
-  set +e
-  "$HOLD_BIN" --system start web-prof --multi 2 >/dev/null 2>"$TEST_ROOT/start-multi.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[4]}" = "start" ] || return 1
-  [ "${args[5]}" = "--multi" ] || return 1
-  [ "${args[6]}" = "2" ] || return 1
-  [ "${args[7]}" = "web-prof" ] || return 1
-}
-
-test_system_raw_self_elevation_preserves_child_switches_and_delimiter() {
-  local rc
-  make_fake_sudo || return 1
-  set +e
-  "$HOLD_BIN" --system -d child-command --system >/dev/null 2>"$TEST_ROOT/raw.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[4]}" = "child-command" ] || return 1
-  [ "${args[5]}" = "--system" ] || return 1
-
-  set +e
-  "$HOLD_BIN" --system -d -- list --system >/dev/null 2>"$TEST_ROOT/delim.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 77 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[4]}" = "--" ] || return 1
-  [ "${args[5]}" = "list" ] || return 1
-  [ "${args[6]}" = "--system" ] || return 1
-}
-
-test_elevated_requires_root() {
-  local rc
-  make_fake_sudo || return 1
-  export HOLD_FAKE_SUDO_RC=1
-  set +e
-  "$HOLD_BIN" --elevated stop abc12345cafe >/dev/null 2>"$TEST_ROOT/elevated.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 1 ] || return 1
-  args=()
-  while IFS= read -r line; do args+=("$line"); done < "$HOLD_FAKE_SUDO_ARGV"
-  [ "${args[0]}" = "--" ] || return 1
-  [ "${args[2]}" = "--system" ] || return 1
-  [ "${args[3]}" = "--elevated" ] || return 1
-  [ "${args[4]}" = "stop" ] || return 1
-  [ "${args[5]}" = "abc12345cafe" ] || return 1
-  ! grep -q -- '--elevated without root authority' "$TEST_ROOT/elevated.err"
 }
 
 
@@ -5515,26 +4648,6 @@ root_safe_hold_copy() {
   printf '%s\n' "$path"
 }
 
-# Pin a root system alias 'web-sys' with a safe (root-owned, 0755, no-space-path)
-# hold copy and a passing visudo stub. Call directly (NOT in $(...)) so the
-# exported HOLD_TEST_SUDOERS_DIR/VISUDO_PROG reach the caller; sets globals
-# GRANT_SAFE and GRANT_SUDOERS_DIR.
-grant_fixture() {
-  local id
-  GRANT_SAFE=$(root_safe_hold_copy hold-safe) || return 1
-  GRANT_SUDOERS_DIR="$TEST_ROOT/sudoers.d"
-  mkdir -p "$GRANT_SUDOERS_DIR" || return 1
-  chmod 755 "$GRANT_SUDOERS_DIR" || return 1
-  export HOLD_TEST_SUDOERS_DIR="$GRANT_SUDOERS_DIR"
-  GRANT_VISUDO_OK="$TEST_ROOT/visudo-ok"
-  printf '#!/usr/bin/env sh\nexit 0\n' >"$GRANT_VISUDO_OK" || return 1
-  chmod 755 "$GRANT_VISUDO_OK" || return 1
-  export HOLD_TEST_VISUDO_PROG="$GRANT_VISUDO_OK"
-  id=$(as_root "$GRANT_SAFE" /bin/sh -c ':' 2>&1 | extract_id) || return 1
-  [ -n "$id" ] || return 1
-  as_root "$GRANT_SAFE" profile save "$id" as web-sys >/dev/null 2>&1 || return 1
-}
-
 test_system_store_directory_modes() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   local id d mode
@@ -5706,114 +4819,6 @@ test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
   [ -z "$leftovers" ] || { echo "system alias/profile writer left temp files: $leftovers" >&2; return 1; }
 }
 
-test_grant_sudoers_file_is_root_only() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local safe sudoers_file mode owner
-  grant_fixture || return 1
-  as_root "$GRANT_SAFE" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/grant.err" || { cat "$TEST_ROOT/grant.err" >&2; return 1; }
-  sudoers_file="$HOLD_TEST_SUDOERS_DIR/hold_web-sys_$TEST_USER"
-  root_file_exists "$sudoers_file" || return 1
-  mode=$(root_file_mode "$sudoers_file") || return 1
-  [ "$mode" = 440 ] || { echo "managed sudoers mode=$mode (want 440)" >&2; return 1; }
-  owner=$(root_file_owner "$sudoers_file") || return 1
-  [ "$owner" = "0:0" ] || { echo "managed sudoers owner=$owner (want 0:0)" >&2; return 1; }
-}
-
-test_grant_aborts_when_visudo_rejects() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local safe visudo_bad visudo_ok sudoers_file grant_private grant_public before_private before_public before_sudoers after_private after_public after_sudoers rc
-  grant_fixture || return 1
-  visudo_bad="$TEST_ROOT/visudo-bad"
-  printf '#!/usr/bin/env sh\nexit 1\n' >"$visudo_bad" || return 1
-  chmod 755 "$visudo_bad" || return 1
-  export HOLD_TEST_VISUDO_PROG="$visudo_bad"
-  sudoers_file="$HOLD_TEST_SUDOERS_DIR/hold_web-sys_$TEST_USER"
-  set +e
-  as_root "$GRANT_SAFE" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/visudo.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || { echo "grant succeeded despite visudo rejecting the candidate" >&2; return 1; }
-  root_path_absent "$sudoers_file" || { echo "unvalidated sudoers file was installed" >&2; return 1; }
-  root_path_absent "$sudoers_file.tmp" 2>/dev/null || true
-  grant_private="$HOLD_TEST_SYSTEM_STATE_DIR/grants/users/$TEST_USER/web-sys.json"
-  grant_public="$HOLD_TEST_SYSTEM_STATE_DIR/public/grants/users/$TEST_USER/web-sys.json"
-  root_path_absent "$grant_private" || { echo "private grant copy left behind after visudo rejection" >&2; return 1; }
-  root_path_absent "$grant_public" || { echo "public grant cache left behind after visudo rejection" >&2; return 1; }
-
-  visudo_ok="$TEST_ROOT/visudo-ok-again"
-  printf '#!/usr/bin/env sh\nexit 0\n' >"$visudo_ok" || return 1
-  chmod 755 "$visudo_ok" || return 1
-  export HOLD_TEST_VISUDO_PROG="$visudo_ok"
-  as_root "$GRANT_SAFE" grant web-sys "$TEST_USER" start >"$TEST_ROOT/grant-ok.out" 2>"$TEST_ROOT/grant-ok.err" || {
-    cat "$TEST_ROOT/grant-ok.out" "$TEST_ROOT/grant-ok.err" >&2
-    return 1
-  }
-  before_private="$TEST_ROOT/grant-private.before"
-  before_public="$TEST_ROOT/grant-public.before"
-  before_sudoers="$TEST_ROOT/sudoers.before"
-  after_private="$TEST_ROOT/grant-private.after"
-  after_public="$TEST_ROOT/grant-public.after"
-  after_sudoers="$TEST_ROOT/sudoers.after"
-  as_root cp "$grant_private" "$before_private" || return 1
-  as_root cp "$grant_public" "$before_public" || return 1
-  as_root cp "$sudoers_file" "$before_sudoers" || return 1
-  export HOLD_TEST_VISUDO_PROG="$visudo_bad"
-  set +e
-  as_root "$GRANT_SAFE" grant web-sys "$TEST_USER" stop >"$TEST_ROOT/grant-refresh-bad.out" 2>"$TEST_ROOT/grant-refresh-bad.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || { echo "existing grant refresh succeeded despite visudo rejection" >&2; return 1; }
-  as_root cp "$grant_private" "$after_private" || return 1
-  as_root cp "$grant_public" "$after_public" || return 1
-  as_root cp "$sudoers_file" "$after_sudoers" || return 1
-  as_root cmp "$before_private" "$after_private" || { echo "private grant was not restored after failed refresh" >&2; return 1; }
-  as_root cmp "$before_public" "$after_public" || { echo "public grant cache was not restored after failed refresh" >&2; return 1; }
-  as_root cmp "$before_sudoers" "$after_sudoers" || { echo "sudoers changed after failed refresh" >&2; return 1; }
-}
-
-test_grant_refuses_unsafe_self_binary() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local safe bad sudoers_file rc
-  grant_fixture || return 1
-  sudoers_file="$HOLD_TEST_SUDOERS_DIR/hold_web-sys_$TEST_USER"
-  # (a) non-root-owned hold binary
-  bad="$TEST_ROOT/hold-userowned"
-  cp "$HOLD_REAL_BIN" "$bad" || return 1
-  as_root chown "$TEST_UID:$TEST_GID" "$bad" || return 1
-  as_root chmod 755 "$bad" || return 1
-  set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/u.err"; rc=$?; set -e
-  [ "$rc" -ne 0 ] || { echo "granted via a non-root-owned binary" >&2; return 1; }
-  root_path_absent "$sudoers_file" || { echo "sudoers written via non-root-owned binary" >&2; return 1; }
-  # (b) group/world-writable hold binary
-  bad="$TEST_ROOT/hold-writable"
-  cp "$HOLD_REAL_BIN" "$bad" || return 1
-  as_root chown 0:0 "$bad" || return 1
-  as_root chmod 0777 "$bad" || return 1
-  set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/w.err"; rc=$?; set -e
-  [ "$rc" -ne 0 ] || { echo "granted via a world-writable binary" >&2; return 1; }
-  root_path_absent "$sudoers_file" || { echo "sudoers written via world-writable binary" >&2; return 1; }
-  # (c) root-owned hold binary beneath an unsafe parent directory
-  mkdir -p "$TEST_ROOT/unsafe-parent" || return 1
-  chmod 0777 "$TEST_ROOT/unsafe-parent" || return 1
-  bad="$TEST_ROOT/unsafe-parent/hold"
-  cp "$HOLD_REAL_BIN" "$bad" || return 1
-  as_root chown 0:0 "$bad" || return 1
-  as_root chmod 755 "$bad" || return 1
-  set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/p.err"; rc=$?; set -e
-  [ "$rc" -ne 0 ] || { echo "granted via a binary under an unsafe parent directory" >&2; return 1; }
-  grep -Eq 'unsafe parent directory chain|not grant-safe' "$TEST_ROOT/p.err" || { cat "$TEST_ROOT/p.err" >&2; return 1; }
-  root_path_absent "$sudoers_file" || { echo "sudoers written via unsafe-parent binary" >&2; return 1; }
-  # (d) whitespace in the binary path
-  mkdir -p "$TEST_ROOT/bad dir" || return 1
-  bad="$TEST_ROOT/bad dir/hold"
-  cp "$HOLD_REAL_BIN" "$bad" || return 1
-  as_root chown 0:0 "$bad" || return 1
-  as_root chmod 755 "$bad" || return 1
-  set +e; as_root "$bad" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/s.err"; rc=$?; set -e
-  [ "$rc" -ne 0 ] || { echo "granted via a whitespace-in-path binary" >&2; return 1; }
-  root_path_absent "$sudoers_file" || { echo "sudoers written via whitespace-path binary" >&2; return 1; }
-}
-
 test_signal_refuses_tampered_pgid() {
   local out id rec rc
   out=$("$HOLD_BIN" -d /bin/sleep 300 2>&1) || return 1
@@ -5828,18 +4833,6 @@ test_signal_refuses_tampered_pgid() {
   mv "$rec.bak" "$rec" 2>/dev/null || true
   "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
   [ "$rc" -eq 5 ] || { echo "stop on tampered pgid<=1: rc=$rc (want 5 refused)" >&2; return 1; }
-}
-
-test_elevated_child_signal_maps_to_128_plus_sig() {
-  local rc fakesudo
-  write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z || return 1
-  fakesudo="$TEST_ROOT/fakebin-sig/sudo"
-  mkdir -p "$TEST_ROOT/fakebin-sig" || return 1
-  printf '#!/usr/bin/env bash\nkill -TERM $$\nsleep 5\n' >"$fakesudo" || return 1
-  chmod 755 "$TEST_ROOT/fakebin-sig" "$fakesudo" || return 1
-  export HOLD_TEST_SUDO_PROG="$fakesudo"
-  set +e; "$HOLD_BIN" kill abc12345cafe >/dev/null 2>&1; rc=$?; set -e
-  [ "$rc" -eq 143 ] || { echo "signal-killed sudo child: rc=$rc (want 143 = 128+SIGTERM)" >&2; return 1; }
 }
 
 test_public_index_write_rollback() {
@@ -6100,20 +5093,6 @@ test_owned_command_exact_arity() {
   "$HOLD_BIN" prune >/dev/null || { echo "prune with zero targets should remain valid" >&2; return 1; }
 }
 
-test_grant_revoke_argument_refusals() {
-  local rc
-  # non-root cannot grant (privilege refusal)
-  set +e; "$HOLD_BIN" grant web-sys "$TEST_USER" start >/dev/null 2>"$TEST_ROOT/ng.err"; rc=$?; set -e
-  [ "$rc" -ne 0 ] || { echo "non-root grant unexpectedly succeeded" >&2; return 1; }
-  # root: invalid action and invalid subject are rejected
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  grant_fixture || return 1
-  set +e; as_root "$GRANT_SAFE" grant web-sys "$TEST_USER" bogusaction >/dev/null 2>"$TEST_ROOT/ba.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "bad action: rc=$rc (want 5)" >&2; cat "$TEST_ROOT/ba.err" >&2; return 1; }
-  set +e; as_root "$GRANT_SAFE" grant web-sys 'bad..subject' start >/dev/null 2>"$TEST_ROOT/bs.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "bad subject: rc=$rc (want 5)" >&2; cat "$TEST_ROOT/bs.err" >&2; return 1; }
-}
-
 test_multi_n_exact_count_and_invalid() {
   local id id2 ids running rc
   id=$("$HOLD_BIN" -d sleep 60 2>&1 | extract_id) || return 1
@@ -6181,7 +5160,6 @@ run_test "--multi N starts exactly N and rejects a bad count" test_multi_n_exact
 run_test "--tail cannot follow a multi start (exit 5, nothing started)" test_tail_cannot_follow_multiple_starts
 run_test "--print spans --all and multiple explicit targets" test_print_over_all_and_multiple
 run_test "stop refuses a record with a tampered pgid<=1 (exit 5)" test_signal_refuses_tampered_pgid
-run_test "signal-killed elevation child maps to 128+sig" test_elevated_child_signal_maps_to_128_plus_sig
 run_test "public-index write failure rolls back the start" test_public_index_write_rollback
 run_test "--quiet prints bare id and silences stderr" test_quiet_suppresses_banner_keeps_id
 run_test "run id prefix resolves to the full run" test_run_id_prefix_resolution
@@ -6189,7 +5167,6 @@ run_test "ambiguous alias tail lists ids; tail by run id still resolves" test_am
 run_test "action/help/list argument guards" test_misc_action_guards
 run_test "public CLI contract rejects legacy aliases and run namespaces" test_public_cli_contract_guards
 run_test "owned commands reject extra targets and unsupported --all" test_owned_command_exact_arity
-run_test "grant/revoke argument and privilege refusals" test_grant_revoke_argument_refusals
 run_test "system store directory modes are private (0700/0755)" test_system_store_directory_modes
 run_test "system store tightens a pre-existing loose dir" test_system_store_tightens_preexisting_loose_dir
 run_test "system store refuses symlinked critical dirs without chmod-following" test_system_store_refuses_symlinked_critical_dirs
@@ -6197,9 +5174,6 @@ run_test "system store artifacts are owned by root:root" test_system_store_artif
 run_test "non-root process ignores spoofed SUDO_* provenance" test_nonroot_ignores_spoofed_sudo_provenance
 run_test "symlinked aliases.json is not followed (O_NOFOLLOW)" test_aliases_json_symlink_not_followed
 run_test "alias/profile atomic writers ignore fixed temp file and symlink attacks" test_alias_profile_atomic_writers_ignore_fixed_temp_attacks
-run_test "managed sudoers file is mode 0440 root:root" test_grant_sudoers_file_is_root_only
-run_test "grant aborts and writes nothing when visudo rejects" test_grant_aborts_when_visudo_rejects
-run_test "grant refuses an unsafe hold self-binary" test_grant_refuses_unsafe_self_binary
 run_test "start/stop lifecycle" test_lifecycle
 run_test "kill subcommand kills process group" test_kill_subcommand
 run_test "start output includes stop helper" test_start_output_stop_hint
@@ -6335,20 +5309,7 @@ run_test "profile name-first create rename and delete manage a user-local recipe
 run_test "profile JSON export/import round-trips a user-local recipe" test_profile_json_export_and_import
 run_test "invalid alias names are rejected" test_invalid_alias_names_rejected
 run_test "short hex-looking alias names are allowed" test_short_hex_alias_name_allowed
-run_test "system alias action self-elevates alias token" test_system_alias_action_self_elevates_alias
-run_test "system alias start self-elevates alias token" test_system_alias_start_self_elevates_alias
-run_test "system profile save preserves capability metadata" test_system_profile_save_preserves_capability_metadata
-run_test "grant refuses user-writable profile paths unless forced" test_grant_refuses_user_writable_profile_paths
-run_test "granted start pins privileged cwd" test_granted_start_pins_privileged_cwd
-run_test "grant/revoke writes hash-scoped sudoers entries" test_grant_revoke_writes_hash_scoped_sudoers
-run_test "elevated capability start/stop validates alias and hash" test_elevated_capability_start_and_stop_validate_alias_hash
-run_test "action self-elevation uses argv-preserving sudo fork+wait" test_action_self_elevation_uses_argv_fork_wait
-run_test "elevated action returns child/root-hold status" test_elevated_action_returns_child_status
-run_test "sudo exec failure returns clean error" test_sudo_exec_failure_returns_clean_error
 run_test "tail Ctrl-C detaches from tail and does not stop run" test_tail_ctrl_c_detaches_from_tail_and_keeps_run
-run_test "--system owned commands canonicalize sudo argv" test_system_switch_canonicalizes_owned_command
-run_test "--system raw self-elevation preserves child args and delimiter" test_system_raw_self_elevation_preserves_child_switches_and_delimiter
-run_test "--elevated requires root authority" test_elevated_requires_root
 run_test "build artifacts for static and dynamic coexist" test_build_artifact_coexistence
 run_test "concurrent starts produce unique ids" test_concurrent_unique_ids
 

@@ -8,8 +8,6 @@
 #include "hold/console.h"
 #include "hold/access.h"
 
-#include <grp.h>
-
 static int attach_console_record(const struct hold_invocation *inv,
                                  const struct hold_run_record *r,
                                  enum run_state st);
@@ -25,12 +23,6 @@ static int profile_write_command_recipe(const struct hold_store *store,
                                         const char *name,
                                         int argc,
                                         char **argv);
-static int load_invocation_subject_grant_profile(const struct hold_invocation *inv,
-                                                 const struct hold_store *system_store,
-                                                 const char *alias,
-                                                 const char *hash,
-                                                 const char *required_action,
-                                                 struct hold_profile *profile_out);
 
 static int attach_console_record(const struct hold_invocation *inv,
                                  const struct hold_run_record *r,
@@ -49,7 +41,6 @@ static int attach_console_record(const struct hold_invocation *inv,
 int hold_cmd_console_action(const struct hold_invocation *inv,
                               const struct hold_store *user_store,
                               const struct hold_store *system_store,
-                              const char *program,
                               const char *id_token) {
     struct hold_resolved_target *targets = NULL;
     int ntargets = 0;
@@ -64,10 +55,9 @@ int hold_cmd_console_action(const struct hold_invocation *inv,
         return 0;
     }
     struct hold_resolved_target target = targets[0];
-    if (target.needs_elevation) {
-        rc = hold_elevate_with_sudo_targets(program, "console", NULL, &target, 1, false, false);
+    if (target.requires_root) {
         free(targets);
-        return rc;
+        return hold_report_requires_root(target.id);
     }
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
@@ -87,7 +77,6 @@ int hold_cmd_console_action(const struct hold_invocation *inv,
 int hold_cmd_alias_action(const struct hold_invocation *inv,
                             const struct hold_store *user_store,
                             const struct hold_store *system_store,
-                            const char *program,
                             int argc,
                             char **argv) {
     if (argc < 2 || argc > 3) {
@@ -116,13 +105,8 @@ int hold_cmd_alias_action(const struct hold_invocation *inv,
     if (target.scope == RESOLVE_NOT_FOUND) {
         return hold_report_not_found(target_token);
     }
-    if (target.needs_elevation) {
-        char scoped[8 + PROFILE_HASH_STR_LEN];
-        if (hold_checked_snprintf(scoped, sizeof(scoped), "system:%s", target.id) != 0) {
-            return 3;
-        }
-        char *canon[5] = {"profile", "save", scoped, "as", (char *)name};
-        return hold_elevate_with_sudo_canonical(program, 5, canon);
+    if (target.requires_root) {
+        return hold_report_requires_root(target_token);
     }
     if (target.store.kind == STORE_USER_LOCAL && inv->euid_root) {
         fprintf(stderr, "hold: error: create user-local profiles as that user\n");
@@ -1243,400 +1227,10 @@ void hold_usage(void) {
            "  target = run id, id prefix, or safely singular profile name\n\n"
            "MORE\n"
            "  hold help profiles           save commands as reusable profiles\n"
-           "  hold help access             give another user scoped access\n"
            "  hold help targets            id, profile, and scope resolution\n"
-           "  hold help system             root-managed runs and elevation\n"
+           "  hold help system             root-managed runs\n"
            "  hold help scripting          exit codes, --print, --quiet, stdout\n"
            "  hold <command> -h            help for one command\n\n"
            "  hold --version\n",
            HOLD_VERSION);
-}
-
-static int json_request_get_op(const char *json, char *op, size_t op_n, bool *force, bool *detach) {
-    int64_t v = 0;
-    if (hold_json_get_i64(json, "v", &v) != 0 || v != 1 ||
-        hold_json_get_str(json, "op", op, op_n) != 0) {
-        return -1;
-    }
-    bool parsed_force = false;
-    if (hold_json_get_bool(json, "force", &parsed_force) != 0) {
-        parsed_force = false;
-    }
-    bool parsed_detach = false;
-    if (hold_json_get_bool(json, "detach", &parsed_detach) != 0) {
-        parsed_detach = false;
-    }
-    *force = parsed_force;
-    *detach = parsed_detach;
-    return 0;
-}
-
-static int count_granted_profile_running(const struct hold_store *store, const char *alias, size_t *count_out) {
-    struct alias_match_list matches;
-    if (hold_collect_private_alias_matches(store, alias, "start", &matches) != 0) {
-        return -1;
-    }
-    *count_out = matches.count;
-    hold_free_alias_match_list(&matches);
-    return 0;
-}
-
-static int try_subject_grant_profile(const struct hold_store *system_store,
-                                     const char *subject,
-                                     const char *alias,
-                                     const char *hash,
-                                     const char *required_action,
-                                     struct hold_profile *profile_out) {
-    struct hold_profile tmp;
-    struct hold_profile *dst = profile_out ? profile_out : &tmp;
-    if (hold_load_subject_grant_profile(system_store, subject, alias, hash, required_action, dst) != 0) {
-        return -1;
-    }
-    if (!profile_out) {
-        hold_free_profile(&tmp);
-    }
-    return 0;
-}
-
-static int try_group_subject_grant_profile(const struct hold_store *system_store,
-                                           const char *group_name,
-                                           const char *alias,
-                                           const char *hash,
-                                           const char *required_action,
-                                           struct hold_profile *profile_out) {
-    if (!group_name || !*group_name || !hold_valid_alias(group_name)) {
-        return -1;
-    }
-    char subject[ALIAS_MAX_LEN + 2];
-    if (hold_checked_snprintf(subject, sizeof(subject), "%%%s", group_name) != 0) {
-        return -1;
-    }
-    return try_subject_grant_profile(system_store, subject, alias, hash, required_action, profile_out);
-}
-
-static int load_invocation_subject_grant_profile(const struct hold_invocation *inv,
-                                                 const struct hold_store *system_store,
-                                                 const char *alias,
-                                                 const char *hash,
-                                                 const char *required_action,
-                                                 struct hold_profile *profile_out) {
-    if (!inv || !inv->have_sudo_user || !inv->invoking_user[0]) {
-        errno = EINVAL;
-        return -1;
-    }
-    if (try_subject_grant_profile(system_store, inv->invoking_user, alias, hash, required_action, profile_out) == 0) {
-        return 0;
-    }
-
-    struct group *primary = getgrgid(inv->invoking_gid);
-    if (primary && try_group_subject_grant_profile(system_store, primary->gr_name, alias, hash, required_action, profile_out) == 0) {
-        return 0;
-    }
-
-    setgrent();
-    struct group *gr = NULL;
-    while ((gr = getgrent()) != NULL) {
-        if (gr->gr_gid == inv->invoking_gid) {
-            continue;
-        }
-        bool member = false;
-        for (char **name = gr->gr_mem; name && *name; name++) {
-            if (strcmp(*name, inv->invoking_user) == 0) {
-                member = true;
-                break;
-            }
-        }
-        if (!member) {
-            continue;
-        }
-        if (try_group_subject_grant_profile(system_store, gr->gr_name, alias, hash, required_action, profile_out) == 0) {
-            endgrent();
-            return 0;
-        }
-    }
-    endgrent();
-    errno = EPERM;
-    return -1;
-}
-
-int hold_cmd_cap_request_action(const struct hold_invocation *inv,
-                                const struct hold_store *system_store,
-                                bool tail,
-                                bool console_mode,
-                                int argc,
-                                char **argv) {
-    if (!inv || !inv->euid_root || argc != 4) {
-        return -1;
-    }
-    const char *profile = argv[0];
-    const char *cap_flag = argv[1];
-    const char *hash = argv[2];
-    const char *encoded = argv[3];
-    if (!hold_valid_alias(profile) || strcmp(cap_flag, "--cap") != 0 || !hold_valid_profile_hash(hash) || strlen(encoded) > 768) {
-        return -1;
-    }
-    unsigned char decoded[2048];
-    size_t decoded_len = 0;
-    if (hold_base64url_decode(encoded, decoded, sizeof(decoded), &decoded_len) != 0) {
-        fprintf(stderr, "hold: error: malformed capability request\n");
-        return 5;
-    }
-    if (decoded_len >= sizeof(decoded)) {
-        fprintf(stderr, "hold: error: oversized capability request\n");
-        return 5;
-    }
-    decoded[decoded_len] = '\0';
-    char op[32];
-    bool force = false;
-    bool request_detach = false;
-    if (json_request_get_op((const char *)decoded, op, sizeof(op), &force, &request_detach) != 0) {
-        fprintf(stderr, "hold: error: invalid capability request\n");
-        return 5;
-    }
-    struct hold_profile granted;
-    if (load_invocation_subject_grant_profile(inv, system_store, profile, hash, op, &granted) != 0) {
-        fprintf(stderr, "hold: error: capability for '%s' is no longer valid\n", profile);
-        return 3;
-    }
-    int rc = 0;
-    if (!strcmp(op, "start")) {
-        if (!force && !granted.recipe.allow_multi) {
-            size_t running = 0;
-            if (count_granted_profile_running(system_store, profile, &running) != 0) {
-                hold_free_profile(&granted);
-                return 3;
-            }
-            if (running > 0) {
-                fprintf(stderr,
-                        "hold: error: profile '%s' already has a running process; use --force to start another\n",
-                        profile);
-                hold_free_profile(&granted);
-                return 6;
-            }
-        }
-        bool eff_console = console_mode || granted.recipe.mode_tty;
-        bool eff_interactive = granted.recipe.mode_interactive;
-        bool eff_tail = tail;
-        if ((request_detach || granted.recipe.mode_detach) && !console_mode) {
-            eff_tail = false;
-        }
-        struct hold_start_options opts = {
-            .tail = eff_tail,
-            .console_mode = eff_console,
-            .interactive_stdin = eff_interactive,
-            .argc = granted.recipe.argc,
-            .argv = granted.recipe.argv,
-            .exec_path = granted.recipe.binary_path,
-            .profile_alias = profile,
-            .envc = granted.recipe.envc,
-            .env = granted.recipe.env,
-            .portc = granted.recipe.portc,
-            .ports = granted.recipe.ports,
-            .volumec = granted.recipe.volumec,
-            .volumes = granted.recipe.volumes,
-            .cap_addc = granted.recipe.cap_addc,
-            .cap_add = granted.recipe.cap_add,
-            .cap_dropc = granted.recipe.cap_dropc,
-            .cap_drop = granted.recipe.cap_drop,
-            .restart_policy = granted.recipe.has_restart_policy ? granted.recipe.restart_policy : NULL,
-            .restart_delay_seconds = granted.recipe.has_restart_delay ? granted.recipe.restart_delay_seconds : 0,
-            .log_destination = granted.recipe.has_log_destination ? granted.recipe.log_destination : NULL,
-        };
-        rc = hold_perform_start_options(inv, system_store, &opts);
-    } else {
-        fprintf(stderr, "hold: error: unsupported capability operation '%s'\n", op);
-        rc = 5;
-    }
-    hold_free_profile(&granted);
-    return rc;
-}
-
-int hold_cmd_elevated_capability_action(const struct hold_invocation *inv,
-                                          const struct hold_store *system_store,
-                                          const char *command,
-                                          bool tail,
-                                          bool console_mode,
-                                          int sig,
-                                          bool graceful,
-                                          int argc,
-                                          char **argv) {
-    if (!inv->euid_root || argc != 3) {
-        return -1;
-    }
-    const char *runid_sel = argv[0];
-    const char *alias = argv[1];
-    const char *hash = argv[2];
-    if (!hold_valid_runid_selector(runid_sel) || !hold_valid_alias(alias) || !hold_valid_profile_hash(hash)) {
-        return -1;
-    }
-    bool grant_validated = false;
-    struct hold_profile grant_probe;
-    if (inv->have_sudo_user && load_invocation_subject_grant_profile(inv, system_store, alias, hash, command, &grant_probe) == 0) {
-        hold_free_profile(&grant_probe);
-        grant_validated = true;
-    }
-    if (!grant_validated && hold_verify_system_alias_cap(system_store, alias, hash) != 0) {
-        fprintf(stderr, "hold: error: capability for '%s' is no longer valid\n", alias);
-        return 3;
-    }
-
-    if (!strcmp(command, "start")) {
-        if (strcmp(runid_sel, "000000000000") != 0) {
-            fprintf(stderr, "hold: error: start capability requires selector 000000000000\n");
-            return 5;
-        }
-        return hold_perform_profile_start(inv, system_store, tail, console_mode, hash, alias);
-    }
-
-    if (strcmp(runid_sel, "000000000000") == 0) {
-        fprintf(stderr, "hold: error: selector 000000000000 is only valid for start\n");
-        return 5;
-    }
-
-    if (strcmp(runid_sel, "ffffffffffff") == 0) {
-        if (!hold_command_all_allowed(command)) {
-            fprintf(stderr, "hold: error: selector ffffffffffff is not valid for %s\n", command);
-            return 5;
-        }
-        struct alias_match_list matches;
-        if (hold_collect_private_alias_matches(system_store, alias, command, &matches) != 0) {
-            return 3;
-        }
-        int worst = 0;
-        int acted = 0;
-        char boot[128] = {0};
-        bool have_boot = hold_current_boot_id(boot, sizeof(boot));
-        for (size_t i = 0; i < matches.count; i++) {
-            int rc = 0;
-            if (!strcmp(command, "stop") || !strcmp(command, "kill")) {
-                bool already_done = false;
-                rc = hold_do_signal_action(system_store,
-                                      matches.items[i].id,
-                                      sig,
-                                      graceful,
-                                      &already_done);
-                if (rc == 0) {
-                    hold_sig_note(inv,
-                             "hold: %s %s\n",
-                             already_done ? matches.items[i].id : (!strcmp(command, "kill") ? "killed" : "stopped"),
-                             already_done ? "already exited" : matches.items[i].id);
-                }
-            } else if (!strcmp(command, "prune")) {
-                bool removed = false;
-                rc = hold_prune_one_run(system_store, matches.items[i].id, have_boot ? boot : NULL, true, &removed);
-                if (removed) {
-                    acted++;
-                }
-            }
-            if (rc == 0 && strcmp(command, "prune") != 0) {
-                acted++;
-            }
-            if (rc > worst) {
-                worst = rc;
-            }
-        }
-        if (!strcmp(command, "prune") && worst == 0) {
-            if (acted > 0) {
-                hold_sig_note(inv, "hold: pruned %d past run%s for '%s'\n", acted, acted == 1 ? "" : "s", alias);
-            } else {
-                hold_sig_note(inv, "hold: nothing to prune\n");
-            }
-        } else if (acted == 0 && worst == 0) {
-            hold_sig_note(inv, "hold: nothing to %s\n", command);
-        }
-        hold_free_alias_match_list(&matches);
-        return worst;
-    }
-
-    if (hold_ensure_run_recorded_under_alias(system_store, runid_sel, alias) != 0) {
-        fprintf(stderr, "hold: error: run %s is not recorded under profile '%s'\n", runid_sel, alias);
-        return 3;
-    }
-
-    struct hold_run_record selected_record;
-    char selected_path[HOLD_PATH_MAX];
-    if (hold_load_record_by_id(system_store->record_dir, runid_sel, &selected_record, selected_path, sizeof(selected_path)) != 0) {
-        return 5;
-    }
-    char selected_boot[128] = {0};
-    bool have_selected_boot = hold_current_boot_id(selected_boot, sizeof(selected_boot));
-    enum run_state selected_state = hold_eval_state(&selected_record, have_selected_boot ? selected_boot : NULL);
-    if (!strcmp(command, "console")) {
-        int rc = attach_console_record(inv, &selected_record, selected_state);
-        hold_free_run_record(&selected_record);
-        return rc;
-    }
-    if (!hold_record_matches_alias_intent(command, &selected_record, selected_state)) {
-        hold_sig_note(inv, "hold: nothing to %s\n", command);
-        hold_free_run_record(&selected_record);
-        return 0;
-    }
-
-    if (!strcmp(command, "stop") || !strcmp(command, "kill")) {
-        hold_free_run_record(&selected_record);
-        bool already_done = false;
-        int rc = hold_do_signal_action(system_store, runid_sel, sig, graceful, &already_done);
-        if (rc == 0) {
-            if (already_done) {
-                hold_sig_note(inv, "hold: %s already exited\n", runid_sel);
-            } else {
-                hold_sig_note(inv, "hold: %s %s\n", !strcmp(command, "kill") ? "killed" : "stopped", runid_sel);
-            }
-        }
-        return rc;
-    }
-    if (!strcmp(command, "prune")) {
-        hold_free_run_record(&selected_record);
-        char boot[128] = {0};
-        bool have_boot = hold_current_boot_id(boot, sizeof(boot));
-        bool removed = false;
-        int rc = hold_prune_one_run(system_store, runid_sel, have_boot ? boot : NULL, true, &removed);
-        if (rc == 0) {
-            hold_sig_note(inv, removed ? "hold: pruned 1 past run for '%s'\n" : "hold: nothing to prune\n", alias);
-        }
-        return rc;
-    }
-    if (!strcmp(command, "tail") || !strcmp(command, "dump")) {
-        hold_free_run_record(&selected_record);
-        struct hold_run_record r;
-        char path[HOLD_PATH_MAX];
-        if (hold_load_record_by_id(system_store->record_dir, runid_sel, &r, path, sizeof(path)) != 0 || !r.has_log) {
-            return 5;
-        }
-        if (!strcmp(command, "tail")) {
-            char boot[128] = {0};
-            bool have_boot = hold_current_boot_id(boot, sizeof(boot));
-            enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
-            int rc = hold_tail_log_until_exit(&r, st == STATE_RUNNING, st == STATE_RUNNING);
-            hold_free_run_record(&r);
-            return rc;
-        }
-        int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-        if (fd < 0) {
-            hold_die_errno("hold: failed to open log for dump");
-        }
-        char buf[4096];
-        while (1) {
-            ssize_t nr = read(fd, buf, sizeof(buf));
-            if (nr == 0) {
-                break;
-            }
-            if (nr < 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-                close(fd);
-                hold_die_errno("hold: failed while dumping log");
-            }
-            if (hold_write_all(STDOUT_FILENO, buf, (size_t)nr) != 0) {
-                close(fd);
-                hold_die_errno("hold: failed writing dumped output");
-            }
-        }
-        close(fd);
-        hold_free_run_record(&r);
-        return 0;
-    }
-
-    return -1;
 }

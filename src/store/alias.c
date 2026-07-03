@@ -613,43 +613,6 @@ int hold_alias_rename(const struct hold_store *store, const char *old_alias, con
     return rc;
 }
 
-int hold_parse_alias_cap_atom(const char *atom,
-                                char alias[ALIAS_MAX_LEN + 1],
-                                char hash[PROFILE_HASH_STR_LEN]) {
-    const char *sep = atom ? strchr(atom, '@') : NULL;
-    if (!sep || sep == atom) {
-        return -1;
-    }
-    size_t alias_len = (size_t)(sep - atom);
-    if (alias_len > ALIAS_MAX_LEN) {
-        return -1;
-    }
-    char alias_tmp[ALIAS_MAX_LEN + 1];
-    memcpy(alias_tmp, atom, alias_len);
-    alias_tmp[alias_len] = '\0';
-    if (!hold_valid_alias(alias_tmp) || !hold_valid_profile_hash(sep + 1)) {
-        return -1;
-    }
-    snprintf(alias, ALIAS_MAX_LEN + 1, "%s", alias_tmp);
-    snprintf(hash, PROFILE_HASH_STR_LEN, "%s", sep + 1);
-    return 0;
-}
-
-int hold_verify_system_alias_cap(const struct hold_store *system_store,
-                                   const char *alias,
-                                   const char *hash) {
-    char current[PROFILE_HASH_STR_LEN];
-    struct hold_profile p;
-    if (!hold_valid_alias(alias) || !hold_valid_profile_hash(hash) ||
-        hold_alias_lookup_hash(system_store, alias, current) != 0 ||
-        strcmp(current, hash) != 0 ||
-        hold_load_profile_by_hash(system_store, hash, &p) != 0) {
-        return -1;
-    }
-    hold_free_profile(&p);
-    return 0;
-}
-
 bool hold_alias_exists_in_store(const struct hold_store *store, const char *alias) {
     struct hold_alias *entries = NULL;
     size_t count = 0;

@@ -599,7 +599,6 @@ static int cmd_run(struct captive_session *s, int argc, char **argv) {
     return hold_cmd_start_action(s->inv,
                                  s->user_store,
                                  s->system_store,
-                                 s->program,
                                  s->inv->euid_root ? s->system_store : s->user_store,
                                  false,
                                  false,
@@ -1280,34 +1279,34 @@ static int handle_exec(struct captive_session *s, int argc, char **argv) {
                                  : hold_cmd_list_normal(s->user_store, s->system_store, NULL, false);
     }
     if (!strcmp(argv[0], "run")) return cmd_run(s, argc, argv);
-    if (!strcmp(argv[0], "logs")) return hold_cmd_view_action(s->inv, s->user_store, s->system_store, s->program, argc - 1, argv + 1);
+    if (!strcmp(argv[0], "logs")) return hold_cmd_view_action(s->inv, s->user_store, s->system_store, argc - 1, argv + 1);
     if (!strcmp(argv[0], "inspect")) {
         if (argc != 2) {
             fprintf(stderr, "%% Usage: %s <target>\n", argv[0]);
             return 5;
         }
-        return hold_cmd_inspect_action(s->inv, s->user_store, s->system_store, s->program, argv[1]);
+        return hold_cmd_inspect_action(s->inv, s->user_store, s->system_store, argv[1]);
     }
     if (!strcmp(argv[0], "console") || !strcmp(argv[0], "attach")) {
         if (argc != 2) {
             fprintf(stderr, "%% Usage: %s <target>\n", argv[0]);
             return 5;
         }
-        return hold_cmd_console_action(s->inv, s->user_store, s->system_store, s->program, argv[1]);
+        return hold_cmd_console_action(s->inv, s->user_store, s->system_store, argv[1]);
     }
     if (!strcmp(argv[0], "stop")) {
         if (argc != 2) {
             fprintf(stderr, "%% Usage: stop <target>\n");
             return 5;
         }
-        return hold_cmd_signal_action(s->inv, s->user_store, s->system_store, s->program, "stop", 1, argv + 1, SIGTERM, true, false, false);
+        return hold_cmd_signal_action(s->inv, s->user_store, s->system_store, "stop", 1, argv + 1, SIGTERM, true, false, false);
     }
     if (priv && !strcmp(argv[0], "kill")) {
         if (argc != 2) {
             fprintf(stderr, "%% Usage: kill <target>\n");
             return 5;
         }
-        return hold_cmd_signal_action(s->inv, s->user_store, s->system_store, s->program, "kill", 1, argv + 1, SIGKILL, false, false, false);
+        return hold_cmd_signal_action(s->inv, s->user_store, s->system_store, "kill", 1, argv + 1, SIGKILL, false, false, false);
     }
     if (priv && !strcmp(argv[0], "prune")) {
         if (argc > 2) {
@@ -1316,10 +1315,7 @@ static int handle_exec(struct captive_session *s, int argc, char **argv) {
         }
         const char *target = argc == 2 && strcmp(argv[1], "all") ? argv[1] : NULL;
         bool all = argc == 2 && !strcmp(argv[1], "all");
-        return hold_cmd_prune_action(s->inv, s->user_store, s->system_store, s->program, target, all);
-    }
-    if (priv && (!strcmp(argv[0], "grant") || !strcmp(argv[0], "revoke"))) {
-        return hold_cmd_grant_revoke_action(s->inv, s->system_store, s->program, !strcmp(argv[0], "grant"), argc - 1, argv + 1);
+        return hold_cmd_prune_action(s->inv, s->user_store, s->system_store, target, all);
     }
     fprintf(stderr, "%% Unknown command '%s'\n", argv[0]);
     return 5;

@@ -441,7 +441,6 @@ int hold_write_public_index_atomic(const struct hold_store *store, const struct 
     hold_json_escape(f, r->id);
     fprintf(f, "\",\n");
     fprintf(f, "  \"root_managed\": true,\n");
-    fprintf(f, "  \"requires_elevation\": true,\n");
     if (r->has_alias) {
         fprintf(f, "  \"alias\": \"");
         hold_json_escape(f, r->alias);
@@ -844,9 +843,6 @@ int hold_load_public_index(const char *path, struct hold_public_index *pi) {
     }
     if (hold_json_get_bool(j, "root_managed", &pi->root_managed) != 0) {
         pi->root_managed = true;
-    }
-    if (hold_json_get_bool(j, "requires_elevation", &pi->requires_elevation) != 0) {
-        pi->requires_elevation = true;
     }
     if ((hold_json_get_str(j, "alias", pi->alias, sizeof(pi->alias)) == 0 ||
          hold_json_get_str(j, "Origin", pi->alias, sizeof(pi->alias)) == 0) &&

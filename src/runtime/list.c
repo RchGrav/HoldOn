@@ -795,7 +795,6 @@ sweep_public:
 int hold_cmd_prune_action(const struct hold_invocation *inv,
                             const struct hold_store *user_store,
                             const struct hold_store *system_store,
-                            const char *program,
                             const char *target_token,
                             bool all) {
     if (!target_token || strcmp(target_token, "all") == 0) {
@@ -824,14 +823,12 @@ int hold_cmd_prune_action(const struct hold_invocation *inv,
         hold_sig_note(inv, "hold: nothing to prune\n");
         return 0;
     }
-    bool need_elevation = false;
     for (int i = 0; i < ntargets; i++) {
-        need_elevation = need_elevation || targets[i].needs_elevation;
-    }
-    if (need_elevation) {
-        rc = hold_elevate_with_sudo_targets(program, "prune", NULL, targets, ntargets, all, false);
-        free(targets);
-        return rc;
+        if (targets[i].requires_root) {
+            rc = hold_report_requires_root(targets[i].id);
+            free(targets);
+            return rc;
+        }
     }
     char boot[128] = {0};
     bool have_boot = hold_current_boot_id(boot, sizeof(boot));
