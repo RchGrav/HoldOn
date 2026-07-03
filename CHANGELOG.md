@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3
+
+### Changed
+
+- The installer says things once: the redundant `binary:` line is gone, the
+  `HOLD_BIN=` machine handoff prints only when stdout is not a terminal, and
+  a successful install signs off with `run: hold on`.
+
 ## 0.5.2
 
 ### Fixed
