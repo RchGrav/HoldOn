@@ -419,6 +419,9 @@ int hold_cmd_rename_action(const struct hold_invocation *inv,
     }
     snprintf(r.name, sizeof(r.name), "%s", new_name);
     r.has_name = true;
+    /* Naming a call declares the intent to keep it: rename also saves. */
+    bool newly_saved = !r.saved;
+    r.saved = true;
     char out_path[HOLD_PATH_MAX];
     if (hold_write_record_atomic(target.store.record_dir, &r, argc, argv, out_path, sizeof(out_path)) != 0) {
         hold_die_errno("hold: failed to write renamed call record");
@@ -428,7 +431,8 @@ int hold_cmd_rename_action(const struct hold_invocation *inv,
     }
     char display_id[ID_DISPLAY_HEX_LEN + 1];
     hold_run_id_display(r.id, display_id);
-    hold_sig_note(inv, "hold: renamed %s to %s\n", display_id, new_name);
+    hold_sig_note(inv, "hold: renamed %s to %s%s\n", display_id, new_name,
+                  newly_saved ? " (saved)" : "");
     hold_free_argv_alloc(argv, argc);
     free(j);
     hold_free_run_record(&r);

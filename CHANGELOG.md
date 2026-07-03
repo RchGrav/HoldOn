@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.5
+
+### Changed
+
+- Renaming a call now saves it: naming something declares you want to keep
+  it. The rename note says so — `hold: renamed <id> to <name> (saved)` — and
+  a targeted `purge --force` still removes it.
+- `hold save` appears in `hold --help` (it was implemented but undocumented).
+- The release workflow's post-publish installer smoke now waits out GitHub's
+  CDN propagation instead of failing the run on a fresh asset's 404.
+
 ## 0.5.4
 
 ### Added

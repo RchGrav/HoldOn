@@ -134,7 +134,7 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "save")) {
         printf("usage: hold save <target>\n\nProtect a call from purge. There is no unsave; use hold purge --force to remove a saved call.\n");
     } else if (!strcmp(action, "rename")) {
-        printf("usage: hold rename <target> <name>\n\nRename a call. Live and ended calls are both renameable.\n");
+        printf("usage: hold rename <target> <name>\n\nRename a call. Live and ended calls are both renameable. Naming a call\ndeclares you want to keep it, so rename also saves it (protects it from\npurge); a targeted `hold purge <name> --force` still removes it.\n");
     } else {
         return -1;
     }

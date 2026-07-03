@@ -2366,6 +2366,21 @@ test_rename_of_saved_call_keeps_protection() {
   set +e; "$HOLD_BIN" purge keptsafe 2>"$TEST_ROOT/rename-refuse.err"; rc=$?; set -e
   [ "$rc" -eq 2 ] || { echo "renamed saved call not protected: rc=$rc" >&2; return 1; }
   grep -qF "hold: 'keptsafe' is saved" "$TEST_ROOT/rename-refuse.err" || { cat "$TEST_ROOT/rename-refuse.err" >&2; return 1; }
+  "$HOLD_BIN" purge keptsafe --force >/dev/null 2>&1 || true
+}
+
+test_rename_saves_an_unsaved_call() {
+  local id rc
+  id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  record_ended_soon "$id" || return 1
+  # Naming a call declares intent to keep it: rename implies save.
+  "$HOLD_BIN" rename "$id" nowkept 2>"$TEST_ROOT/rename-save.err" || { echo "rename failed" >&2; return 1; }
+  grep -qF "(saved)" "$TEST_ROOT/rename-save.err" || { cat "$TEST_ROOT/rename-save.err" >&2; return 1; }
+  grep -q '"Saved": true' "$(record_path "$id")" || { echo "rename did not save the call" >&2; return 1; }
+  set +e; "$HOLD_BIN" purge nowkept 2>"$TEST_ROOT/rename-save-refuse.err"; rc=$?; set -e
+  [ "$rc" -eq 2 ] || { echo "renamed call not protected: rc=$rc" >&2; return 1; }
+  "$HOLD_BIN" purge nowkept --force >/dev/null 2>&1 || true
 }
 
 test_redial_honors_recorded_foreground_mode() {
@@ -3951,6 +3966,7 @@ run_test "targeted purge of a saved call refuses with exact wording" test_purge_
 run_test "purge --force removes a saved ended call" test_purge_force_removes_saved_ended
 run_test "purge --force removes a live saved call" test_purge_force_removes_live_saved
 run_test "rename of a saved call keeps purge protection" test_rename_of_saved_call_keeps_protection
+run_test "rename saves an unsaved call" test_rename_saves_an_unsaved_call
 run_test "redial honors a recorded foreground recipe (and -d overrides)" test_redial_honors_recorded_foreground_mode
 run_test "redial honors a recorded detached recipe" test_redial_honors_recorded_detached_mode
 run_test "redial honors a recorded console recipe" test_redial_honors_recorded_console_mode

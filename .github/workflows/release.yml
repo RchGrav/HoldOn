@@ -281,9 +281,17 @@ jobs:
         run: |
           install_tmp="$(mktemp -d)"
           trap 'rm -rf "$install_tmp"' EXIT
-          curl -LsSf --retry 5 --retry-delay 2 --retry-all-errors \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/install.sh" |
-            HOLD_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh
+          # Freshly published assets can take a couple of minutes to propagate
+          # through GitHub's CDN; poll instead of failing the release on a 404.
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/install.sh"
+          for i in $(seq 1 30); do
+            if curl -LsSf -o "$install_tmp/install.sh" "$url"; then
+              break
+            fi
+            [ "$i" -lt 30 ] || { echo "install.sh never became downloadable" >&2; exit 1; }
+            sleep 10
+          done
+          HOLD_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh "$install_tmp/install.sh"
           installed_version="$("$install_tmp/bin/hold" --version)"
           hold_version="$("$install_tmp/bin/hold" --version)"
           test "$installed_version" = "${RELEASE_TAG}"

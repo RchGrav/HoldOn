@@ -65,7 +65,8 @@ hold ports <call>           # ports in use by the call's process group
                             #  (own calls need no root: /proc socket inodes)
 hold stats <call>           # live resource usage stream (CPU, memory, pids)
 hold save <target>          # protect this call from purge; no unsave — see purge
-hold rename <target> <name> # rename a call (docker rename)
+hold rename <target> <name> # rename a call (docker rename); naming a call
+                            #  declares you want to keep it, so rename saves it
 hold purge [<target>] [-a] [--force]
                             # the one removal verb: no target sweeps ended
                             #  calls (-a includes stale); a target removes one
