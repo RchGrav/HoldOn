@@ -8,6 +8,7 @@
 #include "hold/console.h"
 #include "hold/access.h"
 #include "hold/log_viewer.h"
+#include "hold/observe.h"
 
 static volatile sig_atomic_t g_tail_interrupted = 0;
 
@@ -593,6 +594,82 @@ static int write_file_as_json_array_object(const char *path) {
     return 0;
 }
 
+/* Build the neutral fd-target object for a live call's leader: where fds 0/1/2
+ * actually point right now (a pipe, the pty, /dev/null, a redirected file).
+ * Returns a heap string like "  \"Stdio\": {\n ... }" or NULL when the process
+ * is gone or none of its fds could be read. Caller frees. */
+static char *build_stdio_object(pid_t pid) {
+    static const struct { int fd; const char *key; } slots[] = {
+        {0, "Stdin"}, {1, "Stdout"}, {2, "Stderr"}
+    };
+    char targets[3][HOLD_PATH_MAX];
+    bool any = false;
+    for (size_t i = 0; i < 3; i++) {
+        if (hold_proc_fd_target(pid, slots[i].fd, targets[i], sizeof(targets[i])) == 0) {
+            any = true;
+        } else {
+            targets[i][0] = '\0';
+        }
+    }
+    if (!any) {
+        return NULL;
+    }
+    size_t cap = 4096;
+    char *obj = malloc(cap);
+    if (!obj) {
+        return NULL;
+    }
+    FILE *f = fmemopen(obj, cap, "w");
+    if (!f) {
+        free(obj);
+        return NULL;
+    }
+    fprintf(f, "  \"Stdio\": {\n");
+    for (size_t i = 0; i < 3; i++) {
+        fprintf(f, "    \"%s\": \"", slots[i].key);
+        hold_json_escape(f, targets[i]);
+        fprintf(f, "\"%s\n", i < 2 ? "," : "");
+    }
+    fprintf(f, "  }");
+    if (fclose(f) != 0) {
+        free(obj);
+        return NULL;
+    }
+    return obj;
+}
+
+/* Print the record file as a one-object JSON array, splicing a live "Stdio"
+ * key in before the object's closing brace. The record is a single top-level
+ * object, so the last '}' in the file is its terminator. */
+static int write_inspect_with_stdio(const char *path, const char *stdio_obj) {
+    char *buf = NULL;
+    if (hold_read_small_file(path, &buf) != 0 || !buf) {
+        return -1;
+    }
+    char *close = strrchr(buf, '}');
+    if (!close) {
+        free(buf);
+        return -1;
+    }
+    /* Trim whitespace before the closing brace so the spliced comma lands right
+     * after the last existing value. */
+    char *tail = close;
+    while (tail > buf && (tail[-1] == '\n' || tail[-1] == ' ' || tail[-1] == '\t' || tail[-1] == '\r')) {
+        tail--;
+    }
+    *tail = '\0';
+    int rc = 0;
+    if (fputs("[\n", stdout) == EOF ||
+        fputs(buf, stdout) == EOF ||
+        fputs(",\n", stdout) == EOF ||
+        fputs(stdio_obj, stdout) == EOF ||
+        fputs("\n}\n]\n", stdout) == EOF) {
+        rc = -1;
+    }
+    free(buf);
+    return rc;
+}
+
 int hold_cmd_inspect_action(const struct hold_invocation *inv,
                               const struct hold_store *user_store,
                               const struct hold_store *system_store,
@@ -620,7 +697,22 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
         free(targets);
         return 5;
     }
-    if (write_file_as_json_array_object(path) != 0) {
+    char boot[128] = {0};
+    bool have_boot = hold_current_boot_id(boot, sizeof(boot));
+    enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
+    /* Live fd targets are observable state, added only for a running call whose
+     * leader still exists; ended calls fall back to the verbatim record. */
+    char *stdio_obj = NULL;
+    if (st == STATE_RUNNING && r.pid > 1) {
+        stdio_obj = build_stdio_object(r.pid);
+    }
+    if (stdio_obj) {
+        rc = write_inspect_with_stdio(path, stdio_obj);
+        free(stdio_obj);
+    } else {
+        rc = write_file_as_json_array_object(path);
+    }
+    if (rc != 0) {
         hold_free_run_record(&r);
         free(targets);
         targets = NULL;

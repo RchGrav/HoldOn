@@ -79,6 +79,15 @@ int hold_cmd_console_action(const struct hold_invocation *inv,
                               const struct hold_store *user_store,
                               const struct hold_store *system_store,
                               const char *id_token);
+int hold_cmd_ports_action(const struct hold_invocation *inv,
+                            const struct hold_store *user_store,
+                            const struct hold_store *system_store,
+                            const char *id_token);
+int hold_cmd_stats_action(const struct hold_invocation *inv,
+                            const struct hold_store *user_store,
+                            const struct hold_store *system_store,
+                            const char *id_token,
+                            bool no_stream);
 int hold_cmd_purge_action(const struct hold_invocation *inv,
                             const struct hold_store *user_store,
                             const struct hold_store *system_store,

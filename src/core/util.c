@@ -193,3 +193,76 @@ void hold_format_relative_age(int64_t start_unix_ns, char *out, size_t n) {
         snprintf(out, n, "%" PRId64 "d", age_s / 86400);
     }
 }
+
+/* Docker's go-units HumanDuration, character for character: the phrasing the
+ * call table borrows for CREATED ("2 minutes") and STATUS ("Up 2 minutes",
+ * "Exited (0) 2 days ago"). The caller appends " ago" where the reference is
+ * a past instant. */
+void hold_format_duration_human(int64_t seconds, char *out, size_t n) {
+    if (seconds < 0) {
+        seconds = 0;
+    }
+    if (seconds < 1) {
+        snprintf(out, n, "Less than a second");
+        return;
+    }
+    if (seconds < 60) {
+        snprintf(out, n, "%" PRId64 " second%s", seconds, seconds == 1 ? "" : "s");
+        return;
+    }
+    int64_t minutes = seconds / 60;
+    if (minutes == 1) {
+        snprintf(out, n, "About a minute");
+        return;
+    }
+    if (minutes < 46) {
+        snprintf(out, n, "%" PRId64 " minutes", minutes);
+        return;
+    }
+    /* Docker rounds hours to the nearest whole: int(d.Hours() + 0.5). */
+    int64_t hours = (seconds + 1800) / 3600;
+    if (hours == 1) {
+        snprintf(out, n, "About an hour");
+        return;
+    }
+    if (hours < 48) {
+        snprintf(out, n, "%" PRId64 " hours", hours);
+        return;
+    }
+    if (hours < 24 * 7 * 2) {
+        snprintf(out, n, "%" PRId64 " days", hours / 24);
+        return;
+    }
+    if (hours < 24 * 30 * 2) {
+        snprintf(out, n, "%" PRId64 " weeks", hours / 24 / 7);
+        return;
+    }
+    if (hours < 24 * 365 * 2) {
+        snprintf(out, n, "%" PRId64 " months", hours / 24 / 30);
+        return;
+    }
+    snprintf(out, n, "%" PRId64 " years", hours / 24 / 365);
+}
+
+/* Parse an RFC3339 UTC instant ("2026-07-03T01:23:45Z", fractional seconds and
+ * the trailing Z ignored) into unix nanoseconds. Returns false on any garbage
+ * or the zero-value placeholder Hold writes for records without a timestamp. */
+bool hold_parse_rfc3339_utc_to_ns(const char *s, int64_t *out_ns) {
+    if (!s || !*s) {
+        return false;
+    }
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    const char *end = strptime(s, "%Y-%m-%dT%H:%M:%S", &tm);
+    if (!end) {
+        return false;
+    }
+    time_t t = timegm(&tm);
+    if (t == (time_t)-1 || t <= 0) {
+        return false;
+    }
+    if (out_ns) {
+        *out_ns = (int64_t)t * 1000000000LL;
+    }
+    return true;
+}

@@ -7,6 +7,7 @@
 #include "hold/store.h"
 #include "hold/console.h"
 #include "hold/access.h"
+#include "hold/observe.h"
 
 struct list_row {
     char id[ID_STR_LEN];
@@ -14,7 +15,7 @@ struct list_row {
     char state[16];
     char started[64];
     char created[64];
-    char status[64];
+    char status[96];
     char ports[HOLD_PATH_MAX];
     char cmd[HOLD_PATH_MAX];
     int64_t start_unix_ns;
@@ -31,8 +32,6 @@ static int append_list_row(struct list_rows *rows, const struct list_row *row);
 static int compare_list_rows(const void *a, const void *b);
 static void print_list_header(bool iso);
 static void print_list_row(const struct list_row *row, bool iso);
-static void print_ps_header(void);
-static void print_ps_row(const struct list_row *row);
 static int collect_list_private(const struct hold_store *store,
                                 const char *alias_filter,
                                 bool iso,
@@ -93,259 +92,75 @@ static void print_list_row(const struct list_row *row, bool iso) {
     printf("%-12s %-8s %-*s %s\n", row->id, row->state, iso ? 24 : 8, row->started, cmd);
 }
 
-static void quote_command(char out[32], const char *cmd) {
+/* Docker double-quotes COMMAND and ellipsizes it so one long command never
+ * blows out the column. Up to PS_CMD_CHARS characters of the command survive;
+ * anything longer ends in an ellipsis inside the quotes. */
+#define PS_CMD_CHARS 30
+#define PS_CMD_CELL (PS_CMD_CHARS + 8) /* quotes + "..." + NUL */
+
+static void quote_command(char out[PS_CMD_CELL], const char *cmd) {
     const char *src = (cmd && *cmd) ? cmd : "?";
-    char body[28];
+    char body[PS_CMD_CHARS + 4];
     size_t len = strlen(src);
-    snprintf(body, sizeof(body), "%.24s%s", src, len > 24 ? "..." : "");
-    snprintf(out, 32, "\"%s\"", body);
+    /* ASCII ellipsis keeps byte width equal to display width, so the
+     * content-sized columns below never shear on a truncated command. */
+    snprintf(body, sizeof(body), "%.*s%s", PS_CMD_CHARS, src, len > PS_CMD_CHARS ? "..." : "");
+    snprintf(out, PS_CMD_CELL, "\"%s\"", body);
 }
 
-static void print_ps_header(void) {
-    printf("%-12s %-28s %-14s %-22s %-36s %s\n",
-           "CALL ID", "COMMAND", "CREATED", "STATUS", "PORTS", "NAMES");
+/* Seconds elapsed since a past instant given in unix nanoseconds. */
+static int64_t seconds_since(int64_t ref_unix_ns) {
+    struct timespec now;
+    if (ref_unix_ns <= 0 || clock_gettime(CLOCK_REALTIME, &now) != 0) {
+        return 0;
+    }
+    int64_t now_ns = (int64_t)now.tv_sec * 1000000000LL + now.tv_nsec;
+    return now_ns > ref_unix_ns ? (now_ns - ref_unix_ns) / 1000000000LL : 0;
 }
 
-static void print_ps_row(const struct list_row *row) {
-    char cmd[32];
-    quote_command(cmd, row->cmd);
-    printf("%-12s %-28s %-14s %-22s %-36s %s\n",
-           row->id,
-           cmd,
-           row->created[0] ? row->created : "-",
-           row->status[0] ? row->status : row->state,
-           row->ports,
-           row->name[0] ? row->name : "-");
+/* The instant a call last stopped running: its recorded end time when we have
+ * one, otherwise its start (a good enough anchor for short-lived calls and the
+ * behavior Hold shipped before the ended timestamp was parseable). */
+static int64_t ended_reference_ns(const struct hold_run_record *r) {
+    int64_t ns = 0;
+    if (r->has_ended_at && hold_parse_rfc3339_utc_to_ns(r->ended_at, &ns)) {
+        return ns;
+    }
+    return r->start_unix_ns;
 }
 
-static void format_status(enum run_state st, const struct hold_run_record *r, char out[64]) {
-    char age[24];
-    hold_format_relative_age(r->start_unix_ns, age, sizeof(age));
+static void format_status(enum run_state st, const struct hold_run_record *r, char *out, size_t n) {
+    char human[48];
     switch (st) {
     case STATE_RUNNING:
-        snprintf(out, 64, "Up %s", age);
+        hold_format_duration_human(seconds_since(r->start_unix_ns), human, sizeof(human));
+        snprintf(out, n, "Up %s", human);
         break;
     case STATE_EXITED:
+        hold_format_duration_human(seconds_since(ended_reference_ns(r)), human, sizeof(human));
         if (r->has_exit_code) {
-            snprintf(out, 64, "Exited (%d) %s", r->exit_code, age);
+            snprintf(out, n, "Exited (%d) %s ago", r->exit_code, human);
         } else if (r->has_term_signal) {
-            snprintf(out, 64, "Exited (%d) %s", 128 + r->term_signal, age);
+            snprintf(out, n, "Exited (%d) %s ago", 128 + r->term_signal, human);
         } else {
-            snprintf(out, 64, "Exited (?) %s", age);
+            snprintf(out, n, "Exited (?) %s ago", human);
         }
         break;
     case STATE_FAILED:
-        snprintf(out, 64, "Failed %s", age);
+        hold_format_duration_human(seconds_since(ended_reference_ns(r)), human, sizeof(human));
+        snprintf(out, n, "Failed %s ago", human);
         break;
     case STATE_STALE:
-        snprintf(out, 64, "Stale %s", age);
+        /* Stale is Hold-specific: the call's boot id no longer matches, so it
+         * cannot be running. Report the age without a false exit story. */
+        hold_format_duration_human(seconds_since(r->start_unix_ns), human, sizeof(human));
+        snprintf(out, n, "Stale %s", human);
         break;
     default:
-        snprintf(out, 64, "Unknown");
+        snprintf(out, n, "Unknown");
         break;
     }
 }
-
-#if defined(__linux__)
-struct inode_set {
-    unsigned long long *items;
-    size_t count;
-};
-
-static void inode_set_free(struct inode_set *set) {
-    free(set->items);
-    set->items = NULL;
-    set->count = 0;
-}
-
-static bool inode_set_contains(const struct inode_set *set, unsigned long long inode) {
-    for (size_t i = 0; i < set->count; i++) {
-        if (set->items[i] == inode) return true;
-    }
-    return false;
-}
-
-static int inode_set_add(struct inode_set *set, unsigned long long inode) {
-    if (inode == 0 || inode_set_contains(set, inode)) return 0;
-    unsigned long long *next = realloc(set->items, (set->count + 1) * sizeof(*next));
-    if (!next) return -1;
-    set->items = next;
-    set->items[set->count++] = inode;
-    return 0;
-}
-
-static int list_read_proc_ids(pid_t pid, pid_t *pgid_out, pid_t *sid_out, char *state_out) {
-    char path[128], buf[4096];
-    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid) != 0) return -1;
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return -1;
-    ssize_t nr;
-    do {
-        nr = read(fd, buf, sizeof(buf) - 1);
-    } while (nr < 0 && errno == EINTR);
-    int saved = errno;
-    close(fd);
-    if (nr <= 0) {
-        errno = nr < 0 ? saved : EIO;
-        return -1;
-    }
-    buf[nr] = '\0';
-    char *rp = strrchr(buf, ')');
-    if (!rp) {
-        errno = EINVAL;
-        return -1;
-    }
-    char *fields = rp + 2;
-    char *save = NULL;
-    int idx = 0;
-    bool got_pgid = false, got_sid = false, got_state = false;
-    pid_t pgid = 0, sid = 0;
-    char state = 0;
-    for (char *tok = strtok_r(fields, " ", &save); tok; tok = strtok_r(NULL, " ", &save), idx++) {
-        if (idx == 0) {
-            state = tok[0];
-            got_state = true;
-        } else if (idx == 2) {
-            pgid = (pid_t)strtol(tok, NULL, 10);
-            got_pgid = true;
-        } else if (idx == 3) {
-            sid = (pid_t)strtol(tok, NULL, 10);
-            got_sid = true;
-            break;
-        }
-    }
-    if ((pgid_out && !got_pgid) || (sid_out && !got_sid) || (state_out && !got_state)) {
-        errno = EINVAL;
-        return -1;
-    }
-    if (pgid_out) *pgid_out = pgid;
-    if (sid_out) *sid_out = sid;
-    if (state_out) *state_out = state;
-    return 0;
-}
-
-static int collect_pid_socket_inodes(pid_t pid, struct inode_set *set) {
-    char fd_dir[128];
-    if (hold_checked_snprintf(fd_dir, sizeof(fd_dir), "/proc/%ld/fd", (long)pid) != 0) return 0;
-    DIR *d = opendir(fd_dir);
-    if (!d) return 0;
-    const struct dirent *e;
-    while ((e = readdir(d))) {
-        if (!isdigit((unsigned char)e->d_name[0])) continue;
-        char fd_path[HOLD_PATH_MAX], target[256];
-        if (hold_checked_snprintf(fd_path, sizeof(fd_path), "%s/%s", fd_dir, e->d_name) != 0) continue;
-        ssize_t n = readlink(fd_path, target, sizeof(target) - 1);
-        if (n <= 0) continue;
-        target[n] = '\0';
-        unsigned long long inode = 0;
-        if (sscanf(target, "socket:[%llu]", &inode) == 1 && inode_set_add(set, inode) != 0) {
-            closedir(d);
-            return -1;
-        }
-    }
-    closedir(d);
-    return 0;
-}
-
-static int collect_run_socket_inodes(const struct hold_run_record *r, struct inode_set *set) {
-    DIR *d = opendir("/proc");
-    if (!d) return 0;
-    const struct dirent *e;
-    while ((e = readdir(d))) {
-        if (!isdigit((unsigned char)e->d_name[0])) continue;
-        char *end = NULL;
-        long pid_long = strtol(e->d_name, &end, 10);
-        if (end == e->d_name || *end || pid_long <= 0) continue;
-        pid_t pgid = 0, sid = 0;
-        char state = 0;
-        if (list_read_proc_ids((pid_t)pid_long, &pgid, &sid, &state) != 0) continue;
-        if (pgid != r->pgid || sid != r->sid || state == 'Z') continue;
-        if (collect_pid_socket_inodes((pid_t)pid_long, set) != 0) {
-            closedir(d);
-            return -1;
-        }
-    }
-    closedir(d);
-    return 0;
-}
-
-static bool append_port(char *out, size_t n, const char *entry) {
-    if (!entry || !*entry) return true;
-    if (strstr(out, entry)) return true;
-    size_t used = strlen(out);
-    const char *sep = used ? ", " : "";
-    return hold_checked_snprintf(out + used, n - used, "%s%s", sep, entry) == 0;
-}
-
-static void ipv4_from_proc_hex(const char *hex, char out[32]) {
-    unsigned long v = strtoul(hex, NULL, 16);
-    snprintf(out, 32, "%lu.%lu.%lu.%lu",
-             v & 0xffUL,
-             (v >> 8) & 0xffUL,
-             (v >> 16) & 0xffUL,
-             (v >> 24) & 0xffUL);
-}
-
-static bool ipv6_proc_hex_is_any(const char *hex) {
-    if (!hex) return false;
-    for (size_t i = 0; i < 32 && hex[i]; i++) {
-        if (hex[i] != '0') return false;
-    }
-    return strlen(hex) >= 32;
-}
-
-static int scan_proc_net_file(const char *path, const char *proto, const struct inode_set *set, char *out, size_t n) {
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
-    char line[1024];
-    if (!fgets(line, sizeof(line), f)) {
-        fclose(f);
-        return 0;
-    }
-    while (fgets(line, sizeof(line), f)) {
-        char *fields[16] = {0};
-        int nf = 0;
-        char *save = NULL;
-        for (char *tok = strtok_r(line, " \t\r\n", &save); tok && nf < 16; tok = strtok_r(NULL, " \t\r\n", &save)) {
-            fields[nf++] = tok;
-        }
-        if (nf <= 9 || strcmp(fields[3], "0A") != 0) continue;
-        unsigned long long inode = strtoull(fields[9], NULL, 10);
-        if (!inode_set_contains(set, inode)) continue;
-        char addr_hex[64] = {0};
-        char port_hex[16] = {0};
-        if (sscanf(fields[1], "%63[^:]:%15s", addr_hex, port_hex) != 2) continue;
-        unsigned long port = strtoul(port_hex, NULL, 16);
-        char host[80];
-        if (strstr(path, "tcp6")) {
-            snprintf(host, sizeof(host), "%s", ipv6_proc_hex_is_any(addr_hex) ? "[::]" : "[::]");
-        } else {
-            ipv4_from_proc_hex(addr_hex, host);
-        }
-        char entry[128];
-        snprintf(entry, sizeof(entry), "%s:%lu/%s", host, port, proto);
-        if (!append_port(out, n, entry)) break;
-    }
-    fclose(f);
-    return 0;
-}
-
-static void observe_run_ports(const struct hold_run_record *r, char out[HOLD_PATH_MAX]) {
-    out[0] = '\0';
-    if (!r || r->pgid <= 1 || r->sid <= 0) return;
-    struct inode_set set = {0};
-    if (collect_run_socket_inodes(r, &set) == 0 && set.count > 0) {
-        (void)scan_proc_net_file("/proc/net/tcp", "tcp", &set, out, HOLD_PATH_MAX);
-        (void)scan_proc_net_file("/proc/net/tcp6", "tcp", &set, out, HOLD_PATH_MAX);
-    }
-    inode_set_free(&set);
-}
-#else
-static void observe_run_ports(const struct hold_run_record *r, char out[HOLD_PATH_MAX]) {
-    (void)r;
-    out[0] = '\0';
-}
-#endif
 
 static int collect_list_private(const struct hold_store *store,
                                 const char *alias_filter,
@@ -415,9 +230,22 @@ static int collect_list_private(const struct hold_store *store,
         }
         snprintf(row.cmd, sizeof(row.cmd), "%s", r.cmdline[0] ? r.cmdline : "?");
         if (docker_ps) {
-            format_status(st, &r, row.status);
+            if (!iso) {
+                /* CREATED is humanized Docker-style: "About a minute ago",
+                 * "2 days ago" - never the "2m" short form the list table uses. */
+                char human[48];
+                hold_format_duration_human(seconds_since(created_ns), human, sizeof(human));
+                snprintf(row.created, sizeof(row.created), "%s ago", human);
+            }
+            format_status(st, &r, row.status, sizeof(row.status));
+            if (r.saved) {
+                /* Surface protection where the eye already rests: a suffix on
+                 * STATUS, not a new column. */
+                size_t used = strlen(row.status);
+                snprintf(row.status + used, sizeof(row.status) - used, " (saved)");
+            }
             if (st == STATE_RUNNING) {
-                observe_run_ports(&r, row.ports);
+                hold_observe_run_ports_column(&r, row.ports, sizeof(row.ports));
             }
         }
         if (append_list_row(rows, &row) != 0) {
@@ -488,6 +316,18 @@ static int collect_list_public(const struct hold_store *store,
         snprintf(row.cmd, sizeof(row.cmd), "%s", "<root-managed>");
         if (docker_ps) {
             snprintf(row.status, sizeof(row.status), "%s", pi.state_hint[0] ? pi.state_hint : "Unknown");
+            if (!iso) {
+                /* The table never shows a raw ISO stamp: humanize the public
+                 * index's created_at, falling back to "-" when unparseable. */
+                int64_t created_at_ns = 0;
+                if (hold_parse_rfc3339_utc_to_ns(pi.created_at, &created_at_ns)) {
+                    char human[48];
+                    hold_format_duration_human(seconds_since(created_at_ns), human, sizeof(human));
+                    snprintf(row.created, sizeof(row.created), "%s ago", human);
+                } else {
+                    snprintf(row.created, sizeof(row.created), "-");
+                }
+            }
         }
         if (append_list_row(rows, &row) != 0) {
             closedir(d);
@@ -509,14 +349,59 @@ static int print_collected_list(struct list_rows *rows, bool iso) {
     return 0;
 }
 
+/* The Docker-shaped call table, content-sized like `docker ps`: a first pass
+ * measures every column from the actual rows (never a fixed printf width that
+ * shears a long value), a second pass prints. Columns are separated by a
+ * two-space gutter; each column is at least as wide as its header; the final
+ * NAMES column is never padded, so no line carries trailing spaces. */
 static int print_collected_ps(struct list_rows *rows) {
     if (rows->count > 1) {
         qsort(rows->items, rows->count, sizeof(rows->items[0]), compare_list_rows);
     }
-    print_ps_header();
-    for (size_t i = 0; i < rows->count; i++) {
-        print_ps_row(&rows->items[i]);
+
+    char (*cmds)[PS_CMD_CELL] = NULL;
+    if (rows->count > 0) {
+        cmds = malloc(rows->count * sizeof(*cmds));
+        if (!cmds) {
+            return 3;
+        }
     }
+
+    size_t w_id = strlen("CALL ID");
+    size_t w_cmd = strlen("COMMAND");
+    size_t w_created = strlen("CREATED");
+    size_t w_status = strlen("STATUS");
+    size_t w_ports = strlen("PORTS");
+    for (size_t i = 0; i < rows->count; i++) {
+        const struct list_row *r = &rows->items[i];
+        quote_command(cmds[i], r->cmd);
+        const char *created = r->created[0] ? r->created : "-";
+        const char *status = r->status[0] ? r->status : r->state;
+        if (strlen(r->id) > w_id) w_id = strlen(r->id);
+        if (strlen(cmds[i]) > w_cmd) w_cmd = strlen(cmds[i]);
+        if (strlen(created) > w_created) w_created = strlen(created);
+        if (strlen(status) > w_status) w_status = strlen(status);
+        if (strlen(r->ports) > w_ports) w_ports = strlen(r->ports);
+    }
+
+    printf("%-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
+           (int)w_id, "CALL ID",
+           (int)w_cmd, "COMMAND",
+           (int)w_created, "CREATED",
+           (int)w_status, "STATUS",
+           (int)w_ports, "PORTS",
+           "NAMES");
+    for (size_t i = 0; i < rows->count; i++) {
+        const struct list_row *r = &rows->items[i];
+        printf("%-*s  %-*s  %-*s  %-*s  %-*s  %s\n",
+               (int)w_id, r->id,
+               (int)w_cmd, cmds[i],
+               (int)w_created, r->created[0] ? r->created : "-",
+               (int)w_status, r->status[0] ? r->status : r->state,
+               (int)w_ports, r->ports,
+               r->name[0] ? r->name : "-");
+    }
+    free(cmds);
     return 0;
 }
 

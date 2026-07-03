@@ -512,6 +512,7 @@ int hold_cli_main(int argc, char **argv) {
     bool print_cmd = false;
     bool list_iso = false;
     bool purge_force = false;
+    bool stats_no_stream = false;
     struct cli_run_options run = {0};
 
     while (argi < argc) {
@@ -603,6 +604,10 @@ int hold_cli_main(int argc, char **argv) {
             if (!literal_owned_arg && !strcmp(command, "list") &&
                 (!strcmp(argv[i], "--iso") || !strcmp(argv[i], "-l"))) {
                 list_iso = true;
+                continue;
+            }
+            if (!literal_owned_arg && !strcmp(command, "stats") && !strcmp(argv[i], "--no-stream")) {
+                stats_no_stream = true;
                 continue;
             }
             cmd_argv[cmd_argc++] = argv[i];
@@ -802,6 +807,16 @@ int hold_cli_main(int argc, char **argv) {
     }
     if (!strcmp(canon, "inspect")) {
         int rc = hold_cmd_inspect_action(&inv, &user_store, &system_store, cmd_argv[0]);
+        free(cmd_argv);
+        return rc;
+    }
+    if (!strcmp(canon, "ports")) {
+        int rc = hold_cmd_ports_action(&inv, &user_store, &system_store, cmd_argv[0]);
+        free(cmd_argv);
+        return rc;
+    }
+    if (!strcmp(canon, "stats")) {
+        int rc = hold_cmd_stats_action(&inv, &user_store, &system_store, cmd_argv[0], stats_no_stream);
         free(cmd_argv);
         return rc;
     }

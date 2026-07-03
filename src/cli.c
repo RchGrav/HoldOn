@@ -34,6 +34,8 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"tail", 1, 1, 0, "usage: hold tail <target>", "tail"},
     {"logs", 1, -1, 0, "usage: hold logs <target> [--follow|-f] [--tail|-n N] [--plain|-p|--interactive]", "logs"},
     {"inspect", 1, 1, 0, "usage: hold inspect <target>", "inspect"},
+    {"ports", 1, 1, 0, "usage: hold ports <target>", "ports"},
+    {"stats", 1, 1, 0, "usage: hold stats <target> [--no-stream]", "stats"},
     {"__view", 1, -1, 0, "usage: hold __view <target> [internal viewer test options]", "__view"},
     {"attach", 1, 1, 0, "usage: hold attach <target>", "attach"},
     {"console", 1, 1, 0, "usage: hold console <target>", "console"},
@@ -126,7 +128,11 @@ static int help_action(const char *action) {
     } else if (!strcmp(action, "purge") || !strcmp(action, "prune") || !strcmp(action, "rm") || !strcmp(action, "drop")) {
         printf("usage: hold purge [<target>] [-a|--all] [--force]\n\nThe one removal verb. With no target it sweeps ended calls (-a includes stale); a target removes one call; --force removes regardless of state (live or saved). rm, prune, and drop are accepted aliases.\n");
     } else if (!strcmp(action, "inspect")) {
-        printf("usage: hold inspect <target>\n\nPrint structured JSON details for a call. Log text belongs to hold logs <target> --plain.\n");
+        printf("usage: hold inspect <target>\n\nPrint structured JSON details for a call. For a live call the output includes a Stdio object showing where fds 0/1/2 currently point. Log text belongs to hold logs <target> --plain.\n");
+    } else if (!strcmp(action, "ports")) {
+        printf("usage: hold ports <target>\n\nList the listening sockets in use by the call's process group, one per line (\"127.0.0.1:8080/tcp\"). Your own calls need no root.\n");
+    } else if (!strcmp(action, "stats")) {
+        printf("usage: hold stats <target> [--no-stream]\n\nLive resource usage for the call's process group: CPU %%, resident memory, and process count, refreshing in place every second until Ctrl-C. Prints a single frame when stdout is not a TTY or with --no-stream.\n");
     } else if (!strcmp(action, "save")) {
         printf("usage: hold save <target>\n\nProtect a call from purge. There is no unsave; use hold purge --force to remove a saved call.\n");
     } else if (!strcmp(action, "rename")) {

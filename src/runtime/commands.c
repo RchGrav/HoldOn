@@ -80,6 +80,8 @@ void hold_usage(void) {
            "  hold attach <target>         pick the call back up (Ctrl-P Ctrl-Q detaches)\n"
            "  hold logs <target> [-f]      open the log viewer (-p dumps plain text)\n"
            "  hold inspect <target>        structured JSON details\n"
+           "  hold ports <target>          listening sockets in use by the call\n"
+           "  hold stats <target>          live CPU, memory, and pid usage\n"
            "  hold end <target> [--all]    end the call politely: TERM, then KILL\n"
            "  hold kill <target>           KILL now, when it won't listen\n"
            "  hold rename <target> <name>  give a call a meaningful name\n"

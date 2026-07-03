@@ -68,6 +68,8 @@ int hold_read_exec_handshake(int fd, int *child_errno);
 int hold_sha256_file_hex(const char *path, char out[PROFILE_HASH_STR_LEN]);
 void hold_format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n);
 void hold_format_relative_age(int64_t start_unix_ns, char *out, size_t n);
+void hold_format_duration_human(int64_t seconds, char *out, size_t n);
+bool hold_parse_rfc3339_utc_to_ns(const char *s, int64_t *out_ns);
 int hold_log_idx_path(const char *log_path, char *out, size_t n);
 int hold_open_log_index_fd(const char *log_path, int raw_log_fd);
 int hold_write_indexed_log_bytes_fd(int log_fd, int idx_fd, const char *stream, const char *data, size_t n);

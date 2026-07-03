@@ -3000,6 +3000,143 @@ PY
   [ "$rc" -ne 0 ] || { cat "$TEST_ROOT/docker-rm-inspect.out" >&2; return 1; }
 }
 
+# The ps table humanizes CREATED Docker-style, phrases STATUS as Up/Exited, and
+# annotates a saved call inline on STATUS.
+test_ps_table_humanized_status_and_saved() {
+  local out id run_out exit_id ps_out
+  out=$("$HOLD_BIN" -d --name ps-humanized -- /bin/sh -c 'sleep 30' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  run_out=$("$HOLD_BIN" -d --name ps-exiter -- /bin/sh -c 'exit 5' 2>&1) || return 1
+  exit_id=$(printf '%s\n' "$run_out" | extract_id)
+  [ -n "$exit_id" ] || return 1
+  record_ended_soon "$exit_id" || return 1
+  # Age both calls past a second so CREATED reads a whole-unit Docker age
+  # ("1 second ago") rather than the sub-second "Less than a second ago".
+  sleep 1.2
+
+  ps_out=$("$HOLD_BIN" ps -a) || return 1
+  # Header is exact, in the CALL ID..NAMES order with no PROFILE column.
+  printf '%s\n' "$ps_out" | grep -Eq "^CALL ID[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES$" ||
+    { printf '%s\n' "$ps_out" >&2; return 1; }
+  # CREATED is humanized: never a raw ISO stamp, always a Docker-style age.
+  printf '%s\n' "$ps_out" | grep -Eq "^$id[[:space:]].*(About a minute|[0-9]+ (seconds?|minutes?|hours?|days?|weeks?|months?)) ago" ||
+    { printf '%s\n' "$ps_out" >&2; return 1; }
+  ! printf '%s\n' "$ps_out" | grep -Eq "^$id[[:space:]].*[0-9]{4}-[0-9]{2}-[0-9]{2}T" || return 1
+  # STATUS phrasing: Up ... for the live call, Exited (5) ... ago for the ended one.
+  printf '%s\n' "$ps_out" | grep -Eq "^$id[[:space:]].*Up [0-9A-Za-z]" || { printf '%s\n' "$ps_out" >&2; return 1; }
+  printf '%s\n' "$ps_out" | grep -Eq "^$exit_id[[:space:]].*Exited \(5\) .*ago" || { printf '%s\n' "$ps_out" >&2; return 1; }
+
+  # save marks the live call; ps annotates protection inline on STATUS.
+  "$HOLD_BIN" save ps-humanized >/dev/null 2>&1 || return 1
+  ps_out=$("$HOLD_BIN" ps -a) || return 1
+  printf '%s\n' "$ps_out" | grep -Eq "^$id[[:space:]].*Up .*\(saved\)" || { printf '%s\n' "$ps_out" >&2; return 1; }
+
+  "$HOLD_BIN" end ps-humanized >/dev/null 2>&1 || true
+}
+
+# Content-sized columns must not shear: every data cell begins exactly under its
+# header, whether the command is short or long enough to be ellipsized.
+test_ps_table_columns_do_not_shear() {
+  local short_out long_out ps_out long_arg
+  short_out=$("$HOLD_BIN" -d --name ps-short -- /bin/sh -c 'sleep 30' 2>&1) || return 1
+  long_arg=$(printf 'y%.0s' $(seq 1 120))
+  long_out=$("$HOLD_BIN" -d --name ps-long -- /bin/sh -c "echo $long_arg; sleep 30" 2>&1) || return 1
+  [ -n "$(printf '%s\n' "$short_out" | extract_id)" ] || return 1
+  [ -n "$(printf '%s\n' "$long_out" | extract_id)" ] || return 1
+
+  ps_out=$("$HOLD_BIN" ps -a) || return 1
+  printf '%s\n' "$ps_out" | awk '
+    NR == 1 {
+      for (label = 1; label <= 4; label++) { }
+      cols["COMMAND"] = index($0, "COMMAND")
+      cols["CREATED"] = index($0, "CREATED")
+      cols["STATUS"]  = index($0, "STATUS")
+      next
+    }
+    {
+      for (name in cols) {
+        pos = cols[name]
+        # The gutter before the column is a space and the cell itself is not,
+        # so the column starts exactly where its header does.
+        if (substr($0, pos - 1, 1) != " " || substr($0, pos, 1) == " ") {
+          printf("shear at %s on: %s\n", name, $0) > "/dev/stderr"
+          exit 1
+        }
+      }
+    }
+  ' || return 1
+  # The long command is present and ellipsized rather than dropped.
+  printf '%s\n' "$ps_out" | grep -Eq 'ps-long$' || return 1
+  printf '%s\n' "$ps_out" | grep -Eq '\.\.\."' || return 1
+
+  "$HOLD_BIN" end ps-short ps-long >/dev/null 2>&1 || true
+}
+
+# hold ports lists the bound listeners of a call's process group, one per line.
+test_ports_lists_bound_listener() {
+  local out id ports_out tries rc
+  out=$("$HOLD_BIN" -d --name ports-smoke -- python3 -c 'import socket,time
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+s.bind(("127.0.0.1",0)); s.listen(); print(s.getsockname()[1]); time.sleep(30)' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  ports_out=""
+  for tries in $(seq 1 30); do
+    ports_out=$("$HOLD_BIN" ports ports-smoke 2>/dev/null || true)
+    printf '%s\n' "$ports_out" | grep -Eq '^127\.0\.0\.1:[0-9]+/tcp$' && break
+    sleep 0.1
+  done
+  printf '%s\n' "$ports_out" | grep -Eq '^127\.0\.0\.1:[0-9]+/tcp$' || { printf '%s\n' "$ports_out" >&2; return 1; }
+
+  # No target is a usage error.
+  set +e; "$HOLD_BIN" ports >/dev/null 2>&1; rc=$?; set -e
+  [ "$rc" -eq 5 ] || return 1
+
+  "$HOLD_BIN" end ports-smoke >/dev/null 2>&1 || true
+}
+
+# hold stats --no-stream prints one plain frame with the documented columns.
+test_stats_single_shot_shape() {
+  local out id stats_out
+  out=$("$HOLD_BIN" -d --name stats-smoke -- /bin/sh -c 'sleep 30' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  stats_out=$("$HOLD_BIN" stats --no-stream stats-smoke) || return 1
+  printf '%s\n' "$stats_out" | grep -Eq "^CALL ID[[:space:]]+NAME[[:space:]]+CPU %[[:space:]]+MEM \(RSS\)[[:space:]]+PIDS$" ||
+    { printf '%s\n' "$stats_out" >&2; return 1; }
+  printf '%s\n' "$stats_out" | grep -Eq "^$id[[:space:]]+stats-smoke[[:space:]]+[0-9.]+%[[:space:]]+[0-9.]+(B|KiB|MiB|GiB)[[:space:]]+[0-9]+$" ||
+    { printf '%s\n' "$stats_out" >&2; return 1; }
+
+  "$HOLD_BIN" end stats-smoke >/dev/null 2>&1 || true
+}
+
+# inspect reports where a live call's fds actually point. A child that redirects
+# its own stdout to a file must show that file under Stdio.Stdout.
+test_inspect_reports_stdio_targets() {
+  local redir out id
+  redir="$TEST_ROOT/inspect-stdio.out"
+  out=$("$HOLD_BIN" -d --name stdio-smoke -- /bin/sh -c "exec >\"$redir\"; sleep 30" 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.3
+  "$HOLD_BIN" inspect stdio-smoke >"$TEST_ROOT/inspect-stdio.json" || return 1
+  python3 - "$TEST_ROOT/inspect-stdio.json" "$redir" <<'PY' || { cat "$TEST_ROOT/inspect-stdio.json" >&2; return 1; }
+import json, sys
+obj = json.load(open(sys.argv[1], encoding='utf-8'))
+record = obj[0]
+stdio = record.get('Stdio')
+if not isinstance(stdio, dict):
+    raise SystemExit('inspect did not report a Stdio object for a live call')
+for key in ('Stdin', 'Stdout', 'Stderr'):
+    if key not in stdio:
+        raise SystemExit('Stdio missing key ' + key)
+if stdio['Stdout'] != sys.argv[2]:
+    raise SystemExit('Stdout fd target %r did not match the redirect %r' % (stdio['Stdout'], sys.argv[2]))
+PY
+  "$HOLD_BIN" end stdio-smoke >/dev/null 2>&1 || true
+}
+
 test_docker_bare_launch_foreground_follows_output_by_default() {
   local out id
   # Bare foreground streams the process output and prints no id of its own.
@@ -3678,6 +3815,11 @@ run_test "signal refuses tampered live process-group identity" test_signal_refus
 run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
+run_test "ps table humanizes CREATED, phrases STATUS, and marks saved" test_ps_table_humanized_status_and_saved
+run_test "ps table content-sized columns do not shear" test_ps_table_columns_do_not_shear
+run_test "ports lists a call's bound listeners" test_ports_lists_bound_listener
+run_test "stats single-shot prints the documented columns" test_stats_single_shot_shape
+run_test "inspect reports live stdio fd targets" test_inspect_reports_stdio_targets
 run_test "bare foreground streams output; -d detaches with a 64-hex id" test_docker_bare_launch_foreground_follows_output_by_default
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
