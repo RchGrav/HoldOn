@@ -72,6 +72,49 @@ void hold_format_duration_human(int64_t seconds, char *out, size_t n);
 bool hold_parse_rfc3339_utc_to_ns(const char *s, int64_t *out_ns);
 int hold_log_idx_path(const char *log_path, char *out, size_t n);
 int hold_open_log_index_fd(const char *log_path, int raw_log_fd);
+
+/*
+ * Read-only view of the HLOGIDX sidecar for the dynamic log viewer.
+ *
+ * The sidecar carries per-record capture timestamps and stream metadata that
+ * cannot be reconstructed from the plain log text. The viewer loads the map
+ * once (reloading as a followed log grows) and looks records up by their raw
+ * byte offset, which is exactly the offset the filter engine reports for each
+ * visible line.
+ */
+enum hold_log_stream {
+    HOLD_LOG_STREAM_STDOUT = 0,
+    HOLD_LOG_STREAM_STDERR = 1,
+    HOLD_LOG_STREAM_STDIN = 2,
+    HOLD_LOG_STREAM_PTY = 3
+};
+
+enum hold_ts_mode {
+    HOLD_TS_NONE = 0,
+    HOLD_TS_TIME = 1,
+    HOLD_TS_DATE = 2
+};
+
+struct hold_logidx_record {
+    off_t offset;    /* raw log byte offset of the record start */
+    uint32_t len;    /* record length in bytes */
+    uint64_t ts_us;  /* absolute capture time, Unix microseconds */
+    uint16_t meta;   /* raw stream/state bits */
+};
+
+struct hold_logidx_map {
+    struct hold_logidx_record *records; /* ascending by offset */
+    size_t count;
+    uint64_t base_unix_us;
+};
+
+int hold_logidx_map_load(const char *log_path, struct hold_logidx_map *out);
+void hold_logidx_map_free(struct hold_logidx_map *m);
+const struct hold_logidx_record *hold_logidx_map_find(const struct hold_logidx_map *m, off_t offset);
+enum hold_log_stream hold_logidx_record_stream(uint16_t meta);
+/* Formats a presentation timestamp prefix (with trailing space) into out and
+ * returns the number of characters written; HOLD_TS_NONE writes nothing. */
+size_t hold_logidx_format_time(uint64_t ts_us, enum hold_ts_mode mode, bool utc, char *out, size_t n);
 int hold_write_indexed_log_bytes_fd(int log_fd, int idx_fd, const char *stream, const char *data, size_t n);
 int hold_write_json_log_entry_fd(int fd, const char *stream, const char *data, size_t n);
 int hold_write_json_log_bytes_fd(int fd, const char *stream, const char *data, size_t n);

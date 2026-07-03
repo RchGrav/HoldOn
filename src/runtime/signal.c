@@ -485,6 +485,7 @@ static int stream_view_result(const struct hold_log_filter_result *result) {
 
 struct interactive_view_liveness {
     const struct hold_run_record *record;
+    const char *record_dir;
     char boot[128];
     bool have_boot;
 };
@@ -493,6 +494,20 @@ static bool interactive_view_run_is_running(void *userdata) {
     struct interactive_view_liveness *live = userdata;
     if (!live || !live->record) return false;
     return hold_eval_state(live->record, live->have_boot ? live->boot : NULL) == STATE_RUNNING;
+}
+
+static bool interactive_view_exit_code(void *userdata, int *code_out) {
+    struct interactive_view_liveness *live = userdata;
+    if (!live || !live->record || !live->record_dir) return false;
+    struct hold_run_record cur;
+    char cur_path[HOLD_PATH_MAX];
+    if (hold_load_record_by_id(live->record_dir, live->record->id, &cur, cur_path, sizeof(cur_path)) != 0) {
+        return false;
+    }
+    bool have = cur.has_exit_code;
+    if (have && code_out) *code_out = cur.exit_code;
+    hold_free_run_record(&cur);
+    return have;
 }
 
 static int stream_view_follow_until_exit(int fd,
@@ -836,13 +851,16 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
     if (interactive) {
         struct hold_log_viewer_follow follow_opts = {0};
         struct interactive_view_liveness live = {0};
+        live.record = &r;
+        live.record_dir = target.store.record_dir;
+        live.have_boot = hold_current_boot_id(live.boot, sizeof(live.boot));
+        enum run_state view_state = hold_eval_state(&r, live.have_boot ? live.boot : NULL);
         if (follow) {
-            live.record = &r;
-            live.have_boot = hold_current_boot_id(live.boot, sizeof(live.boot));
             follow_opts.enabled = true;
             follow_opts.is_running = interactive_view_run_is_running;
+            follow_opts.exit_code = interactive_view_exit_code;
             follow_opts.userdata = &live;
-            if (hold_eval_state(&r, live.have_boot ? live.boot : NULL) == STATE_RUNNING) {
+            if (view_state == STATE_RUNNING) {
                 lseek(fd, 0, SEEK_END);
             }
         }
@@ -851,6 +869,9 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
             .profile = r.has_alias ? r.alias : NULL,
             .command = r.cmdline,
             .log_path = r.log_path,
+            .active = view_state == STATE_RUNNING,
+            .has_exit_code = r.has_exit_code,
+            .exit_code = r.exit_code,
         };
         rc = hold_log_viewer_tty_fd(fd, target_token, &opts, follow ? &follow_opts : NULL, &viewer_context, debug_stats);
         if (rc != 0) {

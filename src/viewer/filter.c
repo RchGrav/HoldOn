@@ -109,6 +109,20 @@ static bool line_matches(const struct filter_state *state, const char *line) {
     return true;
 }
 
+static bool source_visible(const struct hold_log_filter_options *opts, off_t line_offset) {
+    if (opts->source_mask == 0 || !opts->idx_map) return true;
+    const struct hold_logidx_record *rec = hold_logidx_map_find(opts->idx_map, line_offset);
+    if (!rec) return true; /* unknown source stays visible; never fake metadata */
+    unsigned bit;
+    switch (hold_logidx_record_stream(rec->meta)) {
+        case HOLD_LOG_STREAM_STDERR: bit = HOLD_LOG_SRC_STDERR; break;
+        case HOLD_LOG_STREAM_STDIN:  bit = HOLD_LOG_SRC_STDIN; break;
+        case HOLD_LOG_STREAM_PTY:    bit = HOLD_LOG_SRC_PTY; break;
+        default:                     bit = HOLD_LOG_SRC_STDOUT; break;
+    }
+    return (opts->source_mask & bit) != 0;
+}
+
 static char *dup_line(const char *line, size_t n) {
     char *copy = malloc(n + 1);
     if (!copy) return NULL;
@@ -192,6 +206,10 @@ static int consume_line(struct hold_log_filter_result *result,
         visible_n = strlen(decoded);
     }
     result->lines_scanned++;
+    if (!source_visible(opts, line_offset)) {
+        free(decoded);
+        return 0;
+    }
     if (!line_matches(state, visible)) {
         free(decoded);
         return 0;
@@ -420,7 +438,7 @@ int hold_log_filter_backward_fd(int fd,
                 visible = decoded;
                 visible_len = strlen(decoded);
             }
-            bool matches = line_matches(&state, visible);
+            bool matches = source_visible(&opts, line_off) && line_matches(&state, visible);
             buf[line_start + line_len] = saved;
             if (matches) {
                 result->match_count++;

@@ -951,22 +951,29 @@ test_log_view_follow_dynamic_tty_filter() {
 test_log_viewer_integrated_chrome_help_and_info() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id rc
-  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo "chrome one"; echo "chrome two"; sleep 0.1' 2>&1) || return 1
+  local out id rc short
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo "chrome one"; echo "chrome two"; echo "chrome err" >&2; sleep 0.1' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
+  short=$(printf '%s' "$id" | cut -c1-12)
   sleep 0.3
   set +e
-  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x08x\x09xq"); out.flush(); time.sleep(0.1)' |
-    script -qfec "stty rows 10 cols 90; $HOLD_BIN logs $id --interactive" /dev/null >"$TEST_ROOT/viewer-chrome.out" 2>"$TEST_ROOT/viewer-chrome.err"
+  # Ctrl-T cycles timestamps to time; Ctrl-Y shows the source column; Ctrl-H
+  # opens the footer help; the next key dismisses it; q quits.
+  python3 -c 'import sys,time; o=sys.stdout.buffer; o.write(b"\x14\x19"); o.flush(); time.sleep(0.2); o.write(b"\x08"); o.flush(); time.sleep(0.2); o.write(b"q"); o.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 10 cols 80; $HOLD_BIN logs $id --interactive" /dev/null >"$TEST_ROOT/viewer-chrome.out" 2>"$TEST_ROOT/viewer-chrome.err"
   rc=$?
   set -e
   [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/viewer-chrome.err" >&2; return 1; }
-  grep -q 'HELP Ctrl-H' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
-  grep -q 'Space exclude similar' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
-  grep -q 'Process information' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
-  grep -q "runid: $id" "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
-  grep -q 'PRESS ANY KEY TO EXIT' "$TEST_ROOT/viewer-chrome.out" || { cat "$TEST_ROOT/viewer-chrome.out" >&2; return 1; }
+  local plain="$TEST_ROOT/viewer-chrome.plain"
+  python3 -c 'import re,sys; raw=open(sys.argv[1],"rb").read().decode("utf-8","ignore"); sys.stdout.write(re.sub(r"\x1b\[[0-9;?]*[A-Za-z~]","",raw).replace("\r",""))' "$TEST_ROOT/viewer-chrome.out" >"$plain"
+  grep -q "hold logs: $short" "$plain" || { cat "$plain" >&2; return 1; }
+  grep -q 'VIEWING EXITED (0)' "$plain" || { cat "$plain" >&2; return 1; }
+  grep -q 'Ctrl-H Help' "$plain" || { cat "$plain" >&2; return 1; }
+  grep -Eq 'ts:time local +src:all +wrap:off' "$plain" || { cat "$plain" >&2; return 1; }
+  grep -q 'OUT | chrome one' "$plain" || { cat "$plain" >&2; return 1; }
+  grep -q 'ERR | chrome err' "$plain" || { cat "$plain" >&2; return 1; }
+  grep -q 'Ctrl-T time' "$plain" || { cat "$plain" >&2; return 1; }
 }
 
 test_log_viewer_space_excludes_and_ctrl_r_resets_filters() {
@@ -977,15 +984,40 @@ test_log_viewer_space_excludes_and_ctrl_r_resets_filters() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.3
+  # Space excludes the selected (top) record destructively; the dissimilar line
+  # stays visible and the excluded line disappears.
   set +e
-  python3 -c 'import sys,time; sys.stdout.buffer.write(b" \x12q"); sys.stdout.flush(); time.sleep(0.1)' |
-    script -qfec "stty rows 8 cols 90; $HOLD_BIN logs $id --interactive" /dev/null >"$TEST_ROOT/viewer-example-mark.out" 2>"$TEST_ROOT/viewer-example-mark.err"
+  python3 -c 'import sys,time; sys.stdout.buffer.write(b" "); sys.stdout.flush(); time.sleep(0.3); sys.stdout.buffer.write(b"q"); sys.stdout.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 8 cols 90; $HOLD_BIN logs $id --interactive" /dev/null >"$TEST_ROOT/viewer-exclude.out" 2>"$TEST_ROOT/viewer-exclude.err"
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/viewer-example-mark.err" >&2; return 1; }
-  grep -q 'excluding similar' "$TEST_ROOT/viewer-example-mark.out" || { cat "$TEST_ROOT/viewer-example-mark.out" >&2; return 1; }
-  grep -q 'Ctrl-R reset' "$TEST_ROOT/viewer-example-mark.out" || { cat "$TEST_ROOT/viewer-example-mark.out" >&2; return 1; }
-  grep -q 'unrelated payment ok' "$TEST_ROOT/viewer-example-mark.out" || { cat "$TEST_ROOT/viewer-example-mark.out" >&2; return 1; }
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/viewer-exclude.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/viewer-exclude.out" <<'PY' || { cat "$TEST_ROOT/viewer-exclude.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+final = 'hold logs:' + plain.split('hold logs:')[-1]
+if 'unrelated payment ok' not in final:
+    raise SystemExit('dissimilar line was not kept visible after exclude')
+if 'example database timeout' in final:
+    raise SystemExit('excluded line remained visible in the final frame')
+PY
+  # Ctrl-R restores every excluded record.
+  set +e
+  python3 -c 'import sys,time; sys.stdout.buffer.write(b" "); sys.stdout.flush(); time.sleep(0.2); sys.stdout.buffer.write(b"\x12"); sys.stdout.flush(); time.sleep(0.2); sys.stdout.buffer.write(b"q"); sys.stdout.flush(); time.sleep(0.1)' |
+    script -qfec "stty rows 8 cols 90; $HOLD_BIN logs $id --interactive" /dev/null >"$TEST_ROOT/viewer-reset.out" 2>"$TEST_ROOT/viewer-reset.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/viewer-reset.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/viewer-reset.out" <<'PY' || { cat "$TEST_ROOT/viewer-reset.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+final = 'hold logs:' + plain.split('hold logs:')[-1]
+for wanted in ('example database timeout', 'unrelated payment ok'):
+    if wanted not in final:
+        raise SystemExit(f'Ctrl-R did not restore {wanted!r} in the final frame')
+PY
 }
 
 test_log_view_selection_uses_cached_rows() {
@@ -3857,7 +3889,7 @@ run_test "internal viewer harness seeds literal and similarity filters" test_log
 run_test "internal viewer follows live logs through filter engine" test_log_view_follow_filters_live_output
 run_test "logs follow opens dynamic TTY filter" test_hold_logs_follow_opens_dynamic_tty_filter
 run_test "internal viewer follow filters dynamically from typed TTY input" test_log_view_follow_dynamic_tty_filter
-run_test "log viewer shows integrated chrome help and info overlays" test_log_viewer_integrated_chrome_help_and_info
+run_test "log viewer renders polished header footer timestamp and source chrome" test_log_viewer_integrated_chrome_help_and_info
 run_test "log viewer space excludes similar lines and Ctrl-R resets filters" test_log_viewer_space_excludes_and_ctrl_r_resets_filters
 run_test "internal viewer selection movement uses cached filter rows" test_log_view_selection_uses_cached_rows
 run_test "internal viewer follow pages older and newer filtered windows" test_log_view_follow_pages_filtered_windows

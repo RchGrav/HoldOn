@@ -6,6 +6,16 @@
 
 #define HOLD_LOG_VIEWER_MAX_EXAMPLES 8
 
+/* Source visibility bits. A mask of 0 means "all sources visible" so
+ * zero-initialised options keep every record (no metadata lookup needed). */
+#define HOLD_LOG_SRC_STDOUT 0x1u
+#define HOLD_LOG_SRC_STDERR 0x2u
+#define HOLD_LOG_SRC_STDIN 0x4u
+#define HOLD_LOG_SRC_PTY 0x8u
+#define HOLD_LOG_SRC_ALL 0u
+
+struct hold_logidx_map; /* from hold/core.h */
+
 struct hold_log_filter_options {
     const char *literal;
     const char *similar_examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
@@ -17,6 +27,11 @@ struct hold_log_filter_options {
     size_t match_ring_capacity;
     size_t max_results;
     size_t scan_byte_budget;
+    /* Optional sidecar-backed source filtering. When source_mask is nonzero,
+     * records whose stream bit is clear are skipped using idx_map metadata
+     * keyed by byte offset; records with no index entry are kept. */
+    const struct hold_logidx_map *idx_map;
+    unsigned source_mask;
 };
 
 struct hold_log_filter_result {
@@ -37,9 +52,14 @@ struct hold_log_filter_result {
 
 typedef bool (*hold_log_viewer_running_fn)(void *userdata);
 
+/* Fills *code_out with the exit status of a call that has finished; returns
+ * false while the call is still running or the status is unknown. */
+typedef bool (*hold_log_viewer_exit_code_fn)(void *userdata, int *code_out);
+
 struct hold_log_viewer_follow {
     bool enabled;
     hold_log_viewer_running_fn is_running;
+    hold_log_viewer_exit_code_fn exit_code;
     void *userdata;
 };
 
@@ -48,6 +68,9 @@ struct hold_log_viewer_context {
     const char *profile;
     const char *command;
     const char *log_path;
+    bool active;         /* process running when the viewer opened */
+    bool has_exit_code;
+    int exit_code;
 };
 
 void hold_log_filter_options_init(struct hold_log_filter_options *opts);

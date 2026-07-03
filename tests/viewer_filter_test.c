@@ -320,8 +320,125 @@ static void test_backward_sparse_window_reports_partial(void) {
     close(fd);
 }
 
+/* Writes a real raw log plus HLOGIDX sidecar in a temp dir and returns the
+ * open raw-log fd (seeked to start); *dir_out holds the directory to clean up. */
+static int build_indexed_log(char *log_path_out, size_t log_path_cap, char *dir_out) {
+    strcpy(dir_out, "/tmp/hold-idx-map-test.XXXXXX");
+    if (!mkdtemp(dir_out)) {
+        perror("mkdtemp");
+        exit(2);
+    }
+    if (hold_checked_snprintf(log_path_out, log_path_cap, "%s/run.log", dir_out) != 0) exit(2);
+    int logfd = open(log_path_out, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (logfd < 0) {
+        perror("open log");
+        exit(2);
+    }
+    int idxfd = hold_open_log_index_fd(log_path_out, logfd);
+    if (idxfd < 0) {
+        perror("open idx");
+        exit(2);
+    }
+    /* offset 0: stdout "out one\n"; offset 8: stderr "err two\n". */
+    (void)hold_write_indexed_log_bytes_fd(logfd, idxfd, "stdout", "out one\n", 8);
+    (void)hold_write_indexed_log_bytes_fd(logfd, idxfd, "stderr", "err two\n", 8);
+    close(idxfd);
+    rewind_or_die(logfd);
+    return logfd;
+}
+
+static void remove_dir(const char *dir) {
+    char cmd[HOLD_PATH_MAX + 16];
+    if (hold_checked_snprintf(cmd, sizeof(cmd), "rm -rf %s", dir) == 0) {
+        if (system(cmd) != 0) { /* best effort cleanup */ }
+    }
+}
+
+static void test_logidx_map_reads_timestamps_and_streams(void) {
+    char dir[HOLD_PATH_MAX];
+    char log_path[HOLD_PATH_MAX];
+    int logfd = build_indexed_log(log_path, sizeof(log_path), dir);
+
+    struct hold_logidx_map map;
+    EXPECT_TRUE("sidecar map loads", hold_logidx_map_load(log_path, &map) == 0);
+    EXPECT_TRUE("sidecar map has two records", map.count == 2);
+    EXPECT_TRUE("sidecar base timestamp is set", map.base_unix_us > 0);
+
+    const struct hold_logidx_record *r0 = hold_logidx_map_find(&map, 0);
+    const struct hold_logidx_record *r1 = hold_logidx_map_find(&map, 8);
+    EXPECT_TRUE("record at offset 0 found", r0 != NULL);
+    EXPECT_TRUE("record at offset 8 found", r1 != NULL);
+    EXPECT_TRUE("missing offset returns NULL", hold_logidx_map_find(&map, 4) == NULL);
+    if (r0) EXPECT_TRUE("offset 0 is stdout", hold_logidx_record_stream(r0->meta) == HOLD_LOG_STREAM_STDOUT);
+    if (r1) EXPECT_TRUE("offset 8 is stderr", hold_logidx_record_stream(r1->meta) == HOLD_LOG_STREAM_STDERR);
+    if (r0) EXPECT_TRUE("record length is 8", r0->len == 8);
+
+    hold_logidx_map_free(&map);
+    close(logfd);
+    remove_dir(dir);
+}
+
+static void test_logidx_time_formatting(void) {
+    /* 2021-01-01 00:00:00 UTC */
+    uint64_t ts_us = 1609459200ULL * 1000000ULL;
+    char buf[64];
+    EXPECT_TRUE("ts none writes nothing",
+                hold_logidx_format_time(ts_us, HOLD_TS_NONE, false, buf, sizeof(buf)) == 0 && buf[0] == '\0');
+    hold_logidx_format_time(ts_us, HOLD_TS_TIME, true, buf, sizeof(buf));
+    EXPECT_TRUE("time UTC prefix", strcmp(buf, "00:00:00Z ") == 0);
+    hold_logidx_format_time(ts_us, HOLD_TS_DATE, true, buf, sizeof(buf));
+    EXPECT_TRUE("date UTC prefix", strcmp(buf, "2021-01-01 00:00:00Z ") == 0);
+    hold_logidx_format_time(ts_us, HOLD_TS_TIME, false, buf, sizeof(buf));
+    EXPECT_TRUE("time local has no Z and trailing space",
+                strlen(buf) == 9 && buf[8] == ' ' && strchr(buf, 'Z') == NULL);
+}
+
+static void test_source_mask_filters_by_stream(void) {
+    char dir[HOLD_PATH_MAX];
+    char log_path[HOLD_PATH_MAX];
+    int logfd = build_indexed_log(log_path, sizeof(log_path), dir);
+
+    struct hold_logidx_map map;
+    EXPECT_TRUE("mask test loads map", hold_logidx_map_load(log_path, &map) == 0);
+
+    struct hold_log_filter_options opts;
+    struct hold_log_filter_result result;
+
+    hold_log_filter_options_init(&opts);
+    opts.idx_map = &map;
+    opts.source_mask = HOLD_LOG_SRC_STDOUT;
+    rewind_or_die(logfd);
+    EXPECT_TRUE("stdout-only filter runs", hold_log_filter_fd(logfd, &opts, &result) == 0);
+    EXPECT_TRUE("stdout-only keeps one line", result.line_count == 1);
+    EXPECT_TRUE("stdout-only keeps the stdout line", result.line_count == 1 && strstr(result.lines[0], "out one"));
+    hold_log_filter_result_free(&result);
+
+    hold_log_filter_options_init(&opts);
+    opts.idx_map = &map;
+    opts.source_mask = HOLD_LOG_SRC_STDERR;
+    rewind_or_die(logfd);
+    EXPECT_TRUE("stderr-only filter runs", hold_log_filter_fd(logfd, &opts, &result) == 0);
+    EXPECT_TRUE("stderr-only keeps the stderr line", result.line_count == 1 && strstr(result.lines[0], "err two"));
+    hold_log_filter_result_free(&result);
+
+    hold_log_filter_options_init(&opts);
+    opts.idx_map = &map;
+    opts.source_mask = HOLD_LOG_SRC_ALL;
+    rewind_or_die(logfd);
+    EXPECT_TRUE("mask-all filter runs", hold_log_filter_fd(logfd, &opts, &result) == 0);
+    EXPECT_TRUE("mask-all keeps both lines", result.line_count == 2);
+    hold_log_filter_result_free(&result);
+
+    hold_logidx_map_free(&map);
+    close(logfd);
+    remove_dir(dir);
+}
+
 int main(void) {
     test_log_index_rejects_symlink();
+    test_logidx_map_reads_timestamps_and_streams();
+    test_logidx_time_formatting();
+    test_source_mask_filters_by_stream();
     test_json_rejects_raw_control_bytes();
     test_path_empty_components_do_not_resolve_cwd();
     test_literal_filter();

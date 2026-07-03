@@ -206,6 +206,117 @@ int hold_open_log_index_fd(const char *log_path, int raw_log_fd) {
     return fd;
 }
 
+enum hold_log_stream hold_logidx_record_stream(uint16_t meta) {
+    return (meta & HOLD_LOGIDX_META_STREAM_STDERR) ? HOLD_LOG_STREAM_STDERR : HOLD_LOG_STREAM_STDOUT;
+}
+
+size_t hold_logidx_format_time(uint64_t ts_us, enum hold_ts_mode mode, bool utc, char *out, size_t n) {
+    if (!out || n == 0) return 0;
+    out[0] = '\0';
+    if (mode == HOLD_TS_NONE) return 0;
+    time_t secs = (time_t)(ts_us / 1000000ULL);
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    if (utc) {
+        if (!gmtime_r(&secs, &tm)) return 0;
+    } else if (!localtime_r(&secs, &tm)) {
+        return 0;
+    }
+    const char *fmt;
+    if (mode == HOLD_TS_DATE) {
+        fmt = utc ? "%Y-%m-%d %H:%M:%SZ " : "%Y-%m-%d %H:%M:%S ";
+    } else {
+        fmt = utc ? "%H:%M:%SZ " : "%H:%M:%S ";
+    }
+    return strftime(out, n, fmt, &tm);
+}
+
+void hold_logidx_map_free(struct hold_logidx_map *m) {
+    if (!m) return;
+    free(m->records);
+    m->records = NULL;
+    m->count = 0;
+    m->base_unix_us = 0;
+}
+
+int hold_logidx_map_load(const char *log_path, struct hold_logidx_map *out) {
+    if (!log_path || !out) {
+        errno = EINVAL;
+        return -1;
+    }
+    memset(out, 0, sizeof(*out));
+    char idx_path[HOLD_PATH_MAX];
+    if (hold_log_idx_path(log_path, idx_path, sizeof(idx_path)) != 0) return -1;
+    int fd = open(idx_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        int saved = errno ? errno : EINVAL;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    struct hold_logidx_header_mem h;
+    if (st.st_size < (off_t)HOLD_LOGIDX_HEADER_SIZE || read_logidx_header(fd, &h) != 0) {
+        close(fd);
+        errno = EINVAL;
+        return -1;
+    }
+    /* Crash-recovery rule: trust the smaller of the header count and the count
+     * physically present in the file. */
+    uint64_t physical = 0;
+    if ((uint64_t)st.st_size > HOLD_LOGIDX_HEADER_SIZE) {
+        physical = ((uint64_t)st.st_size - HOLD_LOGIDX_HEADER_SIZE) / HOLD_LOGIDX_ENTRY_SIZE;
+    }
+    uint64_t count = h.entry_count < physical ? h.entry_count : physical;
+    struct hold_logidx_record *recs = NULL;
+    if (count > 0) {
+        recs = calloc((size_t)count, sizeof(*recs));
+        if (!recs) {
+            close(fd);
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+    size_t got = 0;
+    for (uint64_t i = 0; i < count; i++) {
+        unsigned char buf[HOLD_LOGIDX_ENTRY_SIZE];
+        off_t eoff = (off_t)HOLD_LOGIDX_HEADER_SIZE + (off_t)(i * HOLD_LOGIDX_ENTRY_SIZE);
+        ssize_t nr;
+        do {
+            nr = pread(fd, buf, sizeof(buf), eoff);
+        } while (nr < 0 && errno == EINTR);
+        if (nr != (ssize_t)sizeof(buf)) break;
+        uint64_t pos_len = read_u64_le_at(buf);
+        uint64_t time_meta = read_u64_le_at(buf + 8);
+        recs[got].offset = (off_t)(pos_len & HOLD_LOGIDX_OFFSET_MASK);
+        recs[got].len = (uint32_t)(((pos_len >> HOLD_LOGIDX_OFFSET_BITS) & HOLD_LOGIDX_LEN_MASK) + 1U);
+        recs[got].ts_us = h.base_unix_us + (time_meta & HOLD_LOGIDX_TIME_MASK);
+        recs[got].meta = (uint16_t)((time_meta >> HOLD_LOGIDX_TIME_BITS) & 0xffffu);
+        got++;
+    }
+    close(fd);
+    out->records = recs;
+    out->count = got;
+    out->base_unix_us = h.base_unix_us;
+    return 0;
+}
+
+const struct hold_logidx_record *hold_logidx_map_find(const struct hold_logidx_map *m, off_t offset) {
+    if (!m || m->count == 0) return NULL;
+    size_t lo = 0, hi = m->count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (m->records[mid].offset == offset) return &m->records[mid];
+        if (m->records[mid].offset < offset) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return NULL;
+}
+
 static int append_logidx_entry(int idx_fd, uint64_t raw_offset, uint32_t len, uint64_t ts_us, uint32_t meta, uint64_t raw_size_bytes, uint64_t raw_mtime_ns) {
     if (len == 0) return 0;
     struct hold_logidx_header_mem h;
