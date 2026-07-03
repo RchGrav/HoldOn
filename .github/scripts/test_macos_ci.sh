@@ -45,7 +45,7 @@ run_native_smoke() {
     fail "macOS smoke inspect did not preserve the call name"
   }
   env HOME="$home" ./hold list -a >"$tmp/list.out"
-  grep -Eq '^CALL ID[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES' "$tmp/list.out" || {
+  grep -Eq '^CALL ID[[:space:]]+USER[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES' "$tmp/list.out" || {
     cat "$tmp/list.out" >&2
     fail "macOS smoke call table header is wrong"
   }
