@@ -3,6 +3,7 @@
 #include "hold/console.h"
 #include "hold/core.h"
 #include "hold/store.h"
+#include "hold/platform.h"
 #include "hold/console_internal.h"
 
 #include <poll.h>
@@ -37,6 +38,20 @@ static bool authorize_console_client(int client,
                                      bool have_allowed_peer_uid,
                                      uid_t allowed_peer_uid);
 static int set_fd_nonblocking(int fd);
+static void broker_serve(const struct hold_store *store,
+                         const char *run_id,
+                         const char *sock_path,
+                         int listener,
+                         int master,
+                         int logfd,
+                         int logidxfd,
+                         uid_t owner_uid,
+                         bool have_allowed_peer_uid,
+                         uid_t allowed_peer_uid,
+                         pid_t child_target,
+                         pid_t adopted_pgid,
+                         pid_t adopted_sid,
+                         pid_t hup_pid);
 
 void hold_handle_console_sigwinch(int signo) {
     (void)signo;
@@ -235,6 +250,46 @@ void hold_run_console_broker(int parent_pipe,
     close(parent_pipe);
     parent_pipe = -1;
 
+    broker_serve(store, run_id, sock_path, listener, master, logfd, logidxfd,
+                 owner_uid, have_allowed_peer_uid, allowed_peer_uid,
+                 target, 0, 0, -1);
+}
+
+void hold_run_console_broker_adopted(const struct hold_store *store,
+                                       const char *run_id,
+                                       const char *sock_path,
+                                       int listener,
+                                       int master,
+                                       int logfd,
+                                       int logidxfd,
+                                       uid_t owner_uid,
+                                       pid_t adopted_pgid,
+                                       pid_t adopted_sid,
+                                       pid_t hup_pid) {
+    broker_serve(store, run_id, sock_path, listener, master, logfd, logidxfd,
+                 owner_uid, false, 0, -1, adopted_pgid, adopted_sid, hup_pid);
+}
+
+/* Shared serve loop. child_target > 0 means the target is our child (waitpid
+ * lifecycle, killed on cleanup); otherwise the target is an adopted foreground
+ * group we must never kill, whose exit shows as PTY EOF or dead group/session. */
+static void broker_serve(const struct hold_store *store,
+                         const char *run_id,
+                         const char *sock_path,
+                         int listener,
+                         int master,
+                         int logfd,
+                         int logidxfd,
+                         uid_t owner_uid,
+                         bool have_allowed_peer_uid,
+                         uid_t allowed_peer_uid,
+                         pid_t child_target,
+                         pid_t adopted_pgid,
+                         pid_t adopted_sid,
+                         pid_t hup_pid) {
+    pid_t target = child_target;
+    bool adopted = child_target <= 0;
+
     struct sigaction pipe_ign, old_pipe;
     bool have_old_pipe = false;
     memset(&pipe_ign, 0, sizeof(pipe_ign));
@@ -253,7 +308,7 @@ void hold_run_console_broker(int parent_pipe,
     bool target_done = false;
     int target_status = 0;
     while (1) {
-        if (!target_done) {
+        if (!adopted && !target_done) {
             int st = 0;
             pid_t got = waitpid(target, &st, WNOHANG);
             if (got == target) {
@@ -264,6 +319,10 @@ void hold_run_console_broker(int parent_pipe,
                 }
                 target = -1;
             }
+        }
+        if (adopted && !target_done && adopted_pgid > 1 && adopted_sid > 0 &&
+            hold_group_session_liveness(adopted_pgid, adopted_sid) != GROUP_LIVE) {
+            target_done = true;
         }
 
         struct pollfd pfds[3];
@@ -359,7 +418,7 @@ void hold_run_console_broker(int parent_pipe,
         }
     }
 
-    if (!target_done && target > 0) {
+    if (!adopted && !target_done && target > 0) {
         int st = 0;
         pid_t got;
         do {
@@ -376,11 +435,14 @@ void hold_run_console_broker(int parent_pipe,
             target = -1;
         }
     }
+    if (adopted && hup_pid > 0) {
+        kill(hup_pid, SIGHUP);
+    }
 
     if (client >= 0) close(client);
     hold_console_replay_free(&replay);
     if (have_old_pipe) {
         sigaction(SIGPIPE, &old_pipe, NULL);
     }
-    broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, 0);
+    broker_cleanup_and_exit(-1, sock_path, listener, master, -1, logfd, logidxfd, adopted ? -1 : target, 0);
 }

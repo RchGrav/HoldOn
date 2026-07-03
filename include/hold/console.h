@@ -30,4 +30,20 @@ void hold_run_console_broker(int parent_pipe,
                         unsigned short init_cols);
 int hold_run_native_console(const char *sock_path);
 
+/* Serve an already-running PTY (hold shell adoption): the target is not the
+ * broker's child, must never be killed by broker cleanup, and its exit is
+ * detected via PTY EOF or group/session liveness. All fds are opened by the
+ * caller before forking so this path has no failure handshake. */
+void hold_run_console_broker_adopted(const struct hold_store *store,
+                                       const char *run_id,
+                                       const char *sock_path,
+                                       int listener,
+                                       int master,
+                                       int logfd,
+                                       int logidxfd,
+                                       uid_t owner_uid,
+                                       pid_t adopted_pgid,
+                                       pid_t adopted_sid,
+                                       pid_t hup_pid);
+
 #endif /* HOLD_CONSOLE_H */

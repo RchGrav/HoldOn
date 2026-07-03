@@ -103,6 +103,10 @@ int hold_cmd_prune_action(const struct hold_invocation *inv,
                             bool all);
 int hold_cmd_shell_action(const struct hold_invocation *inv,
                             const struct hold_store *store);
+int hold_generate_run_name_for_id(const struct hold_store *store,
+                                    const char *id,
+                                    const char *requested,
+                                    char out[ALIAS_MAX_LEN + 1]);
 int hold_cmd_captive_action(const struct hold_invocation *inv,
                               const struct hold_store *user_store,
                               const struct hold_store *system_store,

@@ -4,6 +4,8 @@
 #include "hold/core.h"
 #include "hold/store.h"
 #include "hold/platform.h"
+#include "hold/console.h"
+#include "hold/console_internal.h"
 
 struct shell_raw_terminal {
     struct termios original;
@@ -446,14 +448,58 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
         return 3;
     }
 
+    /* Prefer serving the adopted PTY through a console broker so the run stays
+     * reattachable; every fd is opened here so the child has no failure path.
+     * If broker setup fails, fall back to the log-only capture. */
+    char console_sock[HOLD_PATH_MAX];
+    console_sock[0] = '\0';
+    int console_listener = -1, console_logfd = -1, console_logidxfd = -1;
+    if (hold_format_console_sock_path(store, id, console_sock, sizeof(console_sock)) == 0) {
+        console_listener = hold_make_console_listener(console_sock);
+        if (console_listener < 0) {
+            console_sock[0] = '\0';
+        } else {
+            console_logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
+            console_logidxfd = console_logfd >= 0 ? hold_open_log_index_fd(log_path, console_logfd) : -1;
+            if (console_logfd < 0) {
+                close(console_listener);
+                console_listener = -1;
+                unlink(console_sock);
+                console_sock[0] = '\0';
+            }
+        }
+    } else {
+        console_sock[0] = '\0';
+    }
+
     pid_t logger = fork();
     if (logger < 0) {
+        if (console_listener >= 0) {
+            close(console_listener);
+            if (console_logidxfd >= 0) close(console_logidxfd);
+            if (console_logfd >= 0) close(console_logfd);
+            unlink(console_sock);
+        }
         hold_free_argv_alloc(normalized_argv, argc);
         hold_free_argv_alloc(observed_argv, argc);
         return 3;
     }
     if (logger == 0) {
+        if (console_listener >= 0) {
+            signal(SIGHUP, SIG_IGN);
+            shell_close_stdio_to_devnull();
+            hold_run_console_broker_adopted(store, id, console_sock,
+                                            console_listener, master,
+                                            console_logfd, console_logidxfd,
+                                            geteuid(), fg_pgid, adopted_sid, shell_pid);
+            _exit(0);
+        }
         shell_background_logger(master, log_path, shell_pid, fg_pgid, adopted_sid);
+    }
+    if (console_listener >= 0) {
+        close(console_listener);
+        if (console_logidxfd >= 0) close(console_logidxfd);
+        if (console_logfd >= 0) close(console_logfd);
     }
 
     struct hold_run_record r;
@@ -461,6 +507,10 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
     r.version = 1;
     snprintf(r.id, sizeof(r.id), "%s", id);
     snprintf(r.run_id, sizeof(r.run_id), "%s", id);
+    /* Adopted runs are addressable like launched ones: they get a generated name. */
+    if (hold_generate_run_name_for_id(store, id, NULL, r.name) == 0 && r.name[0]) {
+        r.has_name = true;
+    }
     r.pid = adopted_pid;
     r.pgid = fg_pgid;
     r.sid = adopted_sid;
@@ -476,6 +526,10 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
     r.gid = getegid();
     r.has_log = true;
     snprintf(r.log_path, sizeof(r.log_path), "%s", log_path);
+    if (console_sock[0]) {
+        r.has_console = true;
+        snprintf(r.console_sock, sizeof(r.console_sock), "%s", console_sock);
+    }
     r.has_boot = hold_current_boot_id(r.boot_id, sizeof(r.boot_id));
     hold_read_proc_stat_tokens(adopted_pid, NULL, &r.proc_starttime_ticks);
     hold_read_proc_exe(adopted_pid, &r.exe_dev, &r.exe_ino);
