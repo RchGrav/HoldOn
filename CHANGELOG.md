@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.1 - On Hold
+
+The repository is renamed to `RchGrav/onhold` to match the tool. No code
+changes.
+
+### Changed
+
+- README, install documentation, and the installer's default repository
+  coordinate point at `RchGrav/onhold`. Old `RchGrav/sigmund` URLs keep
+  working through GitHub's rename redirect.
+
 ## 0.5.0 - Hold On
 
 `nohup` says no hang-up; Hold says hold on. This release re-founds the tool
