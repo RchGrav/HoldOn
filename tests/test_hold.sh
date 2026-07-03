@@ -506,6 +506,24 @@ record_sid() {
   sed -n 's/.*"sid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$record" | head -n1
 }
 
+record_name() {
+  local id="$1" store="${2:-$HOME/.local/state/hold}" record
+  record=$(record_path "$id" "$store") || return 1
+  sed -n 's/.*"name": "\([^"]*\)".*/\1/p' "$record" | head -n1
+}
+
+# Poll until a call's record reports the exited state, so purge/redial (which
+# require an ended call) do not race the supervisor's finish write.
+record_ended_soon() {
+  local id="$1" store="${2:-$HOME/.local/state/hold}" record tries
+  for tries in $(seq 1 60); do
+    record=$(record_path "$id" "$store") || return 1
+    grep -q '"state": "exited"' "$record" && return 0
+    sleep 0.05
+  done
+  return 1
+}
+
 
 pid_dead_enough() {
   local p="$1" st
@@ -2212,6 +2230,139 @@ test_console_can_reattach_after_detach() {
   }
 }
 
+test_save_marks_record_and_is_idempotent() {
+  local id name out
+  id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  name=$(record_name "$id") || return 1
+  [ -n "$name" ] || { echo "run has no generated name" >&2; return 1; }
+  # First save: stdout empty, stderr confirms, record flagged.
+  out=$("$HOLD_BIN" save "$id" 2>"$TEST_ROOT/save1.err") || { echo "save rc nonzero" >&2; cat "$TEST_ROOT/save1.err" >&2; return 1; }
+  [ -z "$out" ] || { echo "save wrote to stdout: [$out]" >&2; return 1; }
+  grep -qF "hold: saved $id ($name)" "$TEST_ROOT/save1.err" || { cat "$TEST_ROOT/save1.err" >&2; return 1; }
+  grep -q '"Saved": true' "$(record_path "$id")" || { echo "record not marked saved" >&2; return 1; }
+  # Second save is idempotent: still exit 0, same note, no stdout.
+  out=$("$HOLD_BIN" save "$name" 2>"$TEST_ROOT/save2.err") || { echo "idempotent save rc nonzero" >&2; return 1; }
+  [ -z "$out" ] || { echo "idempotent save wrote to stdout: [$out]" >&2; return 1; }
+  grep -qF "hold: saved $id ($name)" "$TEST_ROOT/save2.err" || { cat "$TEST_ROOT/save2.err" >&2; return 1; }
+}
+
+test_purge_sweep_skips_saved() {
+  local saved_id plain_id
+  saved_id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
+  plain_id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
+  [ -n "$saved_id" ] && [ -n "$plain_id" ] || return 1
+  "$HOLD_BIN" save "$saved_id" >/dev/null 2>&1 || return 1
+  record_ended_soon "$saved_id" || return 1
+  record_ended_soon "$plain_id" || return 1
+  "$HOLD_BIN" purge >/dev/null 2>&1 || return 1
+  record_exists "$saved_id" || { echo "sweeping purge removed a saved call" >&2; return 1; }
+  ! record_exists "$plain_id" || { echo "sweeping purge left an unsaved ended call" >&2; return 1; }
+  # -a (include stale) must also skip the saved call.
+  "$HOLD_BIN" purge -a >/dev/null 2>&1 || return 1
+  record_exists "$saved_id" || { echo "purge -a removed a saved call" >&2; return 1; }
+}
+
+test_purge_targeted_refuses_saved_exact_wording() {
+  local id name pfx rc
+  id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  name=$(record_name "$id") || return 1
+  "$HOLD_BIN" save "$id" >/dev/null 2>&1 || return 1
+  record_ended_soon "$id" || return 1
+  # Refusal by name: line 1 identifies by name, line 2 echoes the typed token.
+  set +e; "$HOLD_BIN" purge "$name" >"$TEST_ROOT/refuse.out" 2>"$TEST_ROOT/refuse.err"; rc=$?; set -e
+  [ "$rc" -eq 2 ] || { echo "targeted refusal rc=$rc (want 2)" >&2; cat "$TEST_ROOT/refuse.err" >&2; return 1; }
+  [ ! -s "$TEST_ROOT/refuse.out" ] || { echo "refusal wrote to stdout" >&2; return 1; }
+  printf "hold: '%s' is saved — purging a saved call requires --force\n  hold purge %s --force\n" "$name" "$name" >"$TEST_ROOT/refuse.want"
+  diff -u "$TEST_ROOT/refuse.want" "$TEST_ROOT/refuse.err" || { echo "refusal wording mismatch (by name)" >&2; return 1; }
+  # Refusal by id prefix: line 2 echoes exactly the prefix the user typed.
+  pfx=$(printf '%s' "$id" | cut -c1-6)
+  set +e; "$HOLD_BIN" purge "$pfx" 2>"$TEST_ROOT/refuse2.err"; rc=$?; set -e
+  [ "$rc" -eq 2 ] || { echo "prefix refusal rc=$rc (want 2)" >&2; return 1; }
+  printf "hold: '%s' is saved — purging a saved call requires --force\n  hold purge %s --force\n" "$name" "$pfx" >"$TEST_ROOT/refuse2.want"
+  diff -u "$TEST_ROOT/refuse2.want" "$TEST_ROOT/refuse2.err" || { echo "refusal wording mismatch (by prefix)" >&2; return 1; }
+  record_exists "$id" || { echo "refused purge still removed the call" >&2; return 1; }
+}
+
+test_purge_force_removes_saved_ended() {
+  local id name
+  id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  name=$(record_name "$id") || return 1
+  "$HOLD_BIN" save "$id" >/dev/null 2>&1 || return 1
+  record_ended_soon "$id" || return 1
+  # The copy-paste command from the refusal must succeed on an ended saved call.
+  "$HOLD_BIN" purge "$name" --force >/dev/null 2>&1 || { echo "force purge of saved ended call failed" >&2; return 1; }
+  ! record_exists "$id" || { echo "force did not remove the saved call" >&2; return 1; }
+}
+
+test_purge_force_removes_live_saved() {
+  local id name pgid
+  id=$("$HOLD_BIN" -d sleep 300 2>&1 | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  name=$(record_name "$id") || return 1
+  pgid=$(record_pgid "$id") || return 1
+  "$HOLD_BIN" save "$id" >/dev/null 2>&1 || return 1
+  # --force must end the live call and remove it despite the saved flag.
+  "$HOLD_BIN" purge "$name" --force >/dev/null 2>&1 || { echo "force purge of live saved call failed" >&2; return 1; }
+  ! record_exists "$id" || { echo "force did not remove the live saved call" >&2; return 1; }
+  pgid_terminated "$pgid" || { echo "force purge left the process group alive" >&2; return 1; }
+}
+
+test_rename_of_saved_call_keeps_protection() {
+  local id newname rc
+  id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  "$HOLD_BIN" save "$id" >/dev/null 2>&1 || return 1
+  record_ended_soon "$id" || return 1
+  "$HOLD_BIN" rename "$id" keptsafe >/dev/null 2>&1 || { echo "rename failed" >&2; return 1; }
+  grep -q '"Saved": true' "$(record_path "$id")" || { echo "rename cleared the saved flag" >&2; return 1; }
+  set +e; "$HOLD_BIN" purge keptsafe 2>"$TEST_ROOT/rename-refuse.err"; rc=$?; set -e
+  [ "$rc" -eq 2 ] || { echo "renamed saved call not protected: rc=$rc" >&2; return 1; }
+  grep -qF "hold: 'keptsafe' is saved" "$TEST_ROOT/rename-refuse.err" || { cat "$TEST_ROOT/rename-refuse.err" >&2; return 1; }
+}
+
+test_redial_honors_recorded_foreground_mode() {
+  local out
+  "$HOLD_BIN" --name fgredial -- /bin/sh -c 'echo fg-redial-hit' >/dev/null 2>&1 || return 1
+  # Foreground recipe: redial streams the output and prints no id of its own.
+  out=$("$HOLD_BIN" fgredial 2>/dev/null) || return 1
+  printf '%s\n' "$out" | grep -q 'fg-redial-hit' || { echo "foreground redial did not stream output: [$out]" >&2; return 1; }
+  ! printf '%s\n' "$out" | grep -qE '^[0-9a-f]{64}$' || { echo "foreground redial printed a detached id" >&2; return 1; }
+  # An explicit -d on the redial overrides the recipe and detaches.
+  out=$("$HOLD_BIN" -d fgredial 2>/dev/null) || return 1
+  printf '%s\n' "$out" | grep -qE '^[0-9a-f]{64}$' || { echo "-d override did not detach: [$out]" >&2; return 1; }
+}
+
+test_redial_honors_recorded_detached_mode() {
+  local id out
+  id=$("$HOLD_BIN" -d --name dredial /bin/sh -c 'echo d-redial; sleep 0.1' 2>&1 | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  record_ended_soon "$id" || return 1
+  # Detached recipe: bare redial detaches and prints the 64-hex id.
+  out=$("$HOLD_BIN" dredial 2>/dev/null) || return 1
+  printf '%s\n' "$out" | grep -qE '^[0-9a-f]{64}$' || { echo "detached redial did not print a bare id: [$out]" >&2; return 1; }
+}
+
+test_redial_honors_recorded_console_mode() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  local sm id out
+  script -qec "$HOLD_BIN -it --name itredial /bin/sh -c 'echo it-live-hit; sleep 0.4'" /dev/null >/dev/null 2>&1 || true
+  sm=$("$HOLD_BIN" inspect itredial 2>/dev/null | sed -n 's/.*"SessionMode": "\([a-z]*\)".*/\1/p' | head -n1)
+  [ "$sm" = "console" ] || { echo "itredial SessionMode=$sm (want console)" >&2; return 1; }
+  id=$("$HOLD_BIN" inspect itredial 2>/dev/null | sed -n 's/.*"id": "\([0-9a-f]*\)".*/\1/p' | head -n1)
+  [ -n "$id" ] || return 1
+  record_ended_soon "$id" || return 1
+  # Console recipe: bare redial replays on a PTY (attaches) rather than detaching.
+  out=$(script -qec "$HOLD_BIN itredial" /dev/null 2>&1) || true
+  printf '%s\n' "$out" | grep -q 'it-live-hit' || { printf '%s\n' "$out" >&2; echo "console redial did not replay on a PTY" >&2; return 1; }
+  ! printf '%s\n' "$out" | grep -qE '^[0-9a-f]{64}$' || { echo "console redial detached instead of attaching" >&2; return 1; }
+  record_ended_soon "$id" || return 1
+  sm=$("$HOLD_BIN" inspect itredial 2>/dev/null | sed -n 's/.*"SessionMode": "\([a-z]*\)".*/\1/p' | head -n1)
+  [ "$sm" = "console" ] || { echo "console redial rewrote SessionMode=$sm (want console)" >&2; return 1; }
+}
+
 test_prune_by_id() {
   local out1 out2 id1 id2 store
   out1=$("$HOLD_BIN" -d true 2>&1) || return 1
@@ -3589,6 +3740,15 @@ run_test "console socket lives in store dir, not /tmp, for long paths" test_cons
 run_test "console target runs in caller cwd (relative-bind restores cwd)" test_console_target_runs_in_caller_cwd
 run_test "prune <id> removes exactly one run record/output" test_prune_by_id
 run_test "prune all removes prunable while preserving running" test_prune_all_keeps_running
+run_test "save marks the record and is idempotent" test_save_marks_record_and_is_idempotent
+run_test "sweeping purge skips saved calls" test_purge_sweep_skips_saved
+run_test "targeted purge of a saved call refuses with exact wording" test_purge_targeted_refuses_saved_exact_wording
+run_test "purge --force removes a saved ended call" test_purge_force_removes_saved_ended
+run_test "purge --force removes a live saved call" test_purge_force_removes_live_saved
+run_test "rename of a saved call keeps purge protection" test_rename_of_saved_call_keeps_protection
+run_test "redial honors a recorded foreground recipe (and -d overrides)" test_redial_honors_recorded_foreground_mode
+run_test "redial honors a recorded detached recipe" test_redial_honors_recorded_detached_mode
+run_test "redial honors a recorded console recipe" test_redial_honors_recorded_console_mode
 run_test "transactional launch rollback on record write failure" test_transactional_record_write_failure
 run_test "raw start does not steal trailing --system" test_raw_start_does_not_steal_trailing_system
 run_test "long command appears in list, truncated with ..." test_long_command_list_truncates_instead_of_skips

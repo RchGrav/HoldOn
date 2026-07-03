@@ -654,7 +654,9 @@ static int cmd_prune_store_all(const struct hold_store *store, bool include_stal
             continue;
         }
         enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
-        if (st == STATE_EXITED || st == STATE_FAILED || (include_stale && st == STATE_STALE)) {
+        /* A sweeping purge silently skips saved calls; only a targeted
+         * purge --force removes them. */
+        if (!r.saved && (st == STATE_EXITED || st == STATE_FAILED || (include_stale && st == STATE_STALE))) {
             unlink(path);
             if (r.has_log) {
                 unlink(r.log_path);
@@ -795,9 +797,8 @@ int hold_cmd_purge_action(const struct hold_invocation *inv,
                             bool all,
                             bool force) {
     if (!target_token || strcmp(target_token, "all") == 0) {
-        /* A no-target sweep only clears already-ended calls; --force adds nothing
-         * here (mass-ending live calls needs the saved-call protection that lands
-         * with a later task). */
+        /* A no-target sweep only clears already-ended calls and silently skips
+         * saved ones; --force adds nothing here (it never mass-ends live calls). */
         const struct hold_store *store = inv->euid_root ? system_store : user_store;
         int removed = 0;
         bool include_stale = all || force || (target_token && strcmp(target_token, "all") == 0);
@@ -811,28 +812,18 @@ int hold_cmd_purge_action(const struct hold_invocation *inv,
         }
         return rc;
     }
-    /* --force on a specific target ends a live call first, then removes it.
-     * Saved-call protection (refuse without --force) arrives with a later task;
-     * this is the seam it plugs into. */
-    if (force) {
-        char *one[1] = { (char *)target_token };
-        int stop_rc = hold_cmd_signal_action(inv, user_store, system_store, "stop", 1, one,
-                                             SIGTERM, true, false, false);
-        if (stop_rc != 0) {
-            return stop_rc;
-        }
-    }
+    /* Resolve the target regardless of run state (inspect intent) so protection
+     * and --force removal apply uniformly to live and ended calls. */
     struct hold_resolved_target *targets = NULL;
     int ntargets = 0;
-    int rc = hold_resolve_action_token(inv, user_store, system_store, "prune", target_token, all, &targets, &ntargets);
+    int rc = hold_resolve_action_token(inv, user_store, system_store, "inspect", target_token, all, &targets, &ntargets);
     if (rc != 0) {
         free(targets);
         return rc;
     }
     if (ntargets == 0) {
         free(targets);
-        hold_sig_note(inv, "hold: nothing to purge\n");
-        return 0;
+        return hold_report_not_found(target_token);
     }
     for (int i = 0; i < ntargets; i++) {
         if (targets[i].requires_root) {
@@ -843,9 +834,53 @@ int hold_cmd_purge_action(const struct hold_invocation *inv,
     }
     char boot[128] = {0};
     bool have_boot = hold_current_boot_id(boot, sizeof(boot));
+    /* Saved calls are protected: a targeted purge without --force refuses and
+     * echoes the exact command the user meant, ready to copy. */
+    if (!force) {
+        for (int i = 0; i < ntargets; i++) {
+            struct hold_run_record r;
+            char rp[HOLD_PATH_MAX];
+            if (hold_load_record_by_id(targets[i].store.record_dir, targets[i].id, &r, rp, sizeof(rp)) != 0) {
+                continue;
+            }
+            bool saved = r.saved;
+            char display_id[ID_DISPLAY_HEX_LEN + 1];
+            hold_run_id_display(r.id, display_id);
+            const char *label = r.has_name ? r.name : display_id;
+            if (saved) {
+                fprintf(stderr,
+                        "hold: '%s' is saved \xe2\x80\x94 purging a saved call requires --force\n"
+                        "  hold purge %s --force\n",
+                        label, target_token);
+                hold_free_run_record(&r);
+                free(targets);
+                return 2;
+            }
+            hold_free_run_record(&r);
+        }
+    }
     int worst = 0;
     int removed_count = 0;
     for (int i = 0; i < ntargets; i++) {
+        /* --force ends a still-live call before removal; without it a live call
+         * is refused below by hold_prune_one_run. */
+        if (force) {
+            struct hold_run_record r;
+            char rp[HOLD_PATH_MAX];
+            if (hold_load_record_by_id(targets[i].store.record_dir, targets[i].id, &r, rp, sizeof(rp)) == 0) {
+                enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
+                hold_free_run_record(&r);
+                if (st == STATE_RUNNING) {
+                    char *one[1] = { targets[i].id };
+                    int stop_rc = hold_cmd_signal_action(inv, user_store, system_store, "stop", 1, one,
+                                                         SIGTERM, true, false, false);
+                    if (stop_rc != 0) {
+                        if (stop_rc > worst) worst = stop_rc;
+                        continue;
+                    }
+                }
+            }
+        }
         bool removed = false;
         rc = hold_prune_one_run(&targets[i].store, targets[i].id, have_boot ? boot : NULL, true, &removed);
         if (removed) {

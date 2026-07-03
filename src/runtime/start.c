@@ -31,6 +31,7 @@ static int restart_existing_run(const struct hold_invocation *inv,
                                 bool console_mode,
                                 bool auto_remove,
                                 bool interactive_stdin,
+                                bool explicit_session_mode,
                                 const char *restart_policy,
                                 int restart_delay_seconds,
                                 const char *id);
@@ -244,6 +245,7 @@ static int restart_existing_run(const struct hold_invocation *inv,
                                 bool console_mode,
                                 bool auto_remove,
                                 bool interactive_stdin,
+                                bool explicit_session_mode,
                                 const char *restart_policy,
                                 int restart_delay_seconds,
                                 const char *id) {
@@ -251,6 +253,14 @@ static int restart_existing_run(const struct hold_invocation *inv,
     char record_path[HOLD_PATH_MAX];
     if (hold_load_record_by_id(store->record_dir, id, &old, record_path, sizeof(record_path)) != 0) {
         return 5;
+    }
+    /* Redial honors the recipe's recorded session mode: a -it recipe reattaches,
+     * a -d recipe detaches (printing the id), a foreground recipe streams. An
+     * explicit mode flag on the redial invocation overrides the recipe. */
+    if (!explicit_session_mode) {
+        tail = !old.recipe.mode_detach;
+        console_mode = old.recipe.mode_tty;
+        interactive_stdin = old.recipe.mode_interactive;
     }
     char boot[128] = {0};
     bool have_boot = hold_current_boot_id(boot, sizeof(boot));
@@ -323,6 +333,7 @@ int hold_cmd_redial(const struct hold_invocation *inv,
                       bool console_mode,
                       bool auto_remove,
                       bool interactive_stdin,
+                      bool explicit_session_mode,
                       const char *restart_policy,
                       int restart_delay_seconds,
                       const char *token,
@@ -353,7 +364,8 @@ int hold_cmd_redial(const struct hold_invocation *inv,
     }
     *redialed = true;
     return restart_existing_run(inv, restart_store, tail, console_mode, auto_remove,
-                                interactive_stdin, restart_policy, restart_delay_seconds, restart_id);
+                                interactive_stdin, explicit_session_mode, restart_policy,
+                                restart_delay_seconds, restart_id);
 }
 
 int hold_cmd_rename_action(const struct hold_invocation *inv,
@@ -421,6 +433,76 @@ int hold_cmd_rename_action(const struct hold_invocation *inv,
     char display_id[ID_DISPLAY_HEX_LEN + 1];
     hold_run_id_display(r.id, display_id);
     hold_sig_note(inv, "hold: renamed %s to %s\n", display_id, new_name);
+    hold_free_argv_alloc(argv, argc);
+    free(j);
+    hold_free_run_record(&r);
+    free(targets);
+    return 0;
+}
+
+int hold_cmd_save_action(const struct hold_invocation *inv,
+                           const struct hold_store *user_store,
+                           const struct hold_store *system_store,
+                           const char *target_token) {
+    struct hold_resolved_target *targets = NULL;
+    int ntargets = 0;
+    /* Both live and ended calls are savable, so resolve with the widest
+     * (inspect) intent. */
+    int rc = hold_resolve_action_token(inv, user_store, system_store, "inspect", target_token, false, &targets, &ntargets);
+    if (rc != 0) {
+        free(targets);
+        return rc;
+    }
+    if (ntargets == 0) {
+        free(targets);
+        return hold_report_not_found(target_token);
+    }
+    struct hold_resolved_target target = targets[0];
+    if (target.requires_root) {
+        free(targets);
+        return hold_report_requires_root(target.id);
+    }
+    struct hold_run_record r;
+    char record_path[HOLD_PATH_MAX];
+    if (hold_load_record_by_id(target.store.record_dir, target.id, &r, record_path, sizeof(record_path)) != 0) {
+        free(targets);
+        return 5;
+    }
+    char display_id[ID_DISPLAY_HEX_LEN + 1];
+    hold_run_id_display(r.id, display_id);
+    const char *label = r.has_name ? r.name : display_id;
+    /* Saving is idempotent: an already-saved call needs no rewrite, but still
+     * confirms the protected state on stderr and exits 0. */
+    if (r.saved) {
+        hold_sig_note(inv, "hold: saved %s (%s)\n", display_id, label);
+        hold_free_run_record(&r);
+        free(targets);
+        return 0;
+    }
+    char *j = NULL;
+    char **argv = NULL;
+    int argc = 0;
+    if (hold_read_owned_file_no_symlink(record_path, &j) != 0 ||
+        hold_json_get_argv_alloc(j, &argv, &argc) != 0) {
+        fprintf(stderr, "hold: error: failed to load call record for %s\n", target.id);
+        free(j);
+        hold_free_run_record(&r);
+        free(targets);
+        return 5;
+    }
+    r.saved = true;
+    char out_path[HOLD_PATH_MAX];
+    if (hold_write_record_atomic(target.store.record_dir, &r, argc, argv, out_path, sizeof(out_path)) != 0) {
+        hold_free_argv_alloc(argv, argc);
+        free(j);
+        hold_free_run_record(&r);
+        free(targets);
+        hold_die_errno("hold: failed to write saved call record");
+    }
+    if (target.store.kind == STORE_SYSTEM_MANAGED) {
+        (void)hold_write_public_index_atomic(&target.store, &r);
+    }
+    hold_sig_note(inv, "hold: saved %s (%s)\n", display_id, label);
     hold_free_argv_alloc(argv, argc);
     free(j);
     hold_free_run_record(&r);

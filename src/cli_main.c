@@ -548,6 +548,11 @@ int hold_cli_main(int argc, char **argv) {
         return 5;
     }
 
+    /* Whether the invocation named a session mode explicitly, captured before the
+     * bare-form tail defaulting below rewrites `tail`. On redial this decides
+     * whether the recipe's recorded mode applies or the invocation overrides it. */
+    bool explicit_session_mode = run.detach || run.interactive || run.tty || console_mode || tail;
+
     bool owned = !force_raw && !tail && hold_cli_command_is_parser_owned(argv[argi]);
     const char *command = owned ? argv[argi++] : NULL;
     int cmd_argc = 0;
@@ -718,10 +723,9 @@ int hold_cli_main(int argc, char **argv) {
         return hold_cmd_off_action();
     }
     if (owned && !strcmp(canon, "save")) {
-        /* Saved-call protection is record-format work landing in a later task. */
-        fprintf(stderr, "hold: save is not implemented yet\n");
+        int rc = hold_cmd_save_action(&inv, &user_store, &system_store, cmd_argv[0]);
         free(cmd_argv);
-        return 1;
+        return rc;
     }
     if (owned && !strcmp(canon, "rename")) {
         int rc = hold_cmd_rename_action(&inv, &user_store, &system_store, cmd_argv[0], cmd_argv[1]);
@@ -744,7 +748,7 @@ int hold_cli_main(int argc, char **argv) {
         if (!force_raw && !run.name && cmd_argc == 1) {
             bool redialed = false;
             int rc = hold_cmd_redial(&inv, &user_store, &system_store, tail, console_mode,
-                                     run.auto_remove, interactive_stdin,
+                                     run.auto_remove, interactive_stdin, explicit_session_mode,
                                      run.restart_policy[0] ? run.restart_policy : NULL,
                                      run.restart_delay_seconds, cmd_argv[0], &redialed);
             if (redialed) {

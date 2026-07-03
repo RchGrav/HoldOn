@@ -75,6 +75,7 @@ struct hold_run_record {
     bool has_name;
     bool has_created_at;
     bool has_console;
+    bool saved;
     bool has_stdio_config;
     bool attach_stdin;
     bool attach_stdout;

@@ -46,6 +46,15 @@ static const char *record_status(const struct hold_run_record *r) {
     return "unknown";
 }
 
+/* The launch recipe's replayable session mode, derived from the mode bits set
+ * at spawn time. redial reads the individual bits; this string is the
+ * human-facing projection shown by inspect. */
+static const char *record_session_mode(const struct hold_run_record *r) {
+    if (r && r->recipe.mode_detach) return "detached";
+    if (r && r->recipe.mode_tty) return "console";
+    return "foreground";
+}
+
 static bool record_running(const struct hold_run_record *r) {
     return r && r->has_state && strcmp(r->state, "running") == 0;
 }
@@ -198,6 +207,8 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
         }
     }
     write_docker_name_field(f, r, ",\n");
+    fprintf(f, "  \"Saved\": %s,\n", r->saved ? "true" : "false");
+    fprintf(f, "  \"SessionMode\": \"%s\",\n", record_session_mode(r));
     fprintf(f, "  \"RestartCount\": 0,\n");
     write_docker_config_object(f, r, false);
     fprintf(f, ",\n");
@@ -687,6 +698,12 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     if (hold_json_get_str(j, "console_sock", r->console_sock, sizeof(r->console_sock)) == 0 &&
         r->console_sock[0] == '/') {
         r->has_console = true;
+    }
+    {
+        bool saved = false;
+        if (hold_json_get_bool(j, "Saved", &saved) == 0) {
+            r->saved = saved;
+        }
     }
     const char *config_obj = NULL;
     if (hold_json_find_key(j, "Config", &config_obj) == 0 && config_obj && *config_obj == '{') {
