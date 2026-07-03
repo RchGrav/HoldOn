@@ -43,14 +43,10 @@ int hold_perform_start_options(const struct hold_invocation *inv,
 int hold_cmd_list_normal(const struct hold_store *user_store,
                            const struct hold_store *system_store,
                            const char *alias_filter,
-                           bool iso);
+                           bool include_all);
 int hold_cmd_list_system(const struct hold_store *system_store,
                            const char *alias_filter,
-                           bool iso);
-int hold_cmd_ps_normal(const struct hold_store *user_store,
-                         const struct hold_store *system_store,
-                         bool all);
-int hold_cmd_ps_system(const struct hold_store *system_store, bool all);
+                           bool include_all);
 enum id_token_scope hold_parse_id_token(const char *token, const char **id_out);
 int hold_cmd_signal_action(const struct hold_invocation *inv,
                              const struct hold_store *user_store,

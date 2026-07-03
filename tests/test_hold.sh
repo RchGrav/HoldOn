@@ -566,11 +566,11 @@ test_lifecycle() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   printf '%s\n' "$id" | grep -Eq '^[0-9a-f]{12}$' || return 1
-  "$HOLD_BIN" list | grep -Eq "^$id[[:space:]].*running"
+  "$HOLD_BIN" list | grep -Eq "^$id[[:space:]].*Up "
   "$HOLD_BIN" end "$id" >/dev/null
-  "$HOLD_BIN" list | grep -Eq "^$id[[:space:]].*exited"
+  "$HOLD_BIN" list -a | grep -Eq "^$id[[:space:]].*Exited"
   "$HOLD_BIN" purge >/dev/null
-  lines=$("$HOLD_BIN" list | wc -l)
+  lines=$("$HOLD_BIN" list -a | wc -l)
   [ "$lines" -eq 1 ]
 }
 
@@ -642,7 +642,7 @@ test_exec_replacement_remains_controllable() {
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
-  "$HOLD_BIN" list | grep -Eq "^$id[[:space:]].*running" || return 1
+  "$HOLD_BIN" list | grep -Eq "^$id[[:space:]].*Up " || return 1
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
   pgid_terminated "$pgid"
 }
@@ -1787,8 +1787,8 @@ test_persistent_stale_records() {
   [ -f "$stale_log" ] || return 1
   HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list >/dev/null || return 1
   printf 'boot-b\n' >"$bootfile" || return 1
-  list_out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list) || return 1
-  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+stale[[:space:]]"
+  list_out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list -a) || return 1
+  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]].*Stale"
   set +e
   HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" stop "$id" >/dev/null 2>"$TEST_ROOT/stop.err"
   [ "$?" -eq 2 ] || return 1
@@ -1819,8 +1819,8 @@ test_boot_unavailable_does_not_force_stale() {
   [ -n "$pgid" ] || return 1
   rm -f "$bootfile"
   list_out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list) || return 1
-  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+running[[:space:]]" || return 1
-  ! printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+stale[[:space:]]" || return 1
+  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]].*Up " || return 1
+  ! printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]].*Stale" || return 1
   set +e
   got=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" stop --print "$id" 2>"$TEST_ROOT/missing-boot-print.err")
   rc=$?
@@ -1836,7 +1836,7 @@ test_leader_zombie_group_still_running() {
   [ -n "$id" ] || return 1
   sleep 0.3
   list_out=$("$HOLD_BIN" list) || return 1
-  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]+running[[:space:]]" || return 1
+  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]].*Up " || return 1
   "$HOLD_BIN" end "$id" >/dev/null || return 1
 }
 
@@ -1902,7 +1902,7 @@ test_console_round_trip_and_log_tee() {
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   [ -n "$sock" ] || { cat "$record" >&2; return 1; }
   "$HOLD_BIN" list >"$TEST_ROOT/console-list.out" || return 1
-  grep -Eq "^$id[[:space:]]+running[[:space:]]" "$TEST_ROOT/console-list.out" || {
+  grep -Eq "^$id[[:space:]].*Up " "$TEST_ROOT/console-list.out" || {
     cat "$TEST_ROOT/console-list.out" >&2
     return 1
   }
@@ -2584,8 +2584,10 @@ test_raw_start_does_not_steal_trailing_system() {
 
 test_public_root_index_list_is_redacted() {
   write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z || return 1
-  "$HOLD_BIN" list --iso >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
-  grep -Eq '^abc12345cafe[[:space:]]+running[[:space:]]+2026-06-15T18:42:11Z[[:space:]]+<root-managed>$' "$TEST_ROOT/list.out" || return 1
+  # Public root-index rows appear with -a; the command is always the redacted
+  # <root-managed> placeholder and the STATUS reflects the projected state.
+  "$HOLD_BIN" list -a >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
+  grep -Eq '^abc12345cafe[[:space:]].*<root-managed>.*[[:space:]]running([[:space:]]|$)' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
   ! grep -q 'secret' "$TEST_ROOT/list.out"
 }
 
@@ -2618,8 +2620,10 @@ test_public_root_index_list_reads_projected_state() {
 }
 JSON
   chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
-  "$HOLD_BIN" list --iso >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
-  grep -Eq '^deadbeefcafe[[:space:]]+exited[[:space:]]+2026-06-15T18:42:11Z[[:space:]]+<root-managed>$' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
+  # The projected State.Status ("exited") drives the STATUS column; the command
+  # stays redacted as <root-managed>. Ended public rows need -a to appear.
+  "$HOLD_BIN" list -a >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
+  grep -Eq '^deadbeefcafe[[:space:]].*<root-managed>.*[[:space:]]exited([[:space:]]|$)' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
   ! grep -q 'secret' "$TEST_ROOT/list.out"
 }
 
@@ -2678,7 +2682,7 @@ test_long_command_list_truncates_instead_of_skips() {
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   sleep 0.2
-  list_out=$("$HOLD_BIN" list) || return 1
+  list_out=$("$HOLD_BIN" list -a) || return 1
   printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]]" || return 1
   printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]].*\.\.\."
 }
@@ -2853,9 +2857,9 @@ PY
     sleep 0.1
   done
   [ "$matched" = 1 ] || { cat "$TEST_ROOT/root-public-state-compare.err" "$TEST_ROOT/root-private-state.json" "$public_json" >&2; return 1; }
-  list_out=$("$HOLD_BIN" list) || return 1
+  list_out=$("$HOLD_BIN" list -a) || return 1
   printf '%s
-' "$list_out" | grep -Eq "^$id[[:space:]]+(running|exited|Exited|Up)[[:space:]]"
+' "$list_out" | grep -Eq "^$id[[:space:]].*(Up|Exited|running|exited)"
 }
 
 test_sudo_start_writes_system_store_with_invoking_metadata() {
@@ -3031,6 +3035,14 @@ test_ps_table_humanized_status_and_saved() {
   "$HOLD_BIN" save ps-humanized >/dev/null 2>&1 || return 1
   ps_out=$("$HOLD_BIN" ps -a) || return 1
   printf '%s\n' "$ps_out" | grep -Eq "^$id[[:space:]].*Up .*\(saved\)" || { printf '%s\n' "$ps_out" >&2; return 1; }
+
+  # list is the canonical verb and ps its alias: both render the same Docker
+  # table with the same header and Up/Exited/(saved) STATUS phrasing.
+  list_out=$("$HOLD_BIN" list -a) || return 1
+  printf '%s\n' "$list_out" | grep -Eq "^CALL ID[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES$" ||
+    { printf '%s\n' "$list_out" >&2; return 1; }
+  printf '%s\n' "$list_out" | grep -Eq "^$id[[:space:]].*Up .*\(saved\)" || { printf '%s\n' "$list_out" >&2; return 1; }
+  printf '%s\n' "$list_out" | grep -Eq "^$exit_id[[:space:]].*Exited \(5\) .*ago" || { printf '%s\n' "$list_out" >&2; return 1; }
 
   "$HOLD_BIN" end ps-humanized >/dev/null 2>&1 || true
 }
@@ -3360,7 +3372,9 @@ PY
   [ "$rc" -eq 0 ] || { echo "run -it rc=$rc" >&2; cat "$TEST_ROOT/docker-tty.out" "$TEST_ROOT/docker-tty.err" >&2; return 1; }
   grep -q 'tty:hello-tty' "$TEST_ROOT/docker-tty.out" || { cat "$TEST_ROOT/docker-tty.out" >&2; return 1; }
   # Docker parity: foreground -it prints no id; the detached run is found via listing.
-  id=$("$HOLD_BIN" list | awk '/docker-tty-child/ {print $1; exit}')
+  # The lone running call is the detached -it child; take the first table row's
+  # CALL ID (the Docker-shaped COMMAND column ellipsizes the long temp path).
+  id=$("$HOLD_BIN" list | awk 'NR==2 {print $1; exit}')
   [ -n "$id" ] || { "$HOLD_BIN" list >&2; return 1; }
   record=$(record_path "$id") || { find "$HOME/.local/state/hold" -maxdepth 1 -type f -print >&2 || true; return 1; }
   grep -q '"console_sock": "' "$record" || { cat "$record" >&2; return 1; }
@@ -3396,7 +3410,9 @@ PY
   grep -q 'custom-ready' "$TEST_ROOT/docker-tty-custom.out" || { cat "$TEST_ROOT/docker-tty-custom.out" >&2; return 1; }
   ! grep -q 'custom-line:' "$TEST_ROOT/docker-tty-custom.out" || { cat "$TEST_ROOT/docker-tty-custom.out" >&2; return 1; }
   # Docker parity: foreground -it prints no id; the detached run is found via listing.
-  id=$("$HOLD_BIN" list | awk '/docker-tty-custom-child/ {print $1; exit}')
+  # The lone running call is the detached -it child; take the first table row's
+  # CALL ID (the Docker-shaped COMMAND column ellipsizes the long temp path).
+  id=$("$HOLD_BIN" list | awk 'NR==2 {print $1; exit}')
   [ -n "$id" ] || { "$HOLD_BIN" list >&2; return 1; }
   "$HOLD_BIN" ps >"$TEST_ROOT/docker-tty-custom-ps.out" || return 1
   grep -Eq "^$id[[:space:]]+.*Up " "$TEST_ROOT/docker-tty-custom-ps.out" || { cat "$TEST_ROOT/docker-tty-custom-ps.out" >&2; return 1; }
@@ -3746,8 +3762,10 @@ test_misc_action_guards() {
   set +e; "$HOLD_BIN" help bogustopic >/dev/null 2>"$TEST_ROOT/h.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "help bogustopic: rc=$rc (want 5)" >&2; return 1; }
   grep -q 'unknown help topic' "$TEST_ROOT/h.err" || { cat "$TEST_ROOT/h.err" >&2; return 1; }
-  "$HOLD_BIN" list -l >"$TEST_ROOT/l.out" 2>&1 || { echo "list -l failed" >&2; return 1; }
-  grep -q 'STARTED_AT' "$TEST_ROOT/l.out" || { echo "list -l missing ISO header" >&2; return 1; }
+  # The legacy --iso/-l list surface is gone: list renders only the Docker-shaped
+  # table, never the STARTED_AT ISO header, regardless of the old -l token.
+  "$HOLD_BIN" list -l >"$TEST_ROOT/l.out" 2>&1 || true
+  ! grep -q 'STARTED_AT' "$TEST_ROOT/l.out" || { echo "list still emits the legacy ISO header" >&2; cat "$TEST_ROOT/l.out" >&2; return 1; }
 }
 
 

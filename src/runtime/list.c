@@ -13,7 +13,6 @@ struct list_row {
     char id[ID_STR_LEN];
     char name[ALIAS_MAX_LEN + 1];
     char state[16];
-    char started[64];
     char created[64];
     char status[96];
     char ports[HOLD_PATH_MAX];
@@ -30,22 +29,15 @@ struct list_rows {
 static void free_list_rows(struct list_rows *rows);
 static int append_list_row(struct list_rows *rows, const struct list_row *row);
 static int compare_list_rows(const void *a, const void *b);
-static void print_list_header(bool iso);
-static void print_list_row(const struct list_row *row, bool iso);
 static int collect_list_private(const struct hold_store *store,
                                 const char *alias_filter,
-                                bool iso,
                                 bool include_all,
-                                bool docker_ps,
                                 struct list_rows *rows);
 static int collect_list_public(const struct hold_store *store,
                                const char *alias_filter,
-                               bool iso,
                                bool include_all,
-                               bool docker_ps,
                                struct list_rows *rows);
-static int print_collected_list(struct list_rows *rows, bool iso);
-static int print_collected_ps(struct list_rows *rows);
+static int print_collected_table(struct list_rows *rows);
 static void unlink_public_index(const struct hold_store *store, const char *id);
 static void unlink_log_index_for_log(const char *log_path);
 static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, int *removed_count);
@@ -79,17 +71,6 @@ static int compare_list_rows(const void *a, const void *b) {
         return 1;
     }
     return strcmp(ra->id, rb->id);
-}
-
-static void print_list_header(bool iso) {
-    printf("%-12s %-8s %-*s %s\n", "CALL ID", "STATE", iso ? 24 : 8, iso ? "STARTED_AT" : "STARTED", "CMD");
-}
-
-static void print_list_row(const struct list_row *row, bool iso) {
-    char cmd[80];
-    const char *src = row->cmd[0] ? row->cmd : "?";
-    snprintf(cmd, sizeof(cmd), "%.72s%s", src, strlen(src) > 72 ? "..." : "");
-    printf("%-12s %-8s %-*s %s\n", row->id, row->state, iso ? 24 : 8, row->started, cmd);
 }
 
 /* Docker double-quotes COMMAND and ellipsizes it so one long command never
@@ -164,9 +145,7 @@ static void format_status(enum run_state st, const struct hold_run_record *r, ch
 
 static int collect_list_private(const struct hold_store *store,
                                 const char *alias_filter,
-                                bool iso,
                                 bool include_all,
-                                bool docker_ps,
                                 struct list_rows *rows) {
     DIR *d = opendir(store->record_dir);
     if (!d) {
@@ -213,40 +192,20 @@ static int collect_list_private(const struct hold_store *store,
         row.start_unix_ns = r.start_unix_ns;
         row.running = st == STATE_RUNNING;
         int64_t created_ns = r.has_created_at && r.created_unix_ns > 0 ? r.created_unix_ns : r.start_unix_ns;
-        if (iso) {
-            if (r.has_started_at && r.started_at[0]) {
-                snprintf(row.started, sizeof(row.started), "%s", r.started_at);
-            } else {
-                hold_format_rfc3339_utc_from_ns(r.start_unix_ns, row.started, sizeof(row.started));
-            }
-            if (r.has_created_at && r.created_at[0]) {
-                snprintf(row.created, sizeof(row.created), "%s", r.created_at);
-            } else {
-                hold_format_rfc3339_utc_from_ns(created_ns, row.created, sizeof(row.created));
-            }
-        } else {
-            hold_format_relative_age(r.start_unix_ns, row.started, sizeof(row.started));
-            hold_format_relative_age(created_ns, row.created, sizeof(row.created));
-        }
         snprintf(row.cmd, sizeof(row.cmd), "%s", r.cmdline[0] ? r.cmdline : "?");
-        if (docker_ps) {
-            if (!iso) {
-                /* CREATED is humanized Docker-style: "About a minute ago",
-                 * "2 days ago" - never the "2m" short form the list table uses. */
-                char human[48];
-                hold_format_duration_human(seconds_since(created_ns), human, sizeof(human));
-                snprintf(row.created, sizeof(row.created), "%s ago", human);
-            }
-            format_status(st, &r, row.status, sizeof(row.status));
-            if (r.saved) {
-                /* Surface protection where the eye already rests: a suffix on
-                 * STATUS, not a new column. */
-                size_t used = strlen(row.status);
-                snprintf(row.status + used, sizeof(row.status) - used, " (saved)");
-            }
-            if (st == STATE_RUNNING) {
-                hold_observe_run_ports_column(&r, row.ports, sizeof(row.ports));
-            }
+        /* CREATED is humanized Docker-style: "About a minute ago", "2 days ago". */
+        char human[48];
+        hold_format_duration_human(seconds_since(created_ns), human, sizeof(human));
+        snprintf(row.created, sizeof(row.created), "%s ago", human);
+        format_status(st, &r, row.status, sizeof(row.status));
+        if (r.saved) {
+            /* Surface protection where the eye already rests: a suffix on
+             * STATUS, not a new column. */
+            size_t used = strlen(row.status);
+            snprintf(row.status + used, sizeof(row.status) - used, " (saved)");
+        }
+        if (st == STATE_RUNNING) {
+            hold_observe_run_ports_column(&r, row.ports, sizeof(row.ports));
         }
         if (append_list_row(rows, &row) != 0) {
             hold_free_run_record(&r);
@@ -261,9 +220,7 @@ static int collect_list_private(const struct hold_store *store,
 
 static int collect_list_public(const struct hold_store *store,
                                const char *alias_filter,
-                               bool iso,
                                bool include_all,
-                               bool docker_ps,
                                struct list_rows *rows) {
     if (!include_all) {
         return 0;
@@ -307,27 +264,17 @@ static int collect_list_public(const struct hold_store *store,
         snprintf(row.state, sizeof(row.state), "%s", pi.state_hint[0] ? pi.state_hint : "unknown");
         row.running = !strcmp(row.state, "running");
         row.start_unix_ns = 0;
-        if (iso) {
-            snprintf(row.started, sizeof(row.started), "%s", pi.started_at[0] ? pi.started_at : "-");
-        } else {
-            snprintf(row.started, sizeof(row.started), "%s", "-");
-        }
-        snprintf(row.created, sizeof(row.created), "%s", pi.created_at[0] ? pi.created_at : row.started);
         snprintf(row.cmd, sizeof(row.cmd), "%s", "<root-managed>");
-        if (docker_ps) {
-            snprintf(row.status, sizeof(row.status), "%s", pi.state_hint[0] ? pi.state_hint : "Unknown");
-            if (!iso) {
-                /* The table never shows a raw ISO stamp: humanize the public
-                 * index's created_at, falling back to "-" when unparseable. */
-                int64_t created_at_ns = 0;
-                if (hold_parse_rfc3339_utc_to_ns(pi.created_at, &created_at_ns)) {
-                    char human[48];
-                    hold_format_duration_human(seconds_since(created_at_ns), human, sizeof(human));
-                    snprintf(row.created, sizeof(row.created), "%s ago", human);
-                } else {
-                    snprintf(row.created, sizeof(row.created), "-");
-                }
-            }
+        snprintf(row.status, sizeof(row.status), "%s", pi.state_hint[0] ? pi.state_hint : "Unknown");
+        /* The table never shows a raw ISO stamp: humanize the public index's
+         * created_at, falling back to "-" when unparseable. */
+        int64_t created_at_ns = 0;
+        if (hold_parse_rfc3339_utc_to_ns(pi.created_at, &created_at_ns)) {
+            char human[48];
+            hold_format_duration_human(seconds_since(created_at_ns), human, sizeof(human));
+            snprintf(row.created, sizeof(row.created), "%s ago", human);
+        } else {
+            snprintf(row.created, sizeof(row.created), "-");
         }
         if (append_list_row(rows, &row) != 0) {
             closedir(d);
@@ -338,23 +285,12 @@ static int collect_list_public(const struct hold_store *store,
     return 0;
 }
 
-static int print_collected_list(struct list_rows *rows, bool iso) {
-    if (rows->count > 1) {
-        qsort(rows->items, rows->count, sizeof(rows->items[0]), compare_list_rows);
-    }
-    print_list_header(iso);
-    for (size_t i = 0; i < rows->count; i++) {
-        print_list_row(&rows->items[i], iso);
-    }
-    return 0;
-}
-
 /* The Docker-shaped call table, content-sized like `docker ps`: a first pass
  * measures every column from the actual rows (never a fixed printf width that
  * shears a long value), a second pass prints. Columns are separated by a
  * two-space gutter; each column is at least as wide as its header; the final
  * NAMES column is never padded, so no line carries trailing spaces. */
-static int print_collected_ps(struct list_rows *rows) {
+static int print_collected_table(struct list_rows *rows) {
     if (rows->count > 1) {
         qsort(rows->items, rows->count, sizeof(rows->items[0]), compare_list_rows);
     }
@@ -405,17 +341,20 @@ static int print_collected_ps(struct list_rows *rows) {
     return 0;
 }
 
+/* One call table for both `list` (canonical) and `ps` (its alias): running-only
+ * by default, all states with include_all. Public root-index rows appear only
+ * with include_all, matching their projected, may-be-stale nature. */
 int hold_cmd_list_normal(const struct hold_store *user_store,
                            const struct hold_store *system_store,
                            const char *alias_filter,
-                           bool iso) {
+                           bool include_all) {
     struct list_rows rows = {0};
     int rc = 0;
-    if (collect_list_private(user_store, alias_filter, iso, true, false, &rows) != 0 ||
-        collect_list_public(system_store, alias_filter, iso, true, false, &rows) != 0) {
+    if (collect_list_private(user_store, alias_filter, include_all, &rows) != 0 ||
+        collect_list_public(system_store, alias_filter, include_all, &rows) != 0) {
         rc = 3;
     } else {
-        rc = print_collected_list(&rows, iso);
+        rc = print_collected_table(&rows);
     }
     free_list_rows(&rows);
     return rc;
@@ -423,40 +362,13 @@ int hold_cmd_list_normal(const struct hold_store *user_store,
 
 int hold_cmd_list_system(const struct hold_store *system_store,
                            const char *alias_filter,
-                           bool iso) {
+                           bool include_all) {
     struct list_rows rows = {0};
     int rc = 0;
-    if (collect_list_private(system_store, alias_filter, iso, true, false, &rows) != 0) {
+    if (collect_list_private(system_store, alias_filter, include_all, &rows) != 0) {
         rc = 3;
     } else {
-        rc = print_collected_list(&rows, iso);
-    }
-    free_list_rows(&rows);
-    return rc;
-}
-
-int hold_cmd_ps_normal(const struct hold_store *user_store,
-                       const struct hold_store *system_store,
-                       bool all) {
-    struct list_rows rows = {0};
-    int rc = 0;
-    if (collect_list_private(user_store, NULL, false, all, true, &rows) != 0 ||
-        collect_list_public(system_store, NULL, false, all, true, &rows) != 0) {
-        rc = 3;
-    } else {
-        rc = print_collected_ps(&rows);
-    }
-    free_list_rows(&rows);
-    return rc;
-}
-
-int hold_cmd_ps_system(const struct hold_store *system_store, bool all) {
-    struct list_rows rows = {0};
-    int rc = 0;
-    if (collect_list_private(system_store, NULL, false, all, true, &rows) != 0) {
-        rc = 3;
-    } else {
-        rc = print_collected_ps(&rows);
+        rc = print_collected_table(&rows);
     }
     free_list_rows(&rows);
     return rc;

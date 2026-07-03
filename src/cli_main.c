@@ -510,7 +510,6 @@ int hold_cli_main(int argc, char **argv) {
     bool all = false;
     bool quiet = false;
     bool print_cmd = false;
-    bool list_iso = false;
     bool purge_force = false;
     bool stats_no_stream = false;
     struct cli_run_options run = {0};
@@ -580,8 +579,9 @@ int hold_cli_main(int argc, char **argv) {
                 quiet = true;
                 continue;
             }
-            bool sweeps = !strcmp(command, "ps") || !strcmp(command, "purge") ||
-                          !strcmp(command, "prune") || !strcmp(command, "rm") || !strcmp(command, "drop");
+            bool sweeps = !strcmp(command, "list") || !strcmp(command, "ps") ||
+                          !strcmp(command, "purge") || !strcmp(command, "prune") ||
+                          !strcmp(command, "rm") || !strcmp(command, "drop");
             bool purges = !strcmp(command, "purge") || !strcmp(command, "prune") ||
                           !strcmp(command, "rm") || !strcmp(command, "drop");
             if (!literal_owned_arg && hold_cli_command_allows_all(command) && !strcmp(argv[i], "--all")) {
@@ -599,11 +599,6 @@ int hold_cli_main(int argc, char **argv) {
             if (!literal_owned_arg && (!strcmp(command, "end") || !strcmp(command, "stop") || !strcmp(command, "kill")) &&
                 !strcmp(argv[i], "--print")) {
                 print_cmd = true;
-                continue;
-            }
-            if (!literal_owned_arg && !strcmp(command, "list") &&
-                (!strcmp(argv[i], "--iso") || !strcmp(argv[i], "-l"))) {
-                list_iso = true;
                 continue;
             }
             if (!literal_owned_arg && !strcmp(command, "stats") && !strcmp(argv[i], "--no-stream")) {
@@ -692,7 +687,6 @@ int hold_cli_main(int argc, char **argv) {
         else if (!strcmp(command, "logs")) canon = "__view";
         else if (!strcmp(command, "prune") || !strcmp(command, "rm") || !strcmp(command, "drop")) canon = "purge";
     }
-    bool docker_ps_command = owned && !strcmp(command, "ps");
     bool is_list = owned && !strcmp(canon, "list");
 
     /* The root-managed store is visible to everyone (list stays open), but only
@@ -773,29 +767,17 @@ int hold_cli_main(int argc, char **argv) {
     }
 
     if (!strcmp(canon, "list")) {
-        int rc;
-        if (docker_ps_command) {
-            if (cmd_argc != 0) {
-                fprintf(stderr, "usage: hold ps [-a|--all]\n");
-                free(cmd_argv);
-                return 5;
-            }
-            rc = inv.euid_root ? hold_cmd_ps_system(&system_store, all)
-                               : hold_cmd_ps_normal(&user_store, &system_store, all);
-            free(cmd_argv);
-            return rc;
-        }
+        /* One code path for `list` (canonical) and `ps` (its alias): the same
+         * Docker-shaped table, running-only unless -a/--all, with an optional
+         * name filter. */
         const char *alias_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
         if (alias_filter && !hold_valid_alias(alias_filter)) {
             fprintf(stderr, "hold: error: invalid name '%s'\n", alias_filter);
             free(cmd_argv);
             return 5;
         }
-        if (inv.euid_root) {
-            rc = hold_cmd_list_system(&system_store, alias_filter, list_iso);
-        } else {
-            rc = hold_cmd_list_normal(&user_store, &system_store, alias_filter, list_iso);
-        }
+        int rc = inv.euid_root ? hold_cmd_list_system(&system_store, alias_filter, all)
+                               : hold_cmd_list_normal(&user_store, &system_store, alias_filter, all);
         free(cmd_argv);
         return rc;
     }

@@ -70,7 +70,7 @@ A successful start prints only the run ID to stdout before any followed log byte
 
 ## Listing
 
-`hold list [profile]` shows visible runs. Normal users see their private user-local runs plus redacted root public rows. Root sees authoritative private system records. `--iso` and `-l` select ISO time formatting.
+`hold list [name]` (alias `ps`) renders the Docker-shaped call table (CALL ID, COMMAND, CREATED, STATUS, PORTS, NAMES) with humanized times. Running calls only by default; `-a`/`--all` includes ended and stale calls. Normal users see their private user-local runs plus redacted root public rows (public rows only with `-a`). Root sees authoritative private system records. An optional name narrows the listing; there is no ISO/`--iso`/`-l` mode — machine consumption belongs to `inspect` (JSON).
 
 Normal list does not self-elevate. Root-public rows are discovery data and can show `unknown` state because the public index is not continuously refreshed.
 

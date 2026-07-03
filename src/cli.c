@@ -23,8 +23,8 @@ struct hold_cli_command_spec {
 };
 
 static const struct hold_cli_command_spec command_specs[] = {
-    {"list", 0, 1, 0, "usage: hold list [name]", "list"},
-    {"ps", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold ps [-a|--all]", "ps"},
+    {"list", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold list [-a|--all] [name]", "list"},
+    {"ps", 0, 1, HOLD_CLI_ALLOW_ALL, "usage: hold ps [-a|--all] [name]", "ps"},
     {"on", 0, 0, 0, "usage: hold on", "on"},
     {"off", 0, 0, 0, "usage: hold off", "off"},
     {"shell", 0, 0, 0, "usage: hold shell", "shell"},
@@ -105,10 +105,8 @@ static int help_scripting(void) {
 }
 
 static int help_action(const char *action) {
-    if (!strcmp(action, "list")) {
-        printf("usage: hold list [name] [--iso|-l]\n\nShow all visible calls, optionally filtered by name.\n");
-    } else if (!strcmp(action, "ps")) {
-        printf("usage: hold ps [-a|--all]\n\nDocker-shaped call listing. Shows Hold call IDs and names.\n");
+    if (!strcmp(action, "list") || !strcmp(action, "ps")) {
+        printf("usage: hold list [-a|--all] [name]\n\nList calls as a Docker-shaped table (CALL ID, COMMAND, CREATED, STATUS, PORTS, NAMES). Running calls only by default; -a/--all includes ended and stale calls. An optional name narrows the listing. (ps is an alias of list.)\n");
     } else if (!strcmp(action, "on") || !strcmp(action, "shell")) {
         printf("usage: hold on\n\nStart a guarded shell under Hold's PTY/session wrapper. Hold holds the line: pressing the classic detach sequence Ctrl-P Ctrl-Q puts the current foreground program on hold as a call and returns to the shell. 'hold off' or exit ends the session. (shell is an alias of on.)\n");
     } else if (!strcmp(action, "off")) {
