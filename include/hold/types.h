@@ -29,8 +29,6 @@ struct hold_recipe {
     int restart_delay_seconds;
     bool has_restart_policy;
     bool has_restart_delay;
-    char log_destination[32];
-    bool has_log_destination;
 };
 
 struct hold_run_record {
@@ -103,8 +101,6 @@ struct hold_store {
     char log_dir[HOLD_PATH_MAX];
     char public_dir[HOLD_PATH_MAX];
     char console_dir[HOLD_PATH_MAX];
-    char profile_path[HOLD_PATH_MAX];
-    char alias_path[HOLD_PATH_MAX];
 };
 
 struct hold_invocation {
@@ -123,7 +119,7 @@ enum resolve_scope { RESOLVE_USER_LOCAL, RESOLVE_SYSTEM_MANAGED, RESOLVE_NOT_FOU
 
 struct hold_resolved_target {
     enum resolve_scope scope;
-    char id[ALIAS_MAX_LEN + 1 + PROFILE_HASH_STR_LEN];
+    char id[ID_STR_LEN];
     struct hold_store store;
     bool requires_root;
 };
@@ -150,19 +146,6 @@ struct hold_public_index {
     bool dead;
     bool has_state;
     bool has_exit_code;
-};
-
-struct hold_profile {
-    char hash[PROFILE_HASH_STR_LEN];
-    struct hold_recipe recipe;
-};
-
-struct hold_alias {
-    char name[ALIAS_MAX_LEN + 1];
-    char hash[PROFILE_HASH_STR_LEN];
-    struct hold_recipe recipe;
-    bool has_hash;
-    bool has_recipe;
 };
 
 enum id_token_scope { ID_TOKEN_PLAIN, ID_TOKEN_USER, ID_TOKEN_SYSTEM, ID_TOKEN_INVALID };

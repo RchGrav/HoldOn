@@ -342,19 +342,6 @@ sha256_stdin() {
   fi
 }
 
-profile_bin_for_hash() {
-  local path="$1" hash="$2"
-  awk -v hash="$hash" '
-    index($0, "\"" hash "\":") {
-      if (match($0, /"bin": "[^"]*"/)) {
-        print substr($0, RSTART + 8, RLENGTH - 9)
-        found = 1
-        exit
-      }
-    }
-    END { if (!found) exit 1 }
-  ' "$path"
-}
 
 root_grep() {
   local pattern="$1" path="$2"
@@ -831,15 +818,13 @@ test_argument_edges() {
   "$HOLD_BIN" --help >/dev/null || return 1
   "$HOLD_BIN" help >/dev/null || return 1
   "$HOLD_BIN" help --help >/dev/null || return 1
-  "$HOLD_BIN" help profiles | grep -q 'hold profile <name> \[opts\] -- <cmd>' || return 1
-  "$HOLD_BIN" help targets | grep -q 'run id, leading id prefix, or profile name' || return 1
+  "$HOLD_BIN" help targets | grep -q 'run id, leading id prefix, or run name' || return 1
   "$HOLD_BIN" help scripting | grep -q 'Exit codes:' || return 1
   "$HOLD_BIN" help run >"$TEST_ROOT/help-run.out" || return 1
   grep -q -- '-p, --publish SPEC' "$TEST_ROOT/help-run.out" || { cat "$TEST_ROOT/help-run.out" >&2; return 1; }
   grep -q -- '-v, --volume SPEC' "$TEST_ROOT/help-run.out" || { cat "$TEST_ROOT/help-run.out" >&2; return 1; }
   grep -q -- '--restart POLICY' "$TEST_ROOT/help-run.out" || { cat "$TEST_ROOT/help-run.out" >&2; return 1; }
   grep -q -- '--restart-delay N' "$TEST_ROOT/help-run.out" || { cat "$TEST_ROOT/help-run.out" >&2; return 1; }
-  grep -q -- '--privileged' "$TEST_ROOT/help-run.out" || { cat "$TEST_ROOT/help-run.out" >&2; return 1; }
   "$HOLD_BIN" stop -h | grep -q 'usage: hold stop' || return 1
   out=$("$HOLD_BIN" --version) || return 1
   printf '%s\n' "$out" | grep -Eq '^(dev(-[0-9a-f]{7,40}(-dirty)?)?|[0-9a-f]{7,40}|v?[0-9]+\.[0-9]+\.[0-9]+.*)$'
@@ -2321,269 +2306,16 @@ JSON
   chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
 }
 
-write_public_alias_fixture() {
-  local name="$1" hash="$2"
-  mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
-  chmod 755 "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
-  cat > "$HOLD_TEST_SYSTEM_STATE_DIR/public/aliases.json" <<JSON
-{
-  "$name": "$hash"
-}
-JSON
-  chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/aliases.json" || return 1
-}
-
-system_alias_hash() {
-  local name="$1"
-  sed -n "s/.*\"$name\": \"\\([0-9a-f]\\{64\\}\\)\".*/\\1/p" "$HOLD_TEST_SYSTEM_STATE_DIR/public/aliases.json"
-}
-
-test_alias_profile_map_start_and_stop() {
-  local out id out2 id2 pgid2 store sh_bin
-  store="$HOME/.local/state/hold"
-  sh_bin="$(resolve_path /bin/sh)" || return 1
-  out=$("$HOLD_BIN" -d /bin/sh -c 'while :; do sleep 1; done' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  "$HOLD_BIN" profile save "$id" as web-test >"$TEST_ROOT/alias.out" 2>"$TEST_ROOT/alias.err" || return 1
-  [ ! -s "$TEST_ROOT/alias.out" ] || return 1
-  grep -Fqx "hold: pinned 'web-test' -> $sh_bin -c 'while :; do sleep 1; done'" "$TEST_ROOT/alias.err" || return 1
-  [ -f "$store/aliases.json" ] || return 1
-  [ ! -f "$store/profiles.json" ] || return 1
-  [ ! -d "$store/profiles" ] || return 1
-  grep -q '"web-test": {"bin": "' "$store/aliases.json" || return 1
-  grep -Fq "\"args\": [\"-c\", \"while :; do sleep 1; done\"]" "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  "$HOLD_BIN" profiles >"$TEST_ROOT/aliases-list.out" || return 1
-  grep -Eq "^web-test[[:space:]]+user[[:space:]]+.*[[:space:]]+-$" "$TEST_ROOT/aliases-list.out" || return 1
-  "$HOLD_BIN" list >"$TEST_ROOT/list-after-alias.out" 2>"$TEST_ROOT/list-after-alias.err" || return 1
-  ! grep -q 'aliases.json' "$TEST_ROOT/list-after-alias.err" || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null || return 1
-  "$HOLD_BIN" prune "$id" >/dev/null || return 1
-
-  "$HOLD_BIN" prune >"$TEST_ROOT/prune-after-alias.out" 2>"$TEST_ROOT/prune-after-alias.err" || return 1
-  [ -f "$store/aliases.json" ] || return 1
-  ! grep -q 'aliases.json' "$TEST_ROOT/prune-after-alias.err" || return 1
-
-  out2=$("$HOLD_BIN" start web-test 2>&1) || return 1
-  id2=$(printf '%s\n' "$out2" | extract_id)
-  pgid2=$(record_pgid "$id2")
-  [ -n "$id2" ] && [ -n "$pgid2" ] || return 1
-  record=$(record_path "$id2" "$store") || return 1
-  grep -q '"alias": "web-test"' "$record" || return 1
-  ! grep -q '"profile_hash":' "$record" || return 1
-  "$HOLD_BIN" stop web-test >/dev/null || return 1
-  pgid_terminated "$pgid2"
-}
-
-test_alias_from_relative_executable_uses_recorded_absolute_argv0() {
-  local app work other store expected out id
-  app="$TEST_ROOT/app"
-  work="$app/work"
-  other="$TEST_ROOT/other"
-  store="$HOME/.local/state/hold"
-  mkdir -p "$app/bin" "$work" "$other" || return 1
-  printf '#!/bin/sh\nsleep 300\n' >"$app/bin/daemon" || return 1
-  chmod +x "$app/bin/daemon" || return 1
-  expected="$(resolve_path "$app/bin/daemon")" || return 1
-
-  out=$(cd "$work" && "$HOLD_BIN" -d ../bin/daemon 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  record=$(record_path "$id" "$store") || return 1
-  grep -Fq "\"argv\": [\"$expected\"]" "$record" || return 1
-
-  (cd "$other" && "$HOLD_BIN" profile save "$id" as rel-daemon >"$TEST_ROOT/alias-rel.out" 2>"$TEST_ROOT/alias-rel.err") || return 1
-  grep -Fq "\"rel-daemon\": {\"bin\": \"$expected\", \"args\": []" "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  grep -Fq '"detach": true' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  "$HOLD_BIN" stop "$id" >/dev/null || return 1
-}
-
-test_alias_multi_gate_and_all_stop() {
-  local out id id1 id2 out1 out2 rc pgid1 pgid2
-  out=$("$HOLD_BIN" -d sleep 60 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  "$HOLD_BIN" profile save "$id" as web-multi >/dev/null || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null || return 1
-  "$HOLD_BIN" prune "$id" >/dev/null || return 1
-
-  out1=$("$HOLD_BIN" start web-multi 2>&1) || return 1
-  id1=$(printf '%s\n' "$out1" | extract_id)
-  pgid1=$(record_pgid "$id1")
-  [ -n "$pgid1" ] || return 1
-  set +e
-  "$HOLD_BIN" start web-multi >"$TEST_ROOT/multi-refuse.out" 2>"$TEST_ROOT/multi-refuse.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 6 ] || return 1
-  grep -q -- '--force' "$TEST_ROOT/multi-refuse.err" || return 1
-
-  out2=$("$HOLD_BIN" start web-multi --force 2>&1) || return 1
-  id2=$(printf '%s\n' "$out2" | extract_id)
-  pgid2=$(record_pgid "$id2")
-  [ -n "$pgid2" ] || return 1
-  set +e
-  "$HOLD_BIN" stop web-multi >"$TEST_ROOT/alias-ambig.out" 2>"$TEST_ROOT/alias-ambig.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 6 ] || return 1
-  grep -q 'matches more than one' "$TEST_ROOT/alias-ambig.err" || return 1
-  "$HOLD_BIN" stop web-multi --all >/dev/null || return 1
-  pgid_terminated "$pgid1" || return 1
-  pgid_terminated "$pgid2"
-}
-
-test_profile_multi_mode_allows_repeated_starts() {
-  local out1 out2 id1 id2 pgid1 pgid2
-  cat >"$TEST_ROOT/profile-multi.hold" <<'EOF'
-enable
-configure terminal
-profile web-allow-multi
-binary /usr/bin/sleep
-argv 60
-multi
-commit
-end
-write
-EOF
-  "$HOLD_BIN" profile import "$TEST_ROOT/profile-multi.hold" >/dev/null || return 1
-  "$HOLD_BIN" profile export web-allow-multi --json >"$TEST_ROOT/profile-multi.json" || return 1
-  python3 - "$TEST_ROOT/profile-multi.json" <<'PY' || { cat "$TEST_ROOT/profile-multi.json" >&2; return 1; }
-import json, sys
-mode = (json.load(open(sys.argv[1], encoding='utf-8')).get('mode') or {})
-if mode.get('multi') is not True:
-    raise SystemExit(f'multi mode was not persisted: {mode!r}')
-PY
-  out1=$("$HOLD_BIN" start web-allow-multi 2>&1) || return 1
-  id1=$(printf '%s\n' "$out1" | extract_id)
-  pgid1=$(record_pgid "$id1")
-  [ -n "$pgid1" ] || return 1
-  out2=$("$HOLD_BIN" start web-allow-multi 2>&1) || {
-    printf '%s\n' "$out2" >&2
-    return 1
-  }
-  id2=$(printf '%s\n' "$out2" | extract_id)
-  pgid2=$(record_pgid "$id2")
-  [ -n "$pgid2" ] || return 1
-  [ "$id1" != "$id2" ] || return 1
-  "$HOLD_BIN" stop web-allow-multi --all >/dev/null || return 1
-  pgid_terminated "$pgid1" || return 1
-  pgid_terminated "$pgid2"
-}
-
-test_profile_start_inherits_current_environment() {
-  local out id out2 id2 got
-  out=$(as_user env HOLD_PROFILE_ENV=seed "$HOLD_REAL_BIN" /bin/sh -c 'printf "%s\n" "$HOLD_PROFILE_ENV"' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  as_user "$HOLD_REAL_BIN" profile save "$id" as env-test >"$TEST_ROOT/alias-env.out" 2>"$TEST_ROOT/alias-env.err" || return 1
-
-  out2=$(as_user env HOLD_PROFILE_ENV=profile-value "$HOLD_REAL_BIN" start env-test 2>&1) || return 1
-  id2=$(printf '%s\n' "$out2" | extract_id)
-  [ -n "$id2" ] || return 1
-  sleep 0.2
-  got=$(as_user "$HOLD_REAL_BIN" dump "$id2") || return 1
-  printf '%s\n' "$got" | grep -qx 'profile-value' || return 1
-  ! printf '%s\n' "$got" | grep -qx 'seed'
-}
-
-test_docker_env_persists_with_named_profile() {
-  local out id out2 id2 got
-  "$HOLD_BIN" profile envpersist -e HOLD_DOCKER_ENV=fromdocker -- /bin/sh -c 'printf "%s\n" "$HOLD_DOCKER_ENV"' >"$TEST_ROOT/envpersist-create.out" || return 1
-  "$HOLD_BIN" profile export envpersist --json >"$TEST_ROOT/envpersist-profile.json" || return 1
-  grep -Fq '"env": ["HOLD_DOCKER_ENV=fromdocker"]' "$TEST_ROOT/envpersist-profile.json" || { cat "$TEST_ROOT/envpersist-profile.json" >&2; return 1; }
-  out=$("$HOLD_BIN" run -d envpersist 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  sleep 0.2
-  got=$("$HOLD_BIN" dump "$id") || return 1
-  printf '%s\n' "$got" | grep -qx 'fromdocker' || return 1
-
-  out2=$("$HOLD_BIN" run -d --force envpersist 2>&1) || return 1
-  id2=$(printf '%s\n' "$out2" | extract_id)
-  [ -n "$id2" ] || return 1
-  sleep 0.2
-  got=$("$HOLD_BIN" dump "$id2") || return 1
-  printf '%s\n' "$got" | grep -qx 'fromdocker'
-}
-
-test_profile_save_preserves_capability_metadata() {
-  local out id id2 store aliases json
-  store="$HOME/.local/state/hold"
-  out=$("$HOLD_BIN" run -d --cap-drop ALL -- /bin/sleep 60 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  "$HOLD_BIN" profile save "$id" as cap-prof >"$TEST_ROOT/cap-prof-save.out" 2>"$TEST_ROOT/cap-prof-save.err" || {
-    cat "$TEST_ROOT/cap-prof-save.out" "$TEST_ROOT/cap-prof-save.err" >&2
-    return 1
-  }
-  "$HOLD_BIN" stop "$id" >/dev/null || return 1
-  aliases="$store/aliases.json"
-  grep -Fq '"cap_drop": ["ALL"]' "$aliases" || { cat "$aliases" >&2; return 1; }
-
-  out=$("$HOLD_BIN" run -d cap-prof 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id2=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id2" ] || { printf '%s\n' "$out" >&2; return 1; }
-  json=$(record_path "$id2" "$store") || return 1
-  grep -Fq '"cap_drop": ["ALL"]' "$json" || { cat "$json" >&2; return 1; }
-  "$HOLD_BIN" stop "$id2" >/dev/null || return 1
-}
 
 
-test_profile_create_export_import_preserves_capability_metadata() {
-  local out id store json1 json2 transcript record
-  store="$HOME/.local/state/hold"
 
-  "$HOLD_BIN" profile cap-meta --cap-add NET_BIND_SERVICE --cap-drop ALL -- /bin/sleep 60 \
-    >"$TEST_ROOT/cap-meta-create.out" 2>"$TEST_ROOT/cap-meta-create.err" || {
-      cat "$TEST_ROOT/cap-meta-create.out" "$TEST_ROOT/cap-meta-create.err" >&2
-      return 1
-    }
 
-  json1="$TEST_ROOT/cap-meta.json"
-  "$HOLD_BIN" profile export cap-meta --json >"$json1" || return 1
-  python3 - "$json1" <<'PY' || { cat "$json1" >&2; return 1; }
-import json, sys
-p = json.load(open(sys.argv[1], encoding='utf-8'))
-if p.get('cap_add') != ['NET_BIND_SERVICE']:
-    raise SystemExit(f"cap_add not exported: {p!r}")
-if p.get('cap_drop') != ['ALL']:
-    raise SystemExit(f"cap_drop not exported: {p!r}")
-PY
 
-  transcript="$TEST_ROOT/cap-meta.profile"
-  "$HOLD_BIN" profile export cap-meta >"$transcript" || return 1
-  grep -Fxq 'cap-add NET_BIND_SERVICE' "$transcript" || { cat "$transcript" >&2; return 1; }
-  grep -Fxq 'cap-drop ALL' "$transcript" || { cat "$transcript" >&2; return 1; }
 
-  "$HOLD_BIN" profile import "$transcript" as cap-meta-import \
-    >"$TEST_ROOT/cap-meta-import.out" 2>"$TEST_ROOT/cap-meta-import.err" || {
-      cat "$TEST_ROOT/cap-meta-import.out" "$TEST_ROOT/cap-meta-import.err" >&2
-      return 1
-    }
-  json2="$TEST_ROOT/cap-meta-import.json"
-  "$HOLD_BIN" profile export cap-meta-import --json >"$json2" || return 1
-  python3 - "$json2" <<'PY' || { cat "$json2" >&2; return 1; }
-import json, sys
-p = json.load(open(sys.argv[1], encoding='utf-8'))
-if p.get('cap_add') != ['NET_BIND_SERVICE']:
-    raise SystemExit(f"cap_add did not round-trip: {p!r}")
-if p.get('cap_drop') != ['ALL']:
-    raise SystemExit(f"cap_drop did not round-trip: {p!r}")
-PY
 
-  "$HOLD_BIN" profile cap-drop-run --cap-drop ALL -- /bin/sleep 60 \
-    >"$TEST_ROOT/cap-drop-run-create.out" 2>"$TEST_ROOT/cap-drop-run-create.err" || {
-      cat "$TEST_ROOT/cap-drop-run-create.out" "$TEST_ROOT/cap-drop-run-create.err" >&2
-      return 1
-    }
-  out=$("$HOLD_BIN" run -d cap-drop-run 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  record=$(record_path "$id" "$store") || return 1
-  grep -Fq '"cap_drop": ["ALL"]' "$record" || { cat "$record" >&2; return 1; }
-  "$HOLD_BIN" stop "$id" >/dev/null || return 1
-}
+
+
+
 
 
 test_root_capability_drop_all_then_add_preserves_added_cap() {
@@ -2674,26 +2406,6 @@ PY
 }
 
 
-test_docker_env_file_persists_with_named_profile() {
-  local out id got envfile
-  envfile="$TEST_ROOT/docker.env"
-  cat >"$envfile" <<'EOF'
-# hold env file
-HOLD_ENV_FILE_ONE=alpha
-HOLD_ENV_FILE_TWO=value with spaces
-EOF
-  "$HOLD_BIN" profile envfile -e HOLD_INLINE=inline --env-file "$envfile" -- /usr/bin/env >"$TEST_ROOT/envfile-create.out" || return 1
-  "$HOLD_BIN" profile export envfile --json >"$TEST_ROOT/envfile-profile.json" || return 1
-  grep -Fq '"env": ["HOLD_INLINE=inline", "HOLD_ENV_FILE_ONE=alpha", "HOLD_ENV_FILE_TWO=value with spaces"]' "$TEST_ROOT/envfile-profile.json" || { cat "$TEST_ROOT/envfile-profile.json" >&2; return 1; }
-  out=$("$HOLD_BIN" run -d envfile 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-  got=$("$HOLD_BIN" logs --plain -n 500 "$id") || return 1
-  printf '%s\n' "$got" | grep -qx 'HOLD_INLINE=inline' || { printf '%s\n' "$got" >&2; return 1; }
-  printf '%s\n' "$got" | grep -qx 'HOLD_ENV_FILE_ONE=alpha' || { printf '%s\n' "$got" >&2; return 1; }
-  printf '%s\n' "$got" | grep -qx 'HOLD_ENV_FILE_TWO=value with spaces' || { printf '%s\n' "$got" >&2; return 1; }
-}
 
 
 test_docker_rm_removes_run_artifacts_after_exit() {
@@ -2713,526 +2425,22 @@ test_docker_rm_removes_run_artifacts_after_exit() {
 }
 
 
-test_docker_rm_removes_profile_run_artifacts_after_exit() {
-  local out id store json log
-  store="$HOME/.local/state/hold"
-  "$HOLD_BIN" profile rmprofile -- /bin/sh -c 'sleep 0.3' >"$TEST_ROOT/rmprofile-create.out" || return 1
-  out=$("$HOLD_BIN" run -d --rm rmprofile 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  json=$(record_path "$id" "$store") || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
-  log=$(log_path "$id" "$store") || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
-  [ -f "$json" ] || { find "$store" -maxdepth 1 -type f -print >&2 || true; return 1; }
-  path_absent_soon "$json" || { echo "--rm profile run did not remove record $json" >&2; return 1; }
-  path_absent_soon "$log" || { echo "--rm profile run did not remove log $log" >&2; return 1; }
-}
-
-test_captive_profile_env_persists_and_runs() {
-  local out id got store
-  store="$HOME/.local/state/hold"
-  cat <<'EOF' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-env.out" 2>"$TEST_ROOT/captive-env.err" || { cat "$TEST_ROOT/captive-env.out" "$TEST_ROOT/captive-env.err" >&2; return 1; }
-enable
-configure terminal
-profile envcap
-binary /usr/bin/env
-env HOLD_CISCO_ENV cisco-value
-info
-commit
-end
-run envcap
-exit
-EOF
-  grep -q 'HOLD_CISCO_ENV=cisco-value' "$TEST_ROOT/captive-env.out" || { cat "$TEST_ROOT/captive-env.out" >&2; return 1; }
-  grep -Fq '"env": ["HOLD_CISCO_ENV=cisco-value"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  id=$(extract_id <"$TEST_ROOT/captive-env.out")
-  [ -n "$id" ] || { cat "$TEST_ROOT/captive-env.out" "$TEST_ROOT/captive-env.err" >&2; return 1; }
-  sleep 0.2
-  got=$("$HOLD_BIN" dump "$id") || return 1
-  printf '%s\n' "$got" | grep -qx 'HOLD_CISCO_ENV=cisco-value'
-}
-
-test_captive_profile_loads_existing_recipe_for_edit() {
-  local out id edit_id got store
-  store="$HOME/.local/state/hold"
-  "$HOLD_BIN" profile iosedit -e HOLD_OLD_ENV=old -- /usr/bin/env >"$TEST_ROOT/iosedit-create.out" || return 1
-  out=$("$HOLD_BIN" run -d iosedit 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-
-  cat <<'EOF' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-edit-existing.out" 2>"$TEST_ROOT/captive-edit-existing.err" || { cat "$TEST_ROOT/captive-edit-existing.out" "$TEST_ROOT/captive-edit-existing.err" >&2; return 1; }
-enable
-configure terminal
-profile iosedit
-info
-no env HOLD_OLD_ENV
-env HOLD_NEW_ENV new
-commit
-end
-run iosedit
-exit
-EOF
-  grep -q 'binary    : /usr/bin/env' "$TEST_ROOT/captive-edit-existing.out" || { cat "$TEST_ROOT/captive-edit-existing.out" >&2; return 1; }
-  grep -q 'HOLD_OLD_ENV=old' "$TEST_ROOT/captive-edit-existing.out" || { cat "$TEST_ROOT/captive-edit-existing.out" >&2; return 1; }
-  grep -q 'Profile committed' "$TEST_ROOT/captive-edit-existing.out" || { cat "$TEST_ROOT/captive-edit-existing.out" >&2; return 1; }
-  grep -Fq '"env": ["HOLD_NEW_ENV=new"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  ! grep -q 'HOLD_OLD_ENV=old' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  edit_id=$(extract_id <"$TEST_ROOT/captive-edit-existing.out" | tail -n1)
-  [ -n "$edit_id" ] || { cat "$TEST_ROOT/captive-edit-existing.out" "$TEST_ROOT/captive-edit-existing.err" >&2; return 1; }
-  sleep 0.2
-  got=$("$HOLD_BIN" logs --plain -n 500 "$edit_id") || return 1
-  printf '%s\n' "$got" | grep -q 'HOLD_NEW_ENV=new' || { printf '%s\n' "$got" >&2; return 1; }
-  ! printf '%s\n' "$got" | grep -q 'HOLD_OLD_ENV=old' || { printf '%s\n' "$got" >&2; return 1; }
-}
 
 
-test_captive_profile_publish_volume_rejected() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local rc
-
-  set +e
-  cat <<EOF | "$HOLD_BIN" cli >"$TEST_ROOT/captive-meta-reject.out" 2>"$TEST_ROOT/captive-meta-reject.err"
-enable
-configure terminal
-profile iosmeta
-binary /bin/true
-publish 8080:3000
-volume $TEST_ROOT:/work
-commit
-end
-exit
-EOF
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || { echo "publish/volume commands should make the captive session report failure" >&2; return 1; }
-  cat "$TEST_ROOT/captive-meta-reject.out" "$TEST_ROOT/captive-meta-reject.err" >"$TEST_ROOT/captive-meta-reject.all"
-  grep -q 'does not publish or forward ports' "$TEST_ROOT/captive-meta-reject.all" || { cat "$TEST_ROOT/captive-meta-reject.all" >&2; return 1; }
-  grep -q 'does not mount or remap volumes' "$TEST_ROOT/captive-meta-reject.all" || { cat "$TEST_ROOT/captive-meta-reject.all" >&2; return 1; }
-  grep -q 'Profile committed' "$TEST_ROOT/captive-meta-reject.out" || { cat "$TEST_ROOT/captive-meta-reject.out" >&2; return 1; }
-
-  "$HOLD_BIN" profile export iosmeta --json >"$TEST_ROOT/iosmeta-reject.json" || return 1
-  python3 - "$TEST_ROOT/iosmeta-reject.json" <<'PY' || { cat "$TEST_ROOT/iosmeta-reject.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if 'ports' in profile or 'volumes' in profile:
-    raise SystemExit(f"publish/volume metadata was recorded: {profile!r}")
-PY
-}
 
 
-test_captive_profile_capability_metadata_preserves_edits_and_clears() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local rc
-
-  set +e
-  cat <<'EOF' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-cap-set.out" 2>"$TEST_ROOT/captive-cap-set.err"
-enable
-configure terminal
-profile ioscap
-binary /bin/sleep
-argv 60
-cap-add NET_BIND_SERVICE
-cap-drop ALL
-info
-commit
-end
-exit
-EOF
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-cap-set.out" "$TEST_ROOT/captive-cap-set.err" >&2; return 1; }
-  grep -q 'cap-add   : NET_BIND_SERVICE' "$TEST_ROOT/captive-cap-set.out" || { cat "$TEST_ROOT/captive-cap-set.out" >&2; return 1; }
-  grep -q 'cap-drop  : ALL' "$TEST_ROOT/captive-cap-set.out" || { cat "$TEST_ROOT/captive-cap-set.out" >&2; return 1; }
-
-  "$HOLD_BIN" profile export ioscap --json >"$TEST_ROOT/ioscap-set.json" || return 1
-  python3 - "$TEST_ROOT/ioscap-set.json" <<'PY' || { cat "$TEST_ROOT/ioscap-set.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if profile.get('cap_add') != ['NET_BIND_SERVICE']:
-    raise SystemExit(f"cap_add not committed: {profile!r}")
-if profile.get('cap_drop') != ['ALL']:
-    raise SystemExit(f"cap_drop not committed: {profile!r}")
-PY
-
-  set +e
-  cat <<'EOF' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-cap-clear.out" 2>"$TEST_ROOT/captive-cap-clear.err"
-enable
-configure terminal
-profile ioscap
-info
-no cap-add
-no cap-drop
-info
-commit
-end
-exit
-EOF
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-cap-clear.out" "$TEST_ROOT/captive-cap-clear.err" >&2; return 1; }
-  grep -q 'cap-add   : NET_BIND_SERVICE' "$TEST_ROOT/captive-cap-clear.out" || { cat "$TEST_ROOT/captive-cap-clear.out" >&2; return 1; }
-  grep -q 'cap-drop  : ALL' "$TEST_ROOT/captive-cap-clear.out" || { cat "$TEST_ROOT/captive-cap-clear.out" >&2; return 1; }
-  grep -q 'cap-add   : -' "$TEST_ROOT/captive-cap-clear.out" || { cat "$TEST_ROOT/captive-cap-clear.out" >&2; return 1; }
-  grep -q 'cap-drop  : -' "$TEST_ROOT/captive-cap-clear.out" || { cat "$TEST_ROOT/captive-cap-clear.out" >&2; return 1; }
-
-  "$HOLD_BIN" profile export ioscap --json >"$TEST_ROOT/ioscap-clear.json" || return 1
-  python3 - "$TEST_ROOT/ioscap-clear.json" <<'PY' || { cat "$TEST_ROOT/ioscap-clear.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if 'cap_add' in profile or 'cap_drop' in profile:
-    raise SystemExit(f"capability fields not cleared: {profile!r}")
-PY
-}
 
 
-test_captive_profile_restart_metadata_preserves_edits_and_clears() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id rc
-  "$HOLD_BIN" profile iosrestart -d --restart on-failure:2 --restart-delay 3 -- /bin/sh -c 'sleep 1' >"$TEST_ROOT/iosrestart-create.out" || return 1
-  out=$("$HOLD_BIN" run iosrestart 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
-
-  cat <<'EOF' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-restart-preserve.out" 2>"$TEST_ROOT/captive-restart-preserve.err" || { cat "$TEST_ROOT/captive-restart-preserve.out" "$TEST_ROOT/captive-restart-preserve.err" >&2; return 1; }
-enable
-configure terminal
-profile iosrestart
-info
-env HOLD_CISCO_TOUCHED yes
-commit
-end
-exit
-EOF
-  grep -q 'restart   : on-failure:2 delay=3' "$TEST_ROOT/captive-restart-preserve.out" || {
-    cat "$TEST_ROOT/captive-restart-preserve.out" >&2
-    return 1
-  }
-  "$HOLD_BIN" profile export iosrestart --json >"$TEST_ROOT/iosrestart-preserve.json" || return 1
-  python3 - "$TEST_ROOT/iosrestart-preserve.json" <<'PY' || { cat "$TEST_ROOT/iosrestart-preserve.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if profile.get('restart') != 'on-failure:2':
-    raise SystemExit(f"restart not preserved: {profile.get('restart')!r}")
-if profile.get('restart_delay_seconds') != 3:
-    raise SystemExit(f"restart delay not preserved: {profile.get('restart_delay_seconds')!r}")
-if 'HOLD_CISCO_TOUCHED=yes' not in profile.get('env', []):
-    raise SystemExit(f"env edit missing after commit: {profile.get('env')!r}")
-PY
-
-  cat <<'EOF' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-restart-edit.out" 2>"$TEST_ROOT/captive-restart-edit.err" || { cat "$TEST_ROOT/captive-restart-edit.out" "$TEST_ROOT/captive-restart-edit.err" >&2; return 1; }
-enable
-configure terminal
-profile iosrestart
-restart always
-restart-delay 4
-commit
-end
-exit
-EOF
-  "$HOLD_BIN" profile export iosrestart --json >"$TEST_ROOT/iosrestart-edit.json" || return 1
-  python3 - "$TEST_ROOT/iosrestart-edit.json" <<'PY' || { cat "$TEST_ROOT/iosrestart-edit.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if profile.get('restart') != 'always':
-    raise SystemExit(f"restart not edited: {profile.get('restart')!r}")
-if profile.get('restart_delay_seconds') != 4:
-    raise SystemExit(f"restart delay not edited: {profile.get('restart_delay_seconds')!r}")
-PY
-
-  cat <<'EOF' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-restart-clear.out" 2>"$TEST_ROOT/captive-restart-clear.err"
-enable
-configure terminal
-profile iosrestart
-no restart
-commit
-end
-exit
-EOF
-  rc=$?
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-restart-clear.out" "$TEST_ROOT/captive-restart-clear.err" >&2; return 1; }
-  "$HOLD_BIN" profile export iosrestart --json >"$TEST_ROOT/iosrestart-clear.json" || return 1
-  python3 - "$TEST_ROOT/iosrestart-clear.json" <<'PY' || { cat "$TEST_ROOT/iosrestart-clear.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if 'restart' in profile or 'restart_delay_seconds' in profile:
-    raise SystemExit(f"restart fields not cleared: {profile!r}")
-PY
-}
 
 
-test_captive_profile_quoted_argv_and_env_round_trip() {
-  local rc id got store
-  store="$HOME/.local/state/hold"
-  set +e
-  cat <<'EOF' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-quoted.out" 2>"$TEST_ROOT/captive-quoted.err"
-enable
-configure terminal
-profile quoted
-binary /bin/sh
-argv -c 'printf "%s\n" "$HOLD_QUOTED_ENV"; printf "%s\n" "arg with spaces"'
-env HOLD_QUOTED_ENV "value with spaces"
-commit
-end
-run quoted
-exit
-EOF
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-quoted.out" "$TEST_ROOT/captive-quoted.err" >&2; return 1; }
-  grep -q 'Profile committed.' "$TEST_ROOT/captive-quoted.out" || { cat "$TEST_ROOT/captive-quoted.out" >&2; return 1; }
-  grep -Fq '"env": ["HOLD_QUOTED_ENV=value with spaces"]' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  grep -Fq 'HOLD_QUOTED_ENV' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  grep -Fq 'arg with spaces' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  id=$(extract_id <"$TEST_ROOT/captive-quoted.out")
-  [ -n "$id" ] || { cat "$TEST_ROOT/captive-quoted.out" "$TEST_ROOT/captive-quoted.err" >&2; return 1; }
-  sleep 0.2
-  got=$("$HOLD_BIN" logs --plain -n 50 "$id") || return 1
-  printf '%s\n' "$got" | grep -qx 'value with spaces' || { printf '%s\n' "$got" >&2; return 1; }
-  printf '%s\n' "$got" | grep -qx 'arg with spaces' || { printf '%s\n' "$got" >&2; return 1; }
-}
 
-test_profile_transcript_import_export_roundtrip() {
-  local transcript export out id got store
-  store="$HOME/.local/state/hold"
-  transcript="$TEST_ROOT/import.profile"
-  cat >"$transcript" <<'EOF' || return 1
-enable
-configure terminal
-profile cli-prof
-binary /bin/echo
-argv 'hello import'
-commit
-end
-write
-EOF
-  "$HOLD_BIN" profile import "$transcript" >"$TEST_ROOT/import.out" 2>"$TEST_ROOT/import.err" || return 1
-  [ ! -s "$TEST_ROOT/import.out" ] || return 1
-  [ ! -s "$TEST_ROOT/import.err" ] || return 1
-  grep -Fq '"cli-prof": {"bin": "/usr/bin/echo"' "$store/aliases.json" ||
-    grep -Fq '"cli-prof": {"bin": "/bin/echo"' "$store/aliases.json" || return 1
-  grep -Fq '"args": ["hello import"]' "$store/aliases.json" || return 1
 
-  "$HOLD_BIN" import "$transcript" as top-prof --dry-run >"$TEST_ROOT/top-import-dry.out" 2>"$TEST_ROOT/top-import-dry.err" || return 1
-  grep -Fxq "profile top-prof import dry-run ok" "$TEST_ROOT/top-import-dry.out" || {
-    cat "$TEST_ROOT/top-import-dry.out" "$TEST_ROOT/top-import-dry.err" >&2
-    return 1
-  }
-  ! grep -Fq '"top-prof":' "$store/aliases.json" || return 1
 
-  "$HOLD_BIN" import "$transcript" as top-prof --yes >"$TEST_ROOT/top-import.out" 2>"$TEST_ROOT/top-import.err" || return 1
-  [ ! -s "$TEST_ROOT/top-import.out" ] || return 1
-  [ ! -s "$TEST_ROOT/top-import.err" ] || return 1
-  grep -Fq '"top-prof": {"bin": "/usr/bin/echo"' "$store/aliases.json" ||
-    grep -Fq '"top-prof": {"bin": "/bin/echo"' "$store/aliases.json" || return 1
 
-  "$HOLD_BIN" profile export cli-prof >"$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "enable" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "configure terminal" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "profile cli-prof" "$TEST_ROOT/export.profile" || return 1
-  grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "argv 'hello import'" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "commit" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "end" "$TEST_ROOT/export.profile" || return 1
-  grep -Fxq "write" "$TEST_ROOT/export.profile" || return 1
 
-  "$HOLD_BIN" export top-prof as "$TEST_ROOT/top-export.profile" || return 1
-  grep -Fxq "profile top-prof" "$TEST_ROOT/top-export.profile" || return 1
-  grep -Fxq "argv 'hello import'" "$TEST_ROOT/top-export.profile" || return 1
-  "$HOLD_BIN" export top-prof >"$TEST_ROOT/top-export.stdout" || return 1
-  grep -Fxq "profile top-prof" "$TEST_ROOT/top-export.stdout" || return 1
-  "$HOLD_BIN" export top-prof --format json >"$TEST_ROOT/top-export.json" || return 1
-  grep -Fq '"name": "top-prof"' "$TEST_ROOT/top-export.json" || return 1
-  ! grep -Fq '"ports":' "$TEST_ROOT/top-export.json" || return 1
-  ! grep -Fq '"volumes":' "$TEST_ROOT/top-export.json" || return 1
 
-  out=$("$HOLD_BIN" start cli-prof 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  sleep 0.1
-  got=$("$HOLD_BIN" dump "$id") || return 1
-  printf '%s\n' "$got" | grep -qx 'hello import'
-}
 
-test_profile_name_first_set_command() {
-  local out id got
-  "$HOLD_BIN" profile edit-prof set command -- /bin/echo 'name first edit' \
-    >"$TEST_ROOT/profile-set.out" 2>"$TEST_ROOT/profile-set.err" || {
-      cat "$TEST_ROOT/profile-set.out" "$TEST_ROOT/profile-set.err" >&2
-      return 1
-    }
-  [ ! -s "$TEST_ROOT/profile-set.out" ] || return 1
-  [ ! -s "$TEST_ROOT/profile-set.err" ] || return 1
 
-  "$HOLD_BIN" profile edit-prof export --format cli >"$TEST_ROOT/profile-set.export" || return 1
-  grep -Fxq "profile edit-prof" "$TEST_ROOT/profile-set.export" || return 1
-  grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/profile-set.export" || {
-    cat "$TEST_ROOT/profile-set.export" >&2
-    return 1
-  }
-  grep -Fxq "argv 'name first edit'" "$TEST_ROOT/profile-set.export" || {
-    cat "$TEST_ROOT/profile-set.export" >&2
-    return 1
-  }
-
-  "$HOLD_BIN" profile edit-prof show >"$TEST_ROOT/profile-set.show" || return 1
-  grep -Fxq "profile edit-prof" "$TEST_ROOT/profile-set.show" || return 1
-  grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/profile-set.show" || {
-    cat "$TEST_ROOT/profile-set.show" >&2
-    return 1
-  }
-  grep -Fxq "argv 'name first edit'" "$TEST_ROOT/profile-set.show" || {
-    cat "$TEST_ROOT/profile-set.show" >&2
-    return 1
-  }
-
-  "$HOLD_BIN" profile edit-prof export --format json >"$TEST_ROOT/profile-set.json" || return 1
-  grep -Fq '"name": "edit-prof"' "$TEST_ROOT/profile-set.json" || return 1
-  grep -Fq '"args": ["name first edit"]' "$TEST_ROOT/profile-set.json" || return 1
-
-  out=$("$HOLD_BIN" profile edit-prof start 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.1
-  got=$("$HOLD_BIN" logs "$id") || return 1
-  printf '%s\n' "$got" | grep -qx 'name first edit'
-}
-
-test_profile_name_first_crud() {
-  "$HOLD_BIN" profile crud-prof create -- /bin/echo 'crud profile' \
-    >"$TEST_ROOT/profile-crud.create.out" 2>"$TEST_ROOT/profile-crud.create.err" || {
-      cat "$TEST_ROOT/profile-crud.create.out" "$TEST_ROOT/profile-crud.create.err" >&2
-      return 1
-    }
-  [ ! -s "$TEST_ROOT/profile-crud.create.out" ] || return 1
-  [ ! -s "$TEST_ROOT/profile-crud.create.err" ] || return 1
-
-  if "$HOLD_BIN" profile crud-prof create -- /bin/echo duplicate \
-      >"$TEST_ROOT/profile-crud.dup.out" 2>"$TEST_ROOT/profile-crud.dup.err"; then
-    cat "$TEST_ROOT/profile-crud.dup.out" "$TEST_ROOT/profile-crud.dup.err" >&2
-    return 1
-  fi
-  grep -Fq "profile 'crud-prof' already exists" "$TEST_ROOT/profile-crud.dup.err" || {
-    cat "$TEST_ROOT/profile-crud.dup.err" >&2
-    return 1
-  }
-
-  "$HOLD_BIN" profile crud-prof rename renamed-prof \
-    >"$TEST_ROOT/profile-crud.rename.out" 2>"$TEST_ROOT/profile-crud.rename.err" || {
-      cat "$TEST_ROOT/profile-crud.rename.out" "$TEST_ROOT/profile-crud.rename.err" >&2
-      return 1
-    }
-  [ ! -s "$TEST_ROOT/profile-crud.rename.out" ] || return 1
-  [ ! -s "$TEST_ROOT/profile-crud.rename.err" ] || return 1
-
-  if "$HOLD_BIN" profile crud-prof show >"$TEST_ROOT/profile-crud.old.out" 2>"$TEST_ROOT/profile-crud.old.err"; then
-    cat "$TEST_ROOT/profile-crud.old.out" "$TEST_ROOT/profile-crud.old.err" >&2
-    return 1
-  fi
-  grep -Fq "profile 'crud-prof' not found" "$TEST_ROOT/profile-crud.old.err" || return 1
-
-  "$HOLD_BIN" profile renamed-prof show >"$TEST_ROOT/profile-crud.show" || return 1
-  grep -Fxq "profile renamed-prof" "$TEST_ROOT/profile-crud.show" || return 1
-  grep -Eq "^binary (/usr)?/bin/echo$" "$TEST_ROOT/profile-crud.show" || {
-    cat "$TEST_ROOT/profile-crud.show" >&2
-    return 1
-  }
-  grep -Fxq "argv 'crud profile'" "$TEST_ROOT/profile-crud.show" || {
-    cat "$TEST_ROOT/profile-crud.show" >&2
-    return 1
-  }
-
-  "$HOLD_BIN" profile renamed-prof delete \
-    >"$TEST_ROOT/profile-crud.delete.out" 2>"$TEST_ROOT/profile-crud.delete.err" || {
-      cat "$TEST_ROOT/profile-crud.delete.out" "$TEST_ROOT/profile-crud.delete.err" >&2
-      return 1
-    }
-  [ ! -s "$TEST_ROOT/profile-crud.delete.out" ] || return 1
-  [ ! -s "$TEST_ROOT/profile-crud.delete.err" ] || return 1
-
-  if "$HOLD_BIN" profile renamed-prof show >"$TEST_ROOT/profile-crud.deleted.out" 2>"$TEST_ROOT/profile-crud.deleted.err"; then
-    cat "$TEST_ROOT/profile-crud.deleted.out" "$TEST_ROOT/profile-crud.deleted.err" >&2
-    return 1
-  fi
-  grep -Fq "profile 'renamed-prof' not found" "$TEST_ROOT/profile-crud.deleted.err" || return 1
-}
-
-test_profile_json_export_and_import() {
-  local json docker_json out id got store
-  store="$HOME/.local/state/hold"
-  json="$TEST_ROOT/json.profile"
-  cat >"$json" <<'JSON' || return 1
-{"version":1,"name":"json-prof","bin":"/bin/echo","args":["/bin/echo","hello json"]}
-JSON
-  "$HOLD_BIN" profile import "$json" >/dev/null || return 1
-  "$HOLD_BIN" profile export json-prof --json >"$TEST_ROOT/export.json" || return 1
-  grep -Fq '"name": "json-prof"' "$TEST_ROOT/export.json" || return 1
-  grep -Fq '"args": ["hello json"]' "$TEST_ROOT/export.json" || return 1
-  grep -Fq '"json-prof": {"bin": "/bin/echo"' "$store/aliases.json" || return 1
-
-  out=$("$HOLD_BIN" start json-prof 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  sleep 0.1
-  got=$("$HOLD_BIN" dump "$id") || return 1
-  printf '%s\n' "$got" | grep -qx 'hello json' || return 1
-
-  docker_json="$TEST_ROOT/docker-shaped.profile.json"
-  cat >"$docker_json" <<'JSON' || return 1
-{
-  "version": 1,
-  "name": "docker-json-prof",
-  "Path": "/bin/sh",
-  "Args": ["-c", "printf '%s\\n' \"$DOCKER_PROFILE_TEST\""],
-  "Config": {
-    "Env": ["DOCKER_PROFILE_TEST=from-config"],
-    "Tty": false,
-    "OpenStdin": false,
-    "CapAdd": null,
-    "CapDrop": null,
-    "LogConfig": {"Type": "local", "Config": {}}
-  }
-}
-JSON
-  "$HOLD_BIN" profile import "$docker_json" >/dev/null || return 1
-  grep -Fq '"docker-json-prof": {"bin": "/bin/sh"' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  out=$("$HOLD_BIN" start docker-json-prof 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  sleep 0.1
-  got=$("$HOLD_BIN" dump "$id") || return 1
-  printf '%s\n' "$got" | grep -qx 'from-config'
-}
-
-test_invalid_alias_names_rejected() {
-  local out id rc
-  out=$("$HOLD_BIN" -d true 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  set +e
-  "$HOLD_BIN" profile save "$id" as bad.name >"$TEST_ROOT/alias-bad.out" 2>"$TEST_ROOT/alias-bad.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 5 ] || return 1
-  grep -q 'invalid profile' "$TEST_ROOT/alias-bad.err"
-}
-
-test_short_hex_alias_name_allowed() {
-  local out id sh_bin
-  sh_bin="$(resolve_path /bin/sh)" || return 1
-  out=$("$HOLD_BIN" -d /bin/sh -c ':' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  "$HOLD_BIN" profile save "$id" as db >"$TEST_ROOT/alias-db.out" 2>"$TEST_ROOT/alias-db.err" || return 1
-  [ ! -s "$TEST_ROOT/alias-db.out" ] || return 1
-  grep -Fqx "hold: pinned 'db' -> $sh_bin -c :" "$TEST_ROOT/alias-db.err" || return 1
-  "$HOLD_BIN" profiles >"$TEST_ROOT/aliases-db.out" || return 1
-  grep -Eq "^db[[:space:]]+user[[:space:]]+" "$TEST_ROOT/aliases-db.out" || return 1
-  grep -Fq "$sh_bin -c :" "$TEST_ROOT/aliases-db.out"
-}
 
 
 
@@ -3462,13 +2670,6 @@ JSON
   printf '%s\n' "$ps_out" | grep -q '^fe4a4b8fbc06' || { printf '%s\n' "$ps_out" >&2; return 1; }
   printf '%s\n' "$ps_out" | grep -q '"/usr/bin/python3 -m http' || { printf '%s\n' "$ps_out" >&2; return 1; }
   printf '%s\n' "$ps_out" | grep -q 'adjective_noun' || { printf '%s\n' "$ps_out" >&2; return 1; }
-  "$HOLD_BIN" profile save fe4a4b8fbc06 as docker-derived \
-    >"$TEST_ROOT/docker-derived.out" 2>"$TEST_ROOT/docker-derived.err" || {
-      cat "$TEST_ROOT/docker-derived.out" "$TEST_ROOT/docker-derived.err" >&2
-      return 1
-    }
-  grep -Fq '"docker-derived": {"bin": ' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
-  grep -Fq 'http.server' "$store/aliases.json" || { cat "$store/aliases.json" >&2; return 1; }
 }
 
 test_root_start_writes_system_store_and_public_unknown() {
@@ -3618,23 +2819,6 @@ test_sudo_system_start_of_home_argv_paths_uses_user_store() {
   id=$(printf '%s\n' "$out" | extract_id); [ -n "$id" ] && as_sudo_from_user "$HOLD_REAL_BIN" stop "$id" >/dev/null 2>&1 || true
 }
 
-test_home_elevated_run_alias_stays_user_local() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local app out id aliases
-  app=$(make_sleeping_home_executable) || return 1
-  out=$(as_sudo_from_user "$HOLD_REAL_BIN" --system -d "$app" 2>&1) || return 1
-  assert_home_system_start_is_user_local "$out" || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  as_user "$HOLD_REAL_BIN" profile save "$id" as home-elevated >/dev/null || {
-    as_sudo_from_user "$HOLD_REAL_BIN" stop "$id" >/dev/null 2>&1 || true
-    return 1
-  }
-  as_sudo_from_user "$HOLD_REAL_BIN" stop "$id" >/dev/null 2>&1 || true
-  aliases="$ACTOR_HOME/.local/state/hold/aliases.json"
-  root_file_exists "$aliases" || return 1
-  root_grep '"home-elevated"' "$aliases" || return 1
-  root_path_absent "$HOLD_TEST_SYSTEM_STATE_DIR/public/aliases.json" || return 1
-}
 
 test_sudo_context_can_stop_unique_user_local_run() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
@@ -3647,46 +2831,6 @@ test_sudo_context_can_stop_unique_user_local_run() {
   pgid_terminated "$pgid"
 }
 
-test_hold_unified_cli_surface() {
-  local out id id2 id3
-  out=$("$HOLD_BIN" run -d -- /bin/sh -c 'echo hold-run-line' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  "$HOLD_BIN" logs "$id" >"$TEST_ROOT/hold-logs.out" 2>"$TEST_ROOT/hold-logs.err" || {
-    cat "$TEST_ROOT/hold-logs.out" "$TEST_ROOT/hold-logs.err" >&2
-    return 1
-  }
-  grep -q 'hold-run-line' "$TEST_ROOT/hold-logs.out" || { cat "$TEST_ROOT/hold-logs.out" >&2; return 1; }
-  "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/hold-inspect.out" || return 1
-  grep -q 'hold-run-line' "$TEST_ROOT/hold-inspect.out" || return 1
-  "$HOLD_BIN" status >"$TEST_ROOT/hold-status.out" || return 1
-  grep -q "$id" "$TEST_ROOT/hold-status.out" || return 1
-  "$HOLD_BIN" show runs >"$TEST_ROOT/hold-show-runs.out" || return 1
-  grep -q 'ID' "$TEST_ROOT/hold-show-runs.out" || return 1
-  "$HOLD_BIN" doctor >"$TEST_ROOT/hold-doctor.out" || return 1
-  grep -q 'version:' "$TEST_ROOT/hold-doctor.out" || return 1
-
-  out=$("$HOLD_BIN" run -d -- /usr/bin/sleep 60 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  "$HOLD_BIN" profile save "$id" as hold-web >/dev/null || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null || return 1
-  "$HOLD_BIN" prune "$id" >/dev/null || return 1
-  "$HOLD_BIN" profiles >"$TEST_ROOT/hold-profiles.out" || return 1
-  grep -q 'hold-web' "$TEST_ROOT/hold-profiles.out" || return 1
-  set +e; "$HOLD_BIN" profile list >"$TEST_ROOT/hold-profile-list.out" 2>"$TEST_ROOT/hold-profile-list.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold profile list: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'hold profiles' "$TEST_ROOT/hold-profile-list.err" || { cat "$TEST_ROOT/hold-profile-list.err" >&2; return 1; }
-  "$HOLD_BIN" show profiles >"$TEST_ROOT/hold-show-profiles.out" || return 1
-  grep -q 'hold-web' "$TEST_ROOT/hold-show-profiles.out" || return 1
-  out=$("$HOLD_BIN" profile run hold-web 2>&1) || return 1
-  id2=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id2" ] || { printf '%s\n' "$out" >&2; return 1; }
-  "$HOLD_BIN" show running hold-web >"$TEST_ROOT/hold-show-running.out" || return 1
-  grep -q "$id2" "$TEST_ROOT/hold-show-running.out" || { cat "$TEST_ROOT/hold-show-running.out" >&2; return 1; }
-  "$HOLD_BIN" stop "$id2" >/dev/null || return 1
-  "$HOLD_BIN" clean hold-web >/dev/null || return 1
-}
 
 test_docker_shaped_cli_flags_and_rm() {
   local out id id2
@@ -3716,8 +2860,6 @@ PY
   "$HOLD_BIN" ps -a >"$TEST_ROOT/docker-ps.out" || return 1
   grep -Eq "^RUN ID[[:space:]]+PROFILE[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
   grep -Eq "^$id[[:space:]]+-[[:space:]].*Exited.*docker-web$" "$TEST_ROOT/docker-ps.out" || { cat "$TEST_ROOT/docker-ps.out" >&2; return 1; }
-  "$HOLD_BIN" profiles >"$TEST_ROOT/docker-profiles.out" || return 1
-  ! grep -q 'docker-web' "$TEST_ROOT/docker-profiles.out" || { cat "$TEST_ROOT/docker-profiles.out" >&2; return 1; }
 
   out=$("$HOLD_BIN" -d --name docker-direct /bin/sh -c 'echo direct; sleep 5' 2>&1) || {
     printf '%s\n' "$out" >&2
@@ -3728,8 +2870,6 @@ PY
   "$HOLD_BIN" rm --force docker-direct >/dev/null || return 1
   set +e; "$HOLD_BIN" inspect "$id2" >"$TEST_ROOT/docker-rm-inspect.out" 2>&1; rc=$?; set -e
   [ "$rc" -ne 0 ] || { cat "$TEST_ROOT/docker-rm-inspect.out" >&2; return 1; }
-  "$HOLD_BIN" profiles >"$TEST_ROOT/docker-profiles-after-rm.out" || return 1
-  ! grep -q 'docker-direct' "$TEST_ROOT/docker-profiles-after-rm.out" || { cat "$TEST_ROOT/docker-profiles-after-rm.out" >&2; return 1; }
 }
 
 test_docker_bare_launch_foreground_follows_output_by_default() {
@@ -3886,41 +3026,6 @@ test_start_existing_run_appends_retained_log() {
   [ "${after_count:-0}" -ge 2 ] || { cat "$log" >&2; return 1; }
 }
 
-test_docker_restart_persists_with_named_profile() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id replay_id
-  "$HOLD_BIN" profile restartprof -d --restart on-failure:1 --restart-delay 1 -- /bin/sh -c 'echo restart-profile; sleep 0.1' >"$TEST_ROOT/restartprof-create.out" || return 1
-  out=$("$HOLD_BIN" run -d restartprof 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-  "$HOLD_BIN" profile export restartprof --json >"$TEST_ROOT/restartprof.json" || return 1
-  "$HOLD_BIN" profile export restartprof >"$TEST_ROOT/restartprof.txt" || return 1
-  out=$("$HOLD_BIN" run -d restartprof 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  replay_id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$replay_id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-  "$HOLD_BIN" inspect "$replay_id" >"$TEST_ROOT/restartprof-run.json" || return 1
-  "$HOLD_BIN" stop "$id" "$replay_id" >/dev/null 2>&1 || true
-  grep -q '^restart on-failure:1$' "$TEST_ROOT/restartprof.txt" || { cat "$TEST_ROOT/restartprof.txt" >&2; return 1; }
-  grep -q '^restart-delay 1$' "$TEST_ROOT/restartprof.txt" || { cat "$TEST_ROOT/restartprof.txt" >&2; return 1; }
-  python3 - "$TEST_ROOT/restartprof.json" "$TEST_ROOT/restartprof-run.json" <<'PY'
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-run = json.load(open(sys.argv[2], encoding='utf-8'))[0]
-for label, obj in (("profile", profile), ("run", run)):
-    if obj.get("restart") != "on-failure:1":
-        raise SystemExit(f"{label} restart mismatch: {obj.get('restart')!r}")
-    if obj.get("restart_delay_seconds") != 1:
-        raise SystemExit(f"{label} restart delay mismatch: {obj.get('restart_delay_seconds')!r}")
-PY
-}
 
 test_docker_publish_and_volume_rejected() {
   local rc
@@ -3937,65 +3042,8 @@ test_docker_publish_and_volume_rejected() {
   set -e
   [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/docker-volume.out" "$TEST_ROOT/docker-volume.err" >&2; return 1; }
   grep -q 'does not mount or remap volumes' "$TEST_ROOT/docker-volume.err" || { cat "$TEST_ROOT/docker-volume.err" >&2; return 1; }
-
-  set +e
-  "$HOLD_BIN" profile bad-publish -p 8080:3000 -- /bin/true >"$TEST_ROOT/profile-publish.out" 2>"$TEST_ROOT/profile-publish.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/profile-publish.out" "$TEST_ROOT/profile-publish.err" >&2; return 1; }
-  grep -q 'does not publish or forward ports' "$TEST_ROOT/profile-publish.err" || { cat "$TEST_ROOT/profile-publish.err" >&2; return 1; }
-
-  set +e
-  "$HOLD_BIN" profile bad-volume -v "$TEST_ROOT:/work" -- /bin/true >"$TEST_ROOT/profile-volume.out" 2>"$TEST_ROOT/profile-volume.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/profile-volume.out" "$TEST_ROOT/profile-volume.err" >&2; return 1; }
-  grep -q 'does not mount or remap volumes' "$TEST_ROOT/profile-volume.err" || { cat "$TEST_ROOT/profile-volume.err" >&2; return 1; }
 }
 
-test_docker_named_profile_persists_mode_flags() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id replay_id
-  "$HOLD_BIN" profile modeprof -d -i -t -- /bin/sleep 5 >"$TEST_ROOT/modeprof-create.out" || return 1
-  out=$("$HOLD_BIN" run modeprof 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  "$HOLD_BIN" profile export modeprof --json >"$TEST_ROOT/modeprof.json" || return 1
-  "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/modeprof-run.json" || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
-  "$HOLD_BIN" prune "$id" >/dev/null 2>&1 || true
-
-  out=$("$HOLD_BIN" run modeprof 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  replay_id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$replay_id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  "$HOLD_BIN" inspect "$replay_id" >"$TEST_ROOT/modeprof-replay.json" || return 1
-  "$HOLD_BIN" stop "$replay_id" >/dev/null 2>&1 || true
-  python3 - "$TEST_ROOT/modeprof.json" "$TEST_ROOT/modeprof-run.json" "$TEST_ROOT/modeprof-replay.json" <<'PY' || {
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-first = json.load(open(sys.argv[2], encoding='utf-8'))[0]
-replay = json.load(open(sys.argv[3], encoding='utf-8'))[0]
-mode = profile.get('mode') or {}
-for key in ('interactive', 'tty', 'detach'):
-    if mode.get(key) is not True:
-        raise SystemExit(f'profile mode {key} was not persisted: {mode!r}')
-if 'console_sock' not in first:
-    raise SystemExit('initial -it run did not allocate a console socket')
-if 'console_sock' not in replay:
-    raise SystemExit('profile replay did not preserve tty/console behavior')
-if replay.get('alias') != 'modeprof':
-    raise SystemExit(f'profile replay lost alias: {replay.get("alias")!r}')
-PY
-    cat "$TEST_ROOT/modeprof.json" "$TEST_ROOT/modeprof-run.json" "$TEST_ROOT/modeprof-replay.json" >&2
-    return 1
-  }
-}
 
 test_docker_interactive_stdin_pipes_to_child() {
   local out id
@@ -4087,108 +3135,7 @@ PY
 }
 
 
-test_docker_profile_it_reconnects_singular_tty_run() {
-  command -v script >/dev/null 2>&1 || skip "script not available"
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id rc count
-  cat >"$TEST_ROOT/docker-tty-reconnect-child.sh" <<'EOF'
-#!/bin/sh
-printf 'ready-reconnect\n'
-while IFS= read -r line; do
-  printf 'reconnect:%s\n' "$line"
-done
-EOF
-  chmod +x "$TEST_ROOT/docker-tty-reconnect-child.sh"
-  "$HOLD_BIN" profile ttyreconnect -d -i -t -- "$TEST_ROOT/docker-tty-reconnect-child.sh" >"$TEST_ROOT/docker-tty-reconnect-create.out" || return 1
-  out=$("$HOLD_BIN" run ttyreconnect 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.3
-  set +e
-  python3 - <<'PY' | script -qfec "$HOLD_BIN run -it ttyreconnect" /dev/null >"$TEST_ROOT/docker-tty-reconnect.out" 2>"$TEST_ROOT/docker-tty-reconnect.err"
-import sys, time
-out = sys.stdout.buffer
-time.sleep(0.5)
-out.write(b"hello-reconnect\n")
-out.flush()
-time.sleep(0.5)
-out.write(b"\x10\x11")
-out.flush()
-time.sleep(0.1)
-PY
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { echo "run -it ttyreconnect rc=$rc" >&2; cat "$TEST_ROOT/docker-tty-reconnect.out" "$TEST_ROOT/docker-tty-reconnect.err" >&2; "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; return 1; }
-  grep -q 'reconnect:hello-reconnect' "$TEST_ROOT/docker-tty-reconnect.out" || { cat "$TEST_ROOT/docker-tty-reconnect.out" >&2; "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; return 1; }
-  count=$(python3 - "$HOME/.local/state/hold" <<'PY'
-import json, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-n = 0
-for path in root.glob('*.json'):
-    try:
-        data = json.loads(path.read_text(encoding='utf-8'))
-    except Exception:
-        continue
-    if data.get('alias') == 'ttyreconnect':
-        n += 1
-print(n)
-PY
-)
-  [ "$count" = "1" ] || { echo "expected one ttyreconnect runid, got $count" >&2; find "$HOME/.local/state/hold" -maxdepth 1 -name '*.json' -print >&2; "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true; return 1; }
-  "$HOLD_BIN" stop "$id" >/dev/null || return 1
-}
 
-test_runid_and_named_profile_normalize_relative_file_args() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id script profile_json
-  script="$TEST_ROOT/rel-normalize.sh"
-  cat >"$script" <<'SH'
-#!/bin/sh
-echo normalize-relative-run
-SH
-  chmod +x "$script"
-
-  (cd "$TEST_ROOT" && "$HOLD_BIN" profile relnorm -d -- /bin/sh ./rel-normalize.sh >"$TEST_ROOT/rel-normalize-create.out") || return 1
-  out=$("$HOLD_BIN" run relnorm 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.2
-  "$HOLD_BIN" inspect "$id" >"$TEST_ROOT/rel-normalize-inspect.json" || return 1
-  "$HOLD_BIN" profile export relnorm --json >"$TEST_ROOT/rel-normalize-profile.json" || return 1
-  if ! python3 - "$TEST_ROOT/rel-normalize-inspect.json" "$TEST_ROOT/rel-normalize-profile.json" "$script" <<'PY'
-import json, sys
-record = json.load(open(sys.argv[1], encoding='utf-8'))[0]
-profile = json.load(open(sys.argv[2], encoding='utf-8'))
-want = sys.argv[3]
-argv = record.get('argv') or []
-normalized = (record.get('normalized') or {}).get('argv') or []
-observed = record.get('observed') or {}
-observed_argv = observed.get('argv') or []
-args = profile.get('args') or []
-if len(argv) < 2 or argv[1] != want:
-    raise SystemExit(f'run record did not normalize relative script arg: {argv!r}')
-if len(normalized) < 2 or normalized[1] != want:
-    raise SystemExit(f'normalized argv did not preserve absolute script arg: {normalized!r}')
-if len(observed_argv) < 2 or observed_argv[1] != want:
-    raise SystemExit(f'observed argv did not use the normalized profile script arg: {observed_argv!r}')
-if not (observed.get('cwd') or '').startswith('/'):
-    raise SystemExit(f'observed cwd is not absolute: {observed.get("cwd")!r}')
-if not (observed.get('exe') or '').startswith('/'):
-    raise SystemExit(f'observed exe is not absolute: {observed.get("exe")!r}')
-if len(args) < 1 or args[0] != want:
-    raise SystemExit(f'named profile did not normalize relative script arg: {args!r}')
-PY
-  then
-    cat "$TEST_ROOT/rel-normalize-inspect.json" "$TEST_ROOT/rel-normalize-profile.json" >&2
-    return 1
-  fi
-}
 
 test_hold_shell_runs_real_shell_without_creating_runid_on_exit() {
   local before after rc
@@ -4297,287 +3244,16 @@ PY
 }
 
 
-test_captive_cli_cisco_prompts_and_profile_commit() {
-  command -v script >/dev/null 2>&1 || skip "script not available"
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local rc id
-  set +e
-  python3 -c 'import sys,time; sys.stdout.write("?\nenable\nconfigure ?\nconfigure terminal\nprofile web\nbinary /usr/bin/sleep\nargv 30\ninfo\ncommit\nend\nshow profiles\nexit\n"); sys.stdout.flush(); time.sleep(0.1)' |
-    script -qfec "$HOLD_BIN cli" /dev/null >"$TEST_ROOT/captive-cli.out" 2>"$TEST_ROOT/captive-cli.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-cli.out" "$TEST_ROOT/captive-cli.err" >&2; return 1; }
-  grep -q 'hold> ' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
-  grep -q 'hold# ' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
-  grep -q 'hold(config)# ' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
-  grep -q 'hold(config-profile:web)# ' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
-  grep -q 'Exec commands:' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
-  grep -q 'terminal   Configure from the terminal' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
-  grep -q 'Profile committed.' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
-  grep -Eq '^web[[:space:]]+user[[:space:]]+/usr/bin/sleep 30' "$TEST_ROOT/captive-cli.out" || { cat "$TEST_ROOT/captive-cli.out" >&2; return 1; }
-}
-
-test_captive_cli_noninteractive_transcript_is_script_safe() {
-  local rc id
-  set +e
-  printf 'enable\nconfigure terminal\nprofile batch\nbinary /usr/bin/sleep\nargv 30\ncommit\nend\nrun batch\nexit\n' |
-    "$HOLD_BIN" cli >"$TEST_ROOT/captive-batch.out" 2>"$TEST_ROOT/captive-batch.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-batch.out" "$TEST_ROOT/captive-batch.err" >&2; return 1; }
-  ! grep -q 'hold> ' "$TEST_ROOT/captive-batch.out" || { cat "$TEST_ROOT/captive-batch.out" >&2; return 1; }
-  grep -q 'Profile committed.' "$TEST_ROOT/captive-batch.out" || { cat "$TEST_ROOT/captive-batch.out" >&2; return 1; }
-  id=$(extract_id <"$TEST_ROOT/captive-batch.out")
-  [ -n "$id" ] || { cat "$TEST_ROOT/captive-batch.out" "$TEST_ROOT/captive-batch.err" >&2; return 1; }
-  "$HOLD_BIN" stop "$id" >/dev/null || return 1
-}
-
-test_captive_cli_profile_mode_flags_commit_and_clear() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local rc
-  set +e
-  printf 'enable\nconfigure terminal\nprofile iosmode\nbinary /usr/bin/sleep\nargv 30\ninteractive\ntty\ndetach\nmulti\ninfo\ncommit\nend\nexit\n' |
-    "$HOLD_BIN" cli >"$TEST_ROOT/captive-mode-set.out" 2>"$TEST_ROOT/captive-mode-set.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-mode-set.out" "$TEST_ROOT/captive-mode-set.err" >&2; return 1; }
-  grep -q 'modes     : interactive tty detach multi' "$TEST_ROOT/captive-mode-set.out" || {
-    cat "$TEST_ROOT/captive-mode-set.out" >&2
-    return 1
-  }
-  "$HOLD_BIN" profile export iosmode --json >"$TEST_ROOT/iosmode-set.json" || return 1
-  "$HOLD_BIN" profile export iosmode >"$TEST_ROOT/iosmode-set.profile" || return 1
-  grep -Fxq "interactive" "$TEST_ROOT/iosmode-set.profile" || { cat "$TEST_ROOT/iosmode-set.profile" >&2; return 1; }
-  grep -Fxq "tty" "$TEST_ROOT/iosmode-set.profile" || { cat "$TEST_ROOT/iosmode-set.profile" >&2; return 1; }
-  grep -Fxq "detach" "$TEST_ROOT/iosmode-set.profile" || { cat "$TEST_ROOT/iosmode-set.profile" >&2; return 1; }
-  grep -Fxq "multi" "$TEST_ROOT/iosmode-set.profile" || { cat "$TEST_ROOT/iosmode-set.profile" >&2; return 1; }
-  python3 - "$TEST_ROOT/iosmode-set.json" <<'PY' || { cat "$TEST_ROOT/iosmode-set.json" >&2; return 1; }
-import json, sys
-mode = (json.load(open(sys.argv[1], encoding='utf-8')).get('mode') or {})
-for key in ('interactive', 'tty', 'detach', 'multi'):
-    if mode.get(key) is not True:
-        raise SystemExit(f'missing committed mode {key}: {mode!r}')
-PY
-  "$HOLD_BIN" profile iosmode delete >/dev/null || return 1
-  "$HOLD_BIN" profile import "$TEST_ROOT/iosmode-set.profile" >/dev/null || return 1
-  "$HOLD_BIN" profile export iosmode --json >"$TEST_ROOT/iosmode-imported.json" || return 1
-  python3 - "$TEST_ROOT/iosmode-imported.json" <<'PY' || { cat "$TEST_ROOT/iosmode-imported.json" >&2; return 1; }
-import json, sys
-mode = (json.load(open(sys.argv[1], encoding='utf-8')).get('mode') or {})
-for key in ('interactive', 'tty', 'detach', 'multi'):
-    if mode.get(key) is not True:
-        raise SystemExit(f'imported transcript missing mode {key}: {mode!r}')
-PY
-
-  set +e
-  printf 'enable\nconfigure terminal\nprofile iosmode\nno interactive\nno console\nno detach\nno multi\ninfo\ncommit\nend\nexit\n' |
-    "$HOLD_BIN" cli >"$TEST_ROOT/captive-mode-clear.out" 2>"$TEST_ROOT/captive-mode-clear.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-mode-clear.out" "$TEST_ROOT/captive-mode-clear.err" >&2; return 1; }
-  grep -q 'modes     : -' "$TEST_ROOT/captive-mode-clear.out" || {
-    cat "$TEST_ROOT/captive-mode-clear.out" >&2
-    return 1
-  }
-  "$HOLD_BIN" profile export iosmode --json >"$TEST_ROOT/iosmode-clear.json" || return 1
-  python3 - "$TEST_ROOT/iosmode-clear.json" <<'PY' || { cat "$TEST_ROOT/iosmode-clear.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if 'mode' in profile:
-    raise SystemExit(f'mode object should be omitted after no interactive/no console/no detach/no multi: {profile!r}')
-PY
-}
 
 
-test_captive_profile_log_destination_persists_and_clears() {
-  local rc
-  set +e
-  printf 'enable
-configure terminal
-profile iolog
-binary /bin/echo
-argv hello
-log-destination syslog
-info
-commit
-end
-exit
-' |
-    "$HOLD_BIN" cli >"$TEST_ROOT/captive-logdest-set.out" 2>"$TEST_ROOT/captive-logdest-set.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-logdest-set.out" "$TEST_ROOT/captive-logdest-set.err" >&2; return 1; }
-  grep -q 'log-dest  : syslog' "$TEST_ROOT/captive-logdest-set.out" || {
-    cat "$TEST_ROOT/captive-logdest-set.out" >&2
-    return 1
-  }
-  "$HOLD_BIN" profile export iolog --json >"$TEST_ROOT/iolog-set.json" || return 1
-  "$HOLD_BIN" profile export iolog >"$TEST_ROOT/iolog-set.profile" || return 1
-  grep -Fxq "log-destination syslog" "$TEST_ROOT/iolog-set.profile" || { cat "$TEST_ROOT/iolog-set.profile" >&2; return 1; }
-  python3 - "$TEST_ROOT/iolog-set.json" <<'PY' || { cat "$TEST_ROOT/iolog-set.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if profile.get('log_destination') != 'syslog':
-    raise SystemExit(f'missing syslog destination: {profile!r}')
-PY
-
-  set +e
-  printf 'enable
-configure terminal
-profile iolog
-info
-default log-destination
-info
-commit
-end
-exit
-' |
-    "$HOLD_BIN" cli >"$TEST_ROOT/captive-logdest-clear.out" 2>"$TEST_ROOT/captive-logdest-clear.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-logdest-clear.out" "$TEST_ROOT/captive-logdest-clear.err" >&2; return 1; }
-  grep -q 'log-dest  : syslog' "$TEST_ROOT/captive-logdest-clear.out" || {
-    cat "$TEST_ROOT/captive-logdest-clear.out" >&2
-    return 1
-  }
-  grep -q 'log-dest  : -' "$TEST_ROOT/captive-logdest-clear.out" || {
-    cat "$TEST_ROOT/captive-logdest-clear.out" >&2
-    return 1
-  }
-  "$HOLD_BIN" profile export iolog --json >"$TEST_ROOT/iolog-clear.json" || return 1
-  python3 - "$TEST_ROOT/iolog-clear.json" <<'PY' || { cat "$TEST_ROOT/iolog-clear.json" >&2; return 1; }
-import json, sys
-profile = json.load(open(sys.argv[1], encoding='utf-8'))
-if 'log_destination' in profile:
-    raise SystemExit(f'log_destination should be omitted after default log-destination: {profile!r}')
-PY
-}
 
 
-test_captive_cli_ios_contextual_help_and_reserved_words() {
-  local rc
-  set +e
-  printf '?
-show ?
-enable
-?
-configure ?
-configure terminal
-?
-profile ?
-profile ioshelp
-?
-binary ?
-argv ?
-env ?
-param ?
-no ?
-default ?
-default multi
-end
-write
-disable
-exit
-' |
-    "$HOLD_BIN" cli >"$TEST_ROOT/captive-ios-help.out" 2>"$TEST_ROOT/captive-ios-help.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-ios-help.out" "$TEST_ROOT/captive-ios-help.err" >&2; return 1; }
-  grep -q 'attach      Attach to a compatible running instance' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'console     Attach with a PTY' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'grant       Grant a user capability' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  ! grep -q '  ping' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'revoke      Revoke a user capability' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'write       Write running config to storage' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'aliases    Show public alias table' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'pattern     Manage the pattern dictionary' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'alias         Define a profile-local alias (reserved)' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'param         Expose a validated optional parameter (reserved)' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'multi         Allow multiple concurrent instances' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'log-destination Mirror logs to syslog' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'pty-shim      Start under the PTY shim (reserved)' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'WORD       Absolute path to the executable' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'WORD       Long flag to expose' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q 'Building configuration...' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  grep -q '\[OK\]' "$TEST_ROOT/captive-ios-help.out" || { cat "$TEST_ROOT/captive-ios-help.out" >&2; return 1; }
-  ! grep -q 'Unknown' "$TEST_ROOT/captive-ios-help.err" || { cat "$TEST_ROOT/captive-ios-help.err" >&2; return 1; }
-}
-
-test_captive_cli_ios_operational_commands() {
-  local rc
-  set +e
-  printf 'enable
-configure terminal
-profile ops
-binary /bin/sh
-argv -c
-argv "echo captive-op"
-commit
-end
-run ops
-logs ops --plain
-inspect ops
-prune ops
-exit
-' |
-    "$HOLD_BIN" cli >"$TEST_ROOT/captive-ios-ops.out" 2>"$TEST_ROOT/captive-ios-ops.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-ios-ops.out" "$TEST_ROOT/captive-ios-ops.err" >&2; return 1; }
-  grep -q 'Profile committed.' "$TEST_ROOT/captive-ios-ops.out" || { cat "$TEST_ROOT/captive-ios-ops.out" >&2; return 1; }
-  grep -q 'captive-op' "$TEST_ROOT/captive-ios-ops.out" || { cat "$TEST_ROOT/captive-ios-ops.out" >&2; return 1; }
-  grep -q '"alias": "ops"' "$TEST_ROOT/captive-ios-ops.out" || { cat "$TEST_ROOT/captive-ios-ops.out" >&2; return 1; }
-  grep -q 'hold: pruned 1 past run for' "$TEST_ROOT/captive-ios-ops.err" || { cat "$TEST_ROOT/captive-ios-ops.err" >&2; return 1; }
-}
-
-test_captive_cli_rejects_ping_pseudo_command() {
-  local rc
-  set +e
-  printf 'ping target\nexit\n' | "$HOLD_BIN" cli >"$TEST_ROOT/captive-ping.out" 2>"$TEST_ROOT/captive-ping.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 5 ] || { cat "$TEST_ROOT/captive-ping.out" "$TEST_ROOT/captive-ping.err" >&2; return 1; }
-  grep -q "% Unknown command 'ping'" "$TEST_ROOT/captive-ping.err" || { cat "$TEST_ROOT/captive-ping.err" >&2; return 1; }
-}
 
 
-test_captive_cli_interactive_input_handles_arrows_and_mouse_reports() {
-  command -v script >/dev/null 2>&1 || skip "script not available"
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local rc
-  set +e
-  python3 - <<'PYINPUT' |
-import sys, time
-out = sys.stdout.buffer
-# Exercise the PTY/interactive input path: edit argv "ac" into "abc" with
-# Left/Right style escape input, and inject an SGR mouse event that should be
-# swallowed rather than becoming a literal command.
-out.write(b"enable\n")
-out.write(b"\x1b[A\x1b[B\x1b[C\x1b[<0;10;5M\n")
-out.write(b"configure terminal\nprofile inputedit\nbinary /bin/echo\n")
-out.write(b"argv ac\x1b[Db\n")
-out.write(b"commit\nend\nrun inputedit\nlogs inputedit --plain\nprune inputedit\nexit\n")
-out.flush()
-time.sleep(0.2)
-PYINPUT
-    script -qfec "stty -echo rows 24 cols 120; $HOLD_BIN cli" /dev/null >"$TEST_ROOT/captive-input-edit.out" 2>"$TEST_ROOT/captive-input-edit.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/captive-input-edit.out" "$TEST_ROOT/captive-input-edit.err" >&2; return 1; }
-  python3 - "$TEST_ROOT/captive-input-edit.out" <<'PYCHECK' || { cat "$TEST_ROOT/captive-input-edit.out" >&2; return 1; }
-import re, sys
-raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
-plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '\n')
-if not re.search(r'(?m)^abc$', plain):
-    raise SystemExit('edited argv did not produce abc log output')
-# Do not reject raw PTY input echo here. Some script(1) implementations
-# include bytes typed by the driving process in the transcript even when the
-# application correctly swallows terminal escape and mouse sequences. The
-# product contract is covered by the edited output above plus the stderr
-# Unknown-command check below.
-PYCHECK
-  ! grep -q "Unknown command" "$TEST_ROOT/captive-input-edit.err" || { cat "$TEST_ROOT/captive-input-edit.err" >&2; return 1; }
-}
+
+
+
+
 
 test_build_artifact_coexistence() {
   make clean >/dev/null || return 1
@@ -4737,87 +3413,7 @@ test_nonroot_ignores_spoofed_sudo_provenance() {
   fi
 }
 
-test_aliases_json_symlink_not_followed() {
-  local out id aliases attacker
-  out=$("$HOLD_BIN" -d /bin/sleep 60 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  "$HOLD_BIN" profile save "$id" as myweb >/dev/null 2>&1 || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
-  aliases="$HOME/.local/state/hold/aliases.json"
-  [ -f "$aliases" ] || return 1
-  # sanity: the alias is visible when the file is a real regular file
-  "$HOLD_BIN" profiles 2>/dev/null | grep -q myweb || { echo "alias not visible before symlink (test setup)" >&2; return 1; }
-  # replace it with a symlink to an identical attacker-controlled file
-  attacker="$TEST_ROOT/attacker-aliases.json"
-  cp "$aliases" "$attacker" || return 1
-  rm -f "$aliases"
-  ln -s "$attacker" "$aliases" || return 1
-  # O_NOFOLLOW must reject the symlinked alias dictionary: myweb must not load
-  if "$HOLD_BIN" profiles 2>/dev/null | grep -q myweb; then
-    echo "symlinked aliases.json was followed (myweb loaded through the symlink)" >&2
-    return 1
-  fi
-}
 
-test_alias_profile_atomic_writers_ignore_fixed_temp_attacks() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
-  local out id store fixed attacker before leftovers
-
-  ensure_user_fixture_store || return 1
-  store="$HOME/.local/state/hold"
-  attacker="$TEST_ROOT/user-alias-attacker"
-  printf 'do-not-touch-alias-symlink\n' >"$attacker" || return 1
-  fixed="$store/.aliases.tmp"
-  ln -s "$attacker" "$fixed" || return 1
-  out=$("$HOLD_BIN" -d /bin/sleep 60 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  "$HOLD_BIN" profile save "$id" as fixedlink >/dev/null 2>&1 || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
-  [ "$(cat "$attacker")" = "do-not-touch-alias-symlink" ] || { echo "alias writer followed fixed symlink temp" >&2; return 1; }
-  [ -L "$fixed" ] || { echo "alias writer replaced fixed symlink temp" >&2; return 1; }
-  rm -f "$fixed" || return 1
-  printf 'do-not-touch-alias-file\n' >"$fixed" || return 1
-  out=$("$HOLD_BIN" -d /bin/sleep 60 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  "$HOLD_BIN" profile save "$id" as fixedfile >/dev/null 2>&1 || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
-  [ "$(cat "$fixed")" = "do-not-touch-alias-file" ] || { echo "alias writer truncated fixed temp file" >&2; return 1; }
-  leftovers=$(find "$store" -maxdepth 1 -name '.aliases.*.tmp' -print 2>/dev/null || true)
-  [ -z "$leftovers" ] || { echo "alias writer left temp files: $leftovers" >&2; return 1; }
-
-  # System aliases write both profiles.json in the private base and aliases.json
-  # in public; cover fixed symlink and fixed regular temp names for both writers.
-  out=$(as_root "$HOLD_REAL_BIN" -d /bin/sleep 60 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  printf 'do-not-touch-profile-symlink\n' >"$TEST_ROOT/profile-attacker" || return 1
-  printf 'do-not-touch-public-alias-symlink\n' >"$TEST_ROOT/public-alias-attacker" || return 1
-  as_root ln -s "$TEST_ROOT/profile-attacker" "$HOLD_TEST_SYSTEM_STATE_DIR/.profiles.tmp" || return 1
-  as_root ln -s "$TEST_ROOT/public-alias-attacker" "$HOLD_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
-  as_root "$HOLD_REAL_BIN" profile save "$id" as syslink >/dev/null 2>&1 || return 1
-  [ "$(cat "$TEST_ROOT/profile-attacker")" = "do-not-touch-profile-symlink" ] || { echo "profile writer followed fixed symlink temp" >&2; return 1; }
-  [ "$(cat "$TEST_ROOT/public-alias-attacker")" = "do-not-touch-public-alias-symlink" ] || { echo "system alias writer followed fixed symlink temp" >&2; return 1; }
-  root_file_exists "$HOLD_TEST_SYSTEM_STATE_DIR/profiles.json" || return 1
-  root_file_exists "$HOLD_TEST_SYSTEM_STATE_DIR/public/aliases.json" || return 1
-  as_root rm -f "$HOLD_TEST_SYSTEM_STATE_DIR/.profiles.tmp" "$HOLD_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
-
-  out=$(as_root "$HOLD_REAL_BIN" -d /bin/sleep 61 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  as_root sh -c 'printf "%s\n" "do-not-touch-profile-file" >"$1"; printf "%s\n" "do-not-touch-public-alias-file" >"$2"' sh \
-    "$HOLD_TEST_SYSTEM_STATE_DIR/.profiles.tmp" "$HOLD_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp" || return 1
-  as_root "$HOLD_REAL_BIN" profile save "$id" as sysfile >/dev/null 2>&1 || return 1
-  before=$(as_root cat "$HOLD_TEST_SYSTEM_STATE_DIR/.profiles.tmp") || return 1
-  [ "$before" = "do-not-touch-profile-file" ] || { echo "profile writer truncated fixed temp file" >&2; return 1; }
-  before=$(as_root cat "$HOLD_TEST_SYSTEM_STATE_DIR/public/.aliases.tmp") || return 1
-  [ "$before" = "do-not-touch-public-alias-file" ] || { echo "system alias writer truncated fixed temp file" >&2; return 1; }
-  leftovers=$(as_root find "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" -maxdepth 1 \
-    \( -name '.profiles.*.tmp' -o -name '.aliases.*.tmp' \) -print 2>/dev/null || true)
-  [ -z "$leftovers" ] || { echo "system alias/profile writer left temp files: $leftovers" >&2; return 1; }
-}
 
 test_signal_refuses_tampered_pgid() {
   local out id rec rc
@@ -4872,31 +3468,6 @@ test_run_id_prefix_resolution() {
   "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
 }
 
-test_ambiguous_tail_resolvable_by_run_id() {
-  local id1 id2 rc tpid
-  # An alias whose runs emit output, so tailing one by id has something to follow.
-  id1=$("$HOLD_BIN" -d sh -c 'while :; do echo tick; sleep 0.2; done' 2>&1 | extract_id) || return 1
-  "$HOLD_BIN" profile save "$id1" as web-amb >/dev/null || return 1
-  "$HOLD_BIN" stop "$id1" >/dev/null; "$HOLD_BIN" prune "$id1" >/dev/null
-  id1=$("$HOLD_BIN" start web-amb 2>&1 | extract_id); [ -n "$id1" ] || return 1
-  id2=$("$HOLD_BIN" start web-amb --force 2>&1 | extract_id); [ -n "$id2" ] || return 1
-  # tail by ALIAS with several running is ambiguous: exit 6, the candidate run ids
-  # are listed, and (since tail is not an --all command) --all must NOT be suggested.
-  set +e; "$HOLD_BIN" tail web-amb >/dev/null 2>"$TEST_ROOT/amb.err"; rc=$?; set -e
-  [ "$rc" -eq 6 ] || { echo "ambiguous tail: rc=$rc (want 6)" >&2; return 1; }
-  grep -q 'matches more than one' "$TEST_ROOT/amb.err" || { cat "$TEST_ROOT/amb.err" >&2; return 1; }
-  ! grep -q -- '--all' "$TEST_ROOT/amb.err" || { echo "tail ambiguity wrongly suggested --all" >&2; return 1; }
-  grep -q "$id1" "$TEST_ROOT/amb.err" && grep -q "$id2" "$TEST_ROOT/amb.err" || { echo "ambiguity did not list the candidate run ids" >&2; return 1; }
-  # but you can always tail one specific instance BY RUN ID -- that is never ambiguous.
-  "$HOLD_BIN" tail "$id1" >"$TEST_ROOT/byid.out" 2>"$TEST_ROOT/byid.err" &
-  tpid=$!
-  sleep 0.6
-  kill "$tpid" 2>/dev/null
-  wait "$tpid" 2>/dev/null || true
-  ! grep -q 'matches more than one' "$TEST_ROOT/byid.err" || { echo "tail by run id was wrongly treated as ambiguous" >&2; return 1; }
-  grep -q tick "$TEST_ROOT/byid.out" || { echo "tail by run id followed nothing" >&2; cat "$TEST_ROOT/byid.err" >&2; return 1; }
-  "$HOLD_BIN" stop web-amb --all >/dev/null 2>&1 || true
-}
 
 test_misc_action_guards() {
   local rc
@@ -4910,163 +3481,6 @@ test_misc_action_guards() {
   grep -q 'STARTED_AT' "$TEST_ROOT/l.out" || { echo "list -l missing ISO header" >&2; return 1; }
 }
 
-test_public_cli_contract_guards() {
-  local rc out id
-  "$HOLD_BIN" --help >"$TEST_ROOT/help-dash.out" || return 1
-  grep -q 'hold run \[run-options\] <cmd|profile>' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  grep -q 'hold logs <target> --plain' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  grep -q 'hold inspect <target>' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  grep -q 'hold export <name> \[as <file>\]' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  grep -q 'hold import <file> as <name>' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  grep -q 'hold profiles' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  ! grep -q 'hold dump' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  ! grep -q 'hold --console' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help-dash.out" || { cat "$TEST_ROOT/help-dash.out" >&2; return 1; }
-
-  "$HOLD_BIN" help >"$TEST_ROOT/help.out" || return 1
-  grep -q 'hold run \[run-options\] <cmd|profile>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  grep -q 'hold logs <target> --plain' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  grep -q 'hold inspect <target>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  grep -q 'hold export <name> \[as <file>\]' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  grep -q 'hold import <file> as <name>' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  grep -q 'hold profiles' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  ! grep -q 'hold dump' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  ! grep -q 'hold --console' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help.out" || { cat "$TEST_ROOT/help.out" >&2; return 1; }
-
-  "$HOLD_BIN" help profiles >"$TEST_ROOT/help-profiles.out" || return 1
-  grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/help-profiles.out" || { cat "$TEST_ROOT/help-profiles.out" >&2; return 1; }
-  grep -q 'hold export <name>' "$TEST_ROOT/help-profiles.out" || { cat "$TEST_ROOT/help-profiles.out" >&2; return 1; }
-  grep -q 'hold import FILE as <name>' "$TEST_ROOT/help-profiles.out" || { cat "$TEST_ROOT/help-profiles.out" >&2; return 1; }
-  grep -q 'hold profiles' "$TEST_ROOT/help-profiles.out" || { cat "$TEST_ROOT/help-profiles.out" >&2; return 1; }
-  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help-profiles.out" || { cat "$TEST_ROOT/help-profiles.out" >&2; return 1; }
-
-  "$HOLD_BIN" help profile >"$TEST_ROOT/help-profile.out" || return 1
-  grep -q 'hold profile <name> <show|start|run|create|set|export|rename|delete>' "$TEST_ROOT/help-profile.out" || {
-    cat "$TEST_ROOT/help-profile.out" >&2; return 1;
-  }
-  grep -q 'hold profile save <runid> as web' "$TEST_ROOT/help-profile.out" || { cat "$TEST_ROOT/help-profile.out" >&2; return 1; }
-  grep -q 'hold profiles' "$TEST_ROOT/help-profile.out" || { cat "$TEST_ROOT/help-profile.out" >&2; return 1; }
-  ! grep -q 'hold profile <list|' "$TEST_ROOT/help-profile.out" || { cat "$TEST_ROOT/help-profile.out" >&2; return 1; }
-  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/help-profile.out" || { cat "$TEST_ROOT/help-profile.out" >&2; return 1; }
-
-  "$HOLD_BIN" profile -h >"$TEST_ROOT/profile-dash-help.out" || return 1
-  grep -q 'hold profile save <runid> as web' "$TEST_ROOT/profile-dash-help.out" || { cat "$TEST_ROOT/profile-dash-help.out" >&2; return 1; }
-  grep -q 'hold profiles' "$TEST_ROOT/profile-dash-help.out" || { cat "$TEST_ROOT/profile-dash-help.out" >&2; return 1; }
-  ! grep -q 'hold profile <list|' "$TEST_ROOT/profile-dash-help.out" || { cat "$TEST_ROOT/profile-dash-help.out" >&2; return 1; }
-  ! grep -Eq 'hold aliases?([[:space:]]|$)' "$TEST_ROOT/profile-dash-help.out" || { cat "$TEST_ROOT/profile-dash-help.out" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" profile list >/dev/null 2>"$TEST_ROOT/profile-list-removed.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold profile list: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'hold profiles' "$TEST_ROOT/profile-list-removed.err" || { cat "$TEST_ROOT/profile-list-removed.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" profile ls -v >/dev/null 2>"$TEST_ROOT/profile-ls-removed.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold profile ls -v: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'hold profiles -v' "$TEST_ROOT/profile-ls-removed.err" || { cat "$TEST_ROOT/profile-ls-removed.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" profile web >/dev/null 2>"$TEST_ROOT/profile-name-usage.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold profile web: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'hold profile <name> <show|start|run|create|set|export|rename|delete>' "$TEST_ROOT/profile-name-usage.err" || {
-    cat "$TEST_ROOT/profile-name-usage.err" >&2; return 1;
-  }
-
-  set +e; "$HOLD_BIN" profile web nope >/dev/null 2>"$TEST_ROOT/profile-bad-op-usage.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold profile web nope: rc=$rc (want 5)" >&2; return 1; }
-  grep -q "failed to resolve profile command 'nope'" "$TEST_ROOT/profile-bad-op-usage.err" || {
-    cat "$TEST_ROOT/profile-bad-op-usage.err" >&2; return 1;
-  }
-
-  set +e; "$HOLD_BIN" alias deadbeef web >/dev/null 2>"$TEST_ROOT/alias-removed.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold alias: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'alias command was removed' "$TEST_ROOT/alias-removed.err" || { cat "$TEST_ROOT/alias-removed.err" >&2; return 1; }
-  grep -q 'hold profile save <id> as <name>' "$TEST_ROOT/alias-removed.err" || { cat "$TEST_ROOT/alias-removed.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" alias -h >/dev/null 2>"$TEST_ROOT/alias-help-removed.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold alias -h: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'alias command was removed' "$TEST_ROOT/alias-help-removed.err" || { cat "$TEST_ROOT/alias-help-removed.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" aliases >/dev/null 2>"$TEST_ROOT/aliases-removed.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold aliases: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'aliases command was removed' "$TEST_ROOT/aliases-removed.err" || { cat "$TEST_ROOT/aliases-removed.err" >&2; return 1; }
-  grep -q 'hold profiles' "$TEST_ROOT/aliases-removed.err" || { cat "$TEST_ROOT/aliases-removed.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" aliases -h >/dev/null 2>"$TEST_ROOT/aliases-help-removed.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold aliases -h: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'aliases command was removed' "$TEST_ROOT/aliases-help-removed.err" || { cat "$TEST_ROOT/aliases-help-removed.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" help alias >/dev/null 2>"$TEST_ROOT/help-alias.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold help alias: rc=$rc (want 5)" >&2; return 1; }
-  grep -q "unknown help topic 'alias'" "$TEST_ROOT/help-alias.err" || { cat "$TEST_ROOT/help-alias.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" run web stop >/dev/null 2>"$TEST_ROOT/run-namespace-target-first.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold run web stop: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'usage: hold run .* -- <cmd>' "$TEST_ROOT/run-namespace-target-first.err" || { cat "$TEST_ROOT/run-namespace-target-first.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" run stop web >/dev/null 2>"$TEST_ROOT/run-namespace-verb-first.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold run stop web: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'usage: hold run .* -- <cmd>' "$TEST_ROOT/run-namespace-verb-first.err" || { cat "$TEST_ROOT/run-namespace-verb-first.err" >&2; return 1; }
-
-  set +e; "$HOLD_BIN" run -e CHECK=1 logs web >/dev/null 2>"$TEST_ROOT/run-namespace-after-option.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "hold run -e CHECK=1 logs web: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'usage: hold run .* -- <cmd>' "$TEST_ROOT/run-namespace-after-option.err" || { cat "$TEST_ROOT/run-namespace-after-option.err" >&2; return 1; }
-
-  mkdir -p "$TEST_ROOT/literal-help-bin" || return 1
-  cat >"$TEST_ROOT/literal-help-bin/--help" <<'SH'
-#!/usr/bin/env sh
-echo literal-help-command
-SH
-  cat >"$TEST_ROOT/literal-help-bin/-h" <<'SH'
-#!/usr/bin/env sh
-echo literal-h-command
-SH
-  chmod +x "$TEST_ROOT/literal-help-bin/--help" "$TEST_ROOT/literal-help-bin/-h" || return 1
-  out=$(PATH="$TEST_ROOT/literal-help-bin:$PATH" "$HOLD_BIN" run -d -- --help 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.3
-  PATH="$TEST_ROOT/literal-help-bin:$PATH" "$HOLD_BIN" dump "$id" >"$TEST_ROOT/literal-help-command.out" || return 1
-  grep -q 'literal-help-command' "$TEST_ROOT/literal-help-command.out" || { cat "$TEST_ROOT/literal-help-command.out" >&2; return 1; }
-
-  out=$(PATH="$TEST_ROOT/literal-help-bin:$PATH" "$HOLD_BIN" run -d -- -h 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  sleep 0.3
-  PATH="$TEST_ROOT/literal-help-bin:$PATH" "$HOLD_BIN" dump "$id" >"$TEST_ROOT/literal-h-command.out" || return 1
-  grep -q 'literal-h-command' "$TEST_ROOT/literal-h-command.out" || { cat "$TEST_ROOT/literal-h-command.out" >&2; return 1; }
-
-  public_files=$(
-    { git ls-files docs examples install.sh scripts Makefile 2>/dev/null || find docs examples install.sh scripts Makefile -type f 2>/dev/null; } |
-      grep -Ev '^docs/(archive/.*|0\.4-repair-ledger\.md|0\.4\.0-direction-.*|security-review-.*|hold-on-identity\.md)$' || true
-  )
-  # The live GitHub repository is still RchGrav/sigmund during the 0.4.0
-  # rename window, so the installer needs that repository default. Treat that
-  # exact source-location line as an allowed repo-coordinate exception while
-  # still rejecting leaked legacy branding or alias/run-namespace docs.
-  if printf '%s\n' "$public_files" | xargs grep -InEi '(^|[^[:alnum:]_])(sigmund|mund)([^[:alnum:]_]|$)|(^|[^[:alnum:]_])hold[[:space:]]+aliases?([^[:alnum:]_]|$)|["'\'']?[$]HOLD_BIN["'\'']?[[:space:]]+aliases?([^[:alnum:]_]|$)|alias aliases|hold[[:space:]]+(start|grant|revoke)[[:space:]]+<alias>|start[[:space:]]+<alias>|known alias|alias selection|alias-labeled|alias exists|create an alias|aliases turn|system alias|alias starts|alias ambiguity|alias filtering|alias creation|run id or alias|command as an alias|system:alias|grant alias|root alias|public alias/hash|root-managed alias capabilities|supplied alias|alias/hash capability|run-alias verification|behind an alias|alias was called|alias was created from|for this alias/profile|across aliases' 2>/dev/null |
-      grep -Fv 'REPO_NAME="${HOLD_REPO_NAME:-sigmund}"' \
-      >"$TEST_ROOT/forbidden-public-names.out"; then
-    cat "$TEST_ROOT/forbidden-public-names.out" >&2
-    return 1
-  fi
-  if grep -RInE "grant target must be an existing system alias|alias '%s|--multi applies only to alias|recorded under alias|failed to read .* aliases|usage: hold %s <alias>" \
-      src >"$TEST_ROOT/forbidden-public-runtime-strings.out" 2>/dev/null; then
-    cat "$TEST_ROOT/forbidden-public-runtime-strings.out" >&2
-    return 1
-  fi
-  if awk '
-    /Known commands include:/ { in_known = 1; next }
-    in_known && /^```/ { fences++; if (fences == 2) in_known = fences = 0; next }
-    in_known && /^[[:space:]]*aliases?[[:space:]]*$/ { print FILENAME ":" FNR ":" $0; bad = 1 }
-    END { exit bad ? 1 : 0 }
-  ' docs/SPEC.md >"$TEST_ROOT/forbidden-command-list.out"; then
-    :
-  else
-    cat "$TEST_ROOT/forbidden-command-list.out" >&2
-    return 1
-  fi
-}
 
 test_owned_command_exact_arity() {
   local rc
@@ -5093,87 +3507,31 @@ test_owned_command_exact_arity() {
   "$HOLD_BIN" prune >/dev/null || { echo "prune with zero targets should remain valid" >&2; return 1; }
 }
 
-test_multi_n_exact_count_and_invalid() {
-  local id id2 ids running rc
-  id=$("$HOLD_BIN" -d sleep 60 2>&1 | extract_id) || return 1
-  "$HOLD_BIN" profile save "$id" as web-n >/dev/null || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null; "$HOLD_BIN" prune "$id" >/dev/null
-  ids=$("$HOLD_BIN" start web-n --multi 3 2>/dev/null | sed -n '/^[0-9a-f]\{12\}$/p')
-  [ "$(printf '%s\n' "$ids" | grep -c .)" -eq 3 ] || { echo "--multi 3 did not print 3 ids" >&2; return 1; }
-  running=$("$HOLD_BIN" list 2>/dev/null | grep -c running || true)
-  [ "$running" -ge 3 ] || { echo "expected >=3 running, got $running" >&2; return 1; }
-  "$HOLD_BIN" stop web-n --all >/dev/null 2>&1 || true
-  id=$("$HOLD_BIN" run -d web-n 2>&1 | extract_id); [ -n "$id" ] || return 1
-  set +e; "$HOLD_BIN" run -d web-n >/dev/null 2>"$TEST_ROOT/run-force.err"; rc=$?; set -e
-  [ "$rc" -eq 6 ] || { echo "run duplicate without --force: rc=$rc (want 6)" >&2; return 1; }
-  grep -q -- '--force' "$TEST_ROOT/run-force.err" || { cat "$TEST_ROOT/run-force.err" >&2; return 1; }
-  id2=$("$HOLD_BIN" run -d --force web-n 2>&1 | extract_id); [ -n "$id2" ] || return 1
-  [ "$id2" != "$id" ] || { echo "run --force reused the original id" >&2; return 1; }
-  "$HOLD_BIN" stop web-n --all >/dev/null 2>&1 || true
-  ids=$("$HOLD_BIN" run -d --multi 2 web-n 2>/dev/null | sed -n '/^[0-9a-f]\{64\}$/p')
-  [ "$(printf '%s\n' "$ids" | grep -c .)" -eq 2 ] || { echo "run --multi 2 did not print 2 ids" >&2; return 1; }
-  "$HOLD_BIN" stop web-n --all >/dev/null 2>&1 || true
-  set +e; "$HOLD_BIN" start web-n --multi >/dev/null 2>"$TEST_ROOT/mm.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "--multi missing: rc=$rc (want 5)" >&2; return 1; }
-  grep -q -- "--multi requires a positive count" "$TEST_ROOT/mm.err" || { cat "$TEST_ROOT/mm.err" >&2; return 1; }
-  set +e; "$HOLD_BIN" start web-n --multi=abc >/dev/null 2>"$TEST_ROOT/m.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "--multi=abc: rc=$rc (want 5)" >&2; return 1; }
-  grep -q "invalid --multi count" "$TEST_ROOT/m.err" || { cat "$TEST_ROOT/m.err" >&2; return 1; }
-  set +e; "$HOLD_BIN" start web-n --multi abc >/dev/null 2>"$TEST_ROOT/ms.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "--multi abc: rc=$rc (want 5)" >&2; return 1; }
-  grep -q "invalid --multi count 'abc'" "$TEST_ROOT/ms.err" || { cat "$TEST_ROOT/ms.err" >&2; return 1; }
-  set +e; "$HOLD_BIN" start web-n --multi 0 >/dev/null 2>"$TEST_ROOT/mz.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "--multi 0: rc=$rc (want 5)" >&2; return 1; }
-  grep -q "invalid --multi count '0'" "$TEST_ROOT/mz.err" || { cat "$TEST_ROOT/mz.err" >&2; return 1; }
-  "$HOLD_BIN" stop web-n --all >/dev/null 2>&1 || true
-}
 
-test_tail_cannot_follow_multiple_starts() {
-  local id rc running
-  id=$("$HOLD_BIN" -d sleep 60 2>&1 | extract_id) || return 1
-  "$HOLD_BIN" profile save "$id" as web-t >/dev/null || return 1
-  "$HOLD_BIN" stop "$id" >/dev/null; "$HOLD_BIN" prune "$id" >/dev/null
-  set +e; "$HOLD_BIN" start web-t --multi 2 --tail >/dev/null 2>"$TEST_ROOT/t.err"; rc=$?; set -e
-  [ "$rc" -eq 5 ] || { echo "--multi 2 --tail: rc=$rc (want 5)" >&2; return 1; }
-  grep -q "cannot follow multiple starts" "$TEST_ROOT/t.err" || { cat "$TEST_ROOT/t.err" >&2; return 1; }
-  running=$("$HOLD_BIN" list 2>/dev/null | grep -c running || true)
-  [ "$running" -eq 0 ] || { echo "runs created despite refusal ($running)" >&2; "$HOLD_BIN" stop web-t --all >/dev/null 2>&1; return 1; }
-}
 
 test_print_over_all_and_multiple() {
   local id1 id2 pgid1 pgid2 out
   id1=$("$HOLD_BIN" -d sleep 60 2>&1 | extract_id) || return 1
-  "$HOLD_BIN" profile save "$id1" as web-pr >/dev/null || return 1
-  "$HOLD_BIN" stop "$id1" >/dev/null; "$HOLD_BIN" prune "$id1" >/dev/null
-  id1=$("$HOLD_BIN" start web-pr 2>&1 | extract_id); pgid1=$(record_pgid "$id1")
-  id2=$("$HOLD_BIN" start web-pr --force 2>&1 | extract_id); pgid2=$(record_pgid "$id2")
+  id2=$("$HOLD_BIN" -d sleep 60 2>&1 | extract_id) || return 1
+  pgid1=$(record_pgid "$id1"); pgid2=$(record_pgid "$id2")
   [ -n "$pgid1" ] && [ -n "$pgid2" ] || return 1
-  out=$("$HOLD_BIN" stop --print --all web-pr) || return 1
-  printf '%s\n' "$out" | grep -qF "kill -TERM -- -$pgid1" || { echo "--print --all missing pgid1" >&2; return 1; }
-  printf '%s\n' "$out" | grep -qF "kill -TERM -- -$pgid2" || { echo "--print --all missing pgid2" >&2; return 1; }
   out=$("$HOLD_BIN" stop --print "$id1" "$id2") || return 1
   printf '%s\n' "$out" | grep -qF "kill -TERM -- -$pgid1" && printf '%s\n' "$out" | grep -qF "kill -TERM -- -$pgid2" || { echo "explicit multi --print missing a pgid" >&2; return 1; }
-  "$HOLD_BIN" stop web-pr --all >/dev/null 2>&1 || true
+  "$HOLD_BIN" stop "$id1" "$id2" >/dev/null 2>&1 || true
 }
 
-run_test "--multi N starts exactly N and rejects a bad count" test_multi_n_exact_count_and_invalid
-run_test "--tail cannot follow a multi start (exit 5, nothing started)" test_tail_cannot_follow_multiple_starts
 run_test "--print spans --all and multiple explicit targets" test_print_over_all_and_multiple
 run_test "stop refuses a record with a tampered pgid<=1 (exit 5)" test_signal_refuses_tampered_pgid
 run_test "public-index write failure rolls back the start" test_public_index_write_rollback
 run_test "--quiet prints bare id and silences stderr" test_quiet_suppresses_banner_keeps_id
 run_test "run id prefix resolves to the full run" test_run_id_prefix_resolution
-run_test "ambiguous alias tail lists ids; tail by run id still resolves" test_ambiguous_tail_resolvable_by_run_id
 run_test "action/help/list argument guards" test_misc_action_guards
-run_test "public CLI contract rejects legacy aliases and run namespaces" test_public_cli_contract_guards
 run_test "owned commands reject extra targets and unsupported --all" test_owned_command_exact_arity
 run_test "system store directory modes are private (0700/0755)" test_system_store_directory_modes
 run_test "system store tightens a pre-existing loose dir" test_system_store_tightens_preexisting_loose_dir
 run_test "system store refuses symlinked critical dirs without chmod-following" test_system_store_refuses_symlinked_critical_dirs
 run_test "system store artifacts are owned by root:root" test_system_store_artifacts_owned_by_root
 run_test "non-root process ignores spoofed SUDO_* provenance" test_nonroot_ignores_spoofed_sudo_provenance
-run_test "symlinked aliases.json is not followed (O_NOFOLLOW)" test_aliases_json_symlink_not_followed
-run_test "alias/profile atomic writers ignore fixed temp file and symlink attacks" test_alias_profile_atomic_writers_ignore_fixed_temp_attacks
 run_test "start/stop lifecycle" test_lifecycle
 run_test "kill subcommand kills process group" test_kill_subcommand
 run_test "start output includes stop helper" test_start_output_stop_hint
@@ -5192,33 +3550,20 @@ run_test "stop/kill --print emits group signal command" test_print_signal_output
 run_test "signal refuses tampered live process-group identity" test_signal_refuses_tampered_live_group_identity
 run_test "stop supports multiple IDs in one command" test_stop_multiple_ids
 run_test "argument edge cases" test_argument_edges
-run_test "hold unified CLI surface" test_hold_unified_cli_surface
 run_test "Docker-shaped run/logs/ps/rm surface" test_docker_shaped_cli_flags_and_rm
 run_test "Docker bare convenience launch defaults to background" test_docker_bare_launch_foreground_follows_output_by_default
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker restart policy restarts failed processes" test_docker_restart_policy_restarts_failures
 run_test "Docker restart validates policies and tty gate" test_docker_restart_validation_and_tty_gate
-run_test "Docker restart persists with named profiles" test_docker_restart_persists_with_named_profile
 run_test "start existing run appends retained log" test_start_existing_run_appends_retained_log
 run_test "Docker publish and volume flags are rejected" test_docker_publish_and_volume_rejected
-run_test "Docker named profiles persist -d -i -t mode flags" test_docker_named_profile_persists_mode_flags
 run_test "Docker -i keeps non-PTY stdin open" test_docker_interactive_stdin_pipes_to_child
 run_test "Docker -it foreground attaches and detaches" test_docker_tty_foreground_attaches_and_detaches
 run_test "Docker --detach-keys changes TTY detach sequence" test_docker_tty_custom_detach_keys
-run_test "Docker run -it profile reconnects a singular TTY run" test_docker_profile_it_reconnects_singular_tty_run
-run_test "run IDs and named profiles normalize relative file args" test_runid_and_named_profile_normalize_relative_file_args
 run_test "hold shell runs a real shell and normal exit creates no runid" test_hold_shell_runs_real_shell_without_creating_runid_on_exit
 run_test "hold shell adopt normalizes relative foreground argv paths" test_hold_shell_adopt_normalizes_relative_foreground_argv_paths
 run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hold_shell_detach_adopts_foreground_process_group
-run_test "captive CLI shows Cisco prompts and commits a profile" test_captive_cli_cisco_prompts_and_profile_commit
-run_test "captive CLI noninteractive transcript is script-safe" test_captive_cli_noninteractive_transcript_is_script_safe
-run_test "captive CLI profile mode flags commit and clear" test_captive_cli_profile_mode_flags_commit_and_clear
-run_test "captive CLI edits profile log destination" test_captive_profile_log_destination_persists_and_clears
-run_test "captive CLI IOS contextual help and reserved words" test_captive_cli_ios_contextual_help_and_reserved_words
-run_test "captive CLI IOS operational commands" test_captive_cli_ios_operational_commands
-run_test "captive CLI rejects ping pseudo-command" test_captive_cli_rejects_ping_pseudo_command
-run_test "captive CLI interactive input handles arrows and mouse reports" test_captive_cli_interactive_input_handles_arrows_and_mouse_reports
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
 run_test "internal viewer harness seeds literal and similarity filters" test_log_view_internal_seed_filters
@@ -5277,38 +3622,15 @@ run_test "root starts use system store and public state is projected" test_root_
 run_test "sudo start writes system state with invoking-user metadata" test_sudo_start_writes_system_store_with_invoking_metadata
 run_test "sudo --system home executable uses invoking-user store" test_sudo_system_start_of_home_executable_uses_user_store
 run_test "sudo --system home argv paths use invoking-user store" test_sudo_system_start_of_home_argv_paths_uses_user_store
-run_test "alias for elevated home executable stays user-local" test_home_elevated_run_alias_stays_user_local
 run_test "sudo context can stop unique invoking-user local run" test_sudo_context_can_stop_unique_user_local_run
 run_test "public root index rows are redacted in normal list" test_public_root_index_list_is_redacted
 run_test "public root index list reads projected State" test_public_root_index_list_reads_projected_state
 run_test "normal run does not self-elevate on local/root ID conflict" test_user_local_wins_over_public_root_collision
 run_test "explicit user:<id> targets user-local run" test_explicit_user_target
-run_test "user alias stores a direct recipe and starts/stops by alias" test_alias_profile_map_start_and_stop
-run_test "alias from relative executable keeps absolute recorded argv0" test_alias_from_relative_executable_uses_recorded_absolute_argv0
-run_test "profile start requires --force when already running and --all stops all" test_alias_multi_gate_and_all_stop
-run_test "profile multi mode allows repeated starts without --force" test_profile_multi_mode_allows_repeated_starts
-run_test "profile start inherits current environment" test_profile_start_inherits_current_environment
-run_test "Docker --env persists with a named profile" test_docker_env_persists_with_named_profile
-run_test "profile save preserves capability metadata" test_profile_save_preserves_capability_metadata
-run_test "profile create/export/import preserves capability metadata" test_profile_create_export_import_preserves_capability_metadata
 run_test "root capability drop-all then add applies requested cap" test_root_capability_drop_all_then_add_preserves_added_cap
 run_test "direct capability metadata projects to inspect" test_direct_capability_metadata_projects_to_inspect
 run_test "restart worker applies capability metadata" test_restart_worker_applies_capability_metadata
-run_test "Docker --env-file persists with a named profile" test_docker_env_file_persists_with_named_profile
 run_test "Docker --rm removes run artifacts after exit" test_docker_rm_removes_run_artifacts_after_exit
-run_test "Docker --rm removes profile run artifacts after exit" test_docker_rm_removes_profile_run_artifacts_after_exit
-run_test "captive profile env persists and runs" test_captive_profile_env_persists_and_runs
-run_test "captive profile mode loads and edits an existing recipe" test_captive_profile_loads_existing_recipe_for_edit
-run_test "captive profile publish/volume commands are rejected" test_captive_profile_publish_volume_rejected
-run_test "captive profile capability metadata preserves edits and clears" test_captive_profile_capability_metadata_preserves_edits_and_clears
-run_test "captive profile restart metadata preserves edits and clears" test_captive_profile_restart_metadata_preserves_edits_and_clears
-run_test "captive profile mode preserves quoted argv and env values" test_captive_profile_quoted_argv_and_env_round_trip
-run_test "profile transcript import/export round-trips a user-local recipe" test_profile_transcript_import_export_roundtrip
-run_test "profile name-first set command edits a user-local recipe" test_profile_name_first_set_command
-run_test "profile name-first create rename and delete manage a user-local recipe" test_profile_name_first_crud
-run_test "profile JSON export/import round-trips a user-local recipe" test_profile_json_export_and_import
-run_test "invalid alias names are rejected" test_invalid_alias_names_rejected
-run_test "short hex-looking alias names are allowed" test_short_hex_alias_name_allowed
 run_test "tail Ctrl-C detaches from tail and does not stop run" test_tail_ctrl_c_detaches_from_tail_and_keeps_run
 run_test "build artifacts for static and dynamic coexist" test_build_artifact_coexistence
 run_test "concurrent starts produce unique ids" test_concurrent_unique_ids

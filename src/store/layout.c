@@ -39,9 +39,7 @@ int hold_init_user_store_from_home(const char *home, struct hold_store *store) {
     if (hold_checked_snprintf(store->base, sizeof(store->base), "%s/.local/state/hold", base_home) != 0 ||
         hold_checked_snprintf(store->record_dir, sizeof(store->record_dir), "%s", store->base) != 0 ||
         hold_checked_snprintf(store->log_dir, sizeof(store->log_dir), "%s", store->base) != 0 ||
-        hold_checked_snprintf(store->console_dir, sizeof(store->console_dir), "%s/console", store->base) != 0 ||
-        hold_checked_snprintf(store->profile_path, sizeof(store->profile_path), "%s/profiles.json", store->base) != 0 ||
-        hold_checked_snprintf(store->alias_path, sizeof(store->alias_path), "%s/aliases.json", store->base) != 0) {
+        hold_checked_snprintf(store->console_dir, sizeof(store->console_dir), "%s/console", store->base) != 0) {
         return -1;
     }
     return 0;
@@ -122,9 +120,7 @@ int hold_init_system_store(struct hold_store *store) {
         hold_checked_snprintf(store->record_dir, sizeof(store->record_dir), "%s/runs", base) != 0 ||
         hold_checked_snprintf(store->log_dir, sizeof(store->log_dir), "%s/logs", base) != 0 ||
         hold_checked_snprintf(store->public_dir, sizeof(store->public_dir), "%s/public", base) != 0 ||
-        hold_checked_snprintf(store->console_dir, sizeof(store->console_dir), "%s/console", base) != 0 ||
-        hold_checked_snprintf(store->profile_path, sizeof(store->profile_path), "%s/profiles.json", base) != 0 ||
-        hold_checked_snprintf(store->alias_path, sizeof(store->alias_path), "%s/public/aliases.json", base) != 0) {
+        hold_checked_snprintf(store->console_dir, sizeof(store->console_dir), "%s/console", base) != 0) {
         return -1;
     }
     return 0;

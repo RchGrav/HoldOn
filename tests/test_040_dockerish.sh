@@ -55,34 +55,6 @@ test -f "$log.idx" || fail "raw log sidecar index missing"
 head -c 7 "$log.idx" | grep -q '^HLOGIDX' || fail "raw log sidecar magic missing"
 hold logs --plain "$display" | grep -qx 'smoke-out' || fail "logs --plain did not print raw log"
 
-hold profile web -e HELLO=world --log-destination syslog -- /bin/sh -c 'echo $HELLO; sleep 2' >/dev/null
-hold profile web export --json | grep -q '"log_destination": "syslog"' ||
-  fail "profile log destination was not persisted"
-if hold profile --name nope /bin/true >/tmp/hold-profile-name.out 2>/tmp/hold-profile-name.err; then
-  fail "profile --name unexpectedly succeeded"
-fi
-
-runout=$(hold run web 2>&1)
-printf '%s\n' "$runout" | grep -qx 'world' || fail "hold run <profile> did not foreground output"
-if printf '%s\n' "$runout" | grep -Eq '^[0-9a-f]{12}$|^[0-9a-f]{64}$'; then
-  fail "docker-shaped foreground profile run printed an id line"
-fi
-
-bg1out=$(hold run -d web 2>&1)
-[ "$(printf '%s\n' "$bg1out" | wc -l)" -eq 1 ] || fail "run -d printed more than the id"
-bg1=$(printf '%s\n' "$bg1out" | extract_full64)
-[ "${#bg1}" -eq 64 ] || fail "detached profile id is not the full 64-hex id"
-if hold run -d web >/tmp/hold-dupe.out 2>/tmp/hold-dupe.err; then
-  fail "active profile duplicate succeeded without --force"
-fi
-hold run -d --force web >/dev/null 2>&1 || fail "--force profile start failed"
-hold stop web --all >/dev/null 2>&1 || true
-
-bare=$(hold web 2>&1 | extract_display)
-[ "${#bare}" -eq 12 ] || fail "bare profile launch did not print id"
-sleep 0.3
-hold logs --plain "$bare" | grep -qx 'world' || fail "bare profile log missing"
-
 named=$(hold run -d --name named-smoke -- /bin/sh -c 'echo named; sleep 0.1' 2>&1 | extract_full64 | cut -c1-12)
 [ "${#named}" -eq 12 ] || fail "named run id missing"
 sleep 0.3
@@ -103,16 +75,6 @@ if hold run -v "$TEST_ROOT:/work" -- /bin/true >/tmp/hold-vol.out 2>/tmp/hold-vo
 fi
 grep -q 'does not mount or remap volumes' /tmp/hold-vol.err ||
   fail "volume rejection message missing"
-if hold profile badpub -p 8080:80 -- /bin/true >/tmp/hold-profile-pub.out 2>/tmp/hold-profile-pub.err; then
-  fail "profile publish unexpectedly succeeded"
-fi
-grep -q 'does not publish or forward ports' /tmp/hold-profile-pub.err ||
-  fail "profile publish rejection message missing"
-if hold profile badvol -v "$TEST_ROOT:/work" -- /bin/true >/tmp/hold-profile-vol.out 2>/tmp/hold-profile-vol.err; then
-  fail "profile volume unexpectedly succeeded"
-fi
-grep -q 'does not mount or remap volumes' /tmp/hold-profile-vol.err ||
-  fail "profile volume rejection message missing"
 
 server=$(hold run -d --name port-smoke -- python3 -c 'import socket,time; s=socket.socket(); s.bind(("127.0.0.1",0)); s.listen(); time.sleep(5)' 2>&1 | extract_full64 | cut -c1-12)
 [ "${#server}" -eq 12 ] || fail "server id missing"
@@ -129,12 +91,7 @@ printf '%s\n' "$psout" | grep -Eq '127\.0\.0\.1:[0-9]+/tcp' ||
   fail "observed listening port missing from ps"
 hold stop port-smoke >/dev/null 2>&1 || true
 
-commit_id=$(hold run -d -- /bin/sh -c 'sleep 3' 2>&1 | extract_full64)
-[ "${#commit_id}" -eq 64 ] || fail "commit source run id missing"
-hold commit "$commit_id" commit-smoke >/dev/null 2>&1 || fail "hold commit failed"
-hold profiles | grep -q 'commit-smoke' || fail "committed profile missing from profiles"
 hold attach -h 2>&1 | grep -q 'usage: hold attach <target>' || fail "attach help missing"
-hold stop "$commit_id" >/dev/null 2>&1 || true
 
 rmout=$(hold run -d --rm -- /bin/sh -c 'echo rm; sleep 0.1' 2>&1)
 rmfull=$(printf '%s\n' "$rmout" | extract_full64)

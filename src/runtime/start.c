@@ -10,58 +10,16 @@
 #include "hold/names/adjectives.h"
 #include "hold/names/nouns.h"
 #if defined(__linux__)
-#include <syslog.h>
 #include <linux/capability.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #endif
-
-struct start_profile_target {
-    struct hold_store store;
-    char hash[PROFILE_HASH_STR_LEN];
-    char alias[ALIAS_MAX_LEN + 1];
-    struct hold_profile recipe;
-    bool has_hash;
-    bool has_alias;
-    bool has_recipe;
-    bool requires_root;
-};
 
 static volatile sig_atomic_t g_restart_stop = 0;
 
 static const char *explicit_start_argv0(bool owned, const char *command, int argc, char **argv);
 static int apply_child_env(int envc, char **env, bool clean_base);
 static int apply_child_capabilities(int cap_addc, char **cap_add, int cap_dropc, char **cap_drop);
-static int private_start_hash_for_token(const struct hold_store *store,
-                                        const char *token,
-                                        char hash[PROFILE_HASH_STR_LEN],
-                                        bool *matched);
-static int private_start_recipe_for_token(const struct hold_store *store,
-                                          const char *token,
-                                          struct hold_profile *recipe,
-                                          bool *matched);
-static void free_start_profile_target(struct start_profile_target *target);
-static void start_target_set_alias(struct start_profile_target *target, const char *alias);
-static int start_target_set_recipe(struct start_profile_target *target,
-                                   const struct hold_store *store,
-                                   const char *alias);
-static int start_target_set_hash(struct start_profile_target *target,
-                                 const struct hold_store *store,
-                                 const char *hash,
-                                 const char *alias,
-                                 bool requires_root);
-static int count_running_alias(const struct hold_store *store, const char *alias, size_t *count_out);
-static int reconnect_running_console_alias(const struct hold_invocation *inv,
-                                           const struct hold_store *user_store,
-                                           const struct hold_store *system_store,
-                                           const struct hold_store *store,
-                                           const char *alias,
-                                           bool *handled);
-static int resolve_start_profile_target(const struct hold_invocation *inv,
-                                        const struct hold_store *current_user_store,
-                                        const struct hold_store *system_store,
-                                        const char *token,
-                                        struct start_profile_target *out);
 static int perform_explicit_start_options(const struct hold_invocation *inv,
                                             const struct hold_store *store,
                                             bool tail,
@@ -88,7 +46,6 @@ static int restart_existing_run(const struct hold_invocation *inv,
                                 const char *id);
 
 static int reserve_hashed_run_id(const struct hold_store *store,
-                                 const char *profile_alias,
                                  const char *resolved_exec_path,
                                  int argc,
                                  char **argv,
@@ -97,12 +54,7 @@ static int reserve_hashed_run_id(const struct hold_store *store,
                                  char out[ID_STR_LEN]);
 static int spawn_log_capture(int stdout_fd,
                              int stderr_fd,
-                             const char *log_path,
-                             const char *log_destination,
-                             const char *id,
-                             const char *name,
-                             const char *profile,
-                             const char *cmdline);
+                             const char *log_path);
 static void close_stdio_to_devnull(void);
 static int enter_privileged_exec_cwd(void);
 static void spawn_auto_remove_watcher(const struct hold_store *store, const struct hold_run_record *record);
@@ -348,7 +300,6 @@ static int restart_existing_run(const struct hold_invocation *inv,
         .argc = argc,
         .argv = argv,
         .exec_path = argv[0],
-        .profile_alias = old.has_alias ? old.alias : NULL,
         .envc = old.recipe.envc,
         .env = old.recipe.env,
         .portc = old.recipe.portc,
@@ -361,7 +312,6 @@ static int restart_existing_run(const struct hold_invocation *inv,
         .cap_drop = old.recipe.cap_drop,
         .restart_policy = restart_policy ? restart_policy : (old.recipe.has_restart_policy ? old.recipe.restart_policy : NULL),
         .restart_delay_seconds = restart_policy ? restart_delay_seconds : old.recipe.restart_delay_seconds,
-        .log_destination = old.recipe.has_log_destination ? old.recipe.log_destination : NULL,
         .existing_id = old.id,
         .existing_log_path = old.log_path,
         .existing_run_name = old.has_name ? old.name : NULL,
@@ -421,8 +371,7 @@ static void hash_field(struct sha256_ctx *ctx, const char *key, const char *valu
     hold_sha256_update_nul_field(ctx, value ? value : "-");
 }
 
-static void compute_run_hash(const char *profile_alias,
-                             const char *resolved_exec_path,
+static void compute_run_hash(const char *resolved_exec_path,
                              int argc,
                              char **argv,
                              const char *cwd,
@@ -434,7 +383,6 @@ static void compute_run_hash(const char *profile_alias,
     char buf[64];
     hold_sha256_init(&ctx);
     hash_field(&ctx, "version", "hold-run-v1");
-    hash_field(&ctx, "profile", profile_alias && *profile_alias ? profile_alias : "-");
     hash_field(&ctx, "exe", resolved_exec_path);
     hash_field(&ctx, "cwd", cwd && *cwd ? cwd : "-");
     snprintf(buf, sizeof(buf), "%" PRId64, start_unix_ns);
@@ -454,7 +402,6 @@ static void compute_run_hash(const char *profile_alias,
 }
 
 static int reserve_hashed_run_id(const struct hold_store *store,
-                                 const char *profile_alias,
                                  const char *resolved_exec_path,
                                  int argc,
                                  char **argv,
@@ -463,7 +410,7 @@ static int reserve_hashed_run_id(const struct hold_store *store,
                                  char out[ID_STR_LEN]) {
     char reserve[HOLD_PATH_MAX];
     for (unsigned long counter = 0; counter < 1024; counter++) {
-        compute_run_hash(profile_alias, resolved_exec_path, argc, argv, cwd, start_unix_ns, counter, out);
+        compute_run_hash(resolved_exec_path, argc, argv, cwd, start_unix_ns, counter, out);
         if (!hold_valid_id(out) || run_id_material_exists(store, out)) continue;
         if (hold_checked_snprintf(reserve, sizeof(reserve), "%s/.%s.reserve", store->record_dir, out) != 0) return -1;
         int fd = open(reserve, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
@@ -477,65 +424,17 @@ static int reserve_hashed_run_id(const struct hold_store *store,
     return -1;
 }
 
-static void mirror_syslog_line(const char *stream,
-                               const char *id,
-                               const char *name,
-                               const char *profile,
-                               const char *cmdline,
-                               const char *buf,
-                               size_t n) {
-#if defined(__linux__)
-    int priority = stream && strcmp(stream, "stderr") == 0 ? LOG_ERR : LOG_INFO;
-    char display[ID_DISPLAY_HEX_LEN + 1];
-    hold_run_id_display(id, display);
-    char *line = strndup(buf ? buf : "", n);
-    if (!line) return;
-    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = '\0';
-    syslog(priority,
-           "run=%s name=%s profile=%s stream=%s cmd=\"%s\" msg=\"%s\"",
-           display[0] ? display : "-",
-           name && *name ? name : "-",
-           profile && *profile ? profile : "-",
-           stream && *stream ? stream : "stdout",
-           cmdline && *cmdline ? cmdline : "-",
-           line);
-    free(line);
-#else
-    (void)stream; (void)id; (void)name; (void)profile; (void)cmdline; (void)buf; (void)n;
-#endif
-}
-
 static void logger_write_bytes(int logfd,
                                int idxfd,
-                               const char *log_destination,
                                const char *stream,
-                               const char *id,
-                               const char *name,
-                               const char *profile,
-                               const char *cmdline,
                                const char *buf,
                                size_t n) {
     (void)hold_write_indexed_log_bytes_fd(logfd, idxfd, stream, buf, n);
-    if (log_destination && strcmp(log_destination, "syslog") == 0) {
-        size_t start = 0;
-        for (size_t i = 0; i < n; i++) {
-            if (buf[i] == '\n') {
-                mirror_syslog_line(stream, id, name, profile, cmdline, buf + start, i + 1 - start);
-                start = i + 1;
-            }
-        }
-        if (start < n) mirror_syslog_line(stream, id, name, profile, cmdline, buf + start, n - start);
-    }
 }
 
 static int spawn_log_capture(int stdout_fd,
                              int stderr_fd,
-                             const char *log_path,
-                             const char *log_destination,
-                             const char *id,
-                             const char *name,
-                             const char *profile,
-                             const char *cmdline) {
+                             const char *log_path) {
     pid_t logger = fork();
     if (logger < 0) {
         if (stdout_fd >= 0) close(stdout_fd);
@@ -551,10 +450,6 @@ static int spawn_log_capture(int stdout_fd,
     int logfd = open_log_append_no_symlink(log_path);
     if (logfd < 0) _exit(0);
     int idxfd = hold_open_log_index_fd(log_path, logfd);
-#if defined(__linux__)
-    bool syslog_enabled = log_destination && strcmp(log_destination, "syslog") == 0;
-    if (syslog_enabled) openlog("hold", LOG_PID, LOG_USER);
-#endif
     while (stdout_fd >= 0 || stderr_fd >= 0) {
         struct pollfd pfds[2];
         int nfds = 0;
@@ -583,18 +478,15 @@ static int spawn_log_capture(int stdout_fd,
         char buf[4096];
         if (stdout_slot >= 0 && (pfds[stdout_slot].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
             ssize_t n = read(stdout_fd, buf, sizeof(buf));
-            if (n > 0) logger_write_bytes(logfd, idxfd, log_destination, "stdout", id, name, profile, cmdline, buf, (size_t)n);
+            if (n > 0) logger_write_bytes(logfd, idxfd, "stdout", buf, (size_t)n);
             else { close(stdout_fd); stdout_fd = -1; }
         }
         if (stderr_slot >= 0 && (pfds[stderr_slot].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
             ssize_t n = read(stderr_fd, buf, sizeof(buf));
-            if (n > 0) logger_write_bytes(logfd, idxfd, log_destination, "stderr", id, name, profile, cmdline, buf, (size_t)n);
+            if (n > 0) logger_write_bytes(logfd, idxfd, "stderr", buf, (size_t)n);
             else { close(stderr_fd); stderr_fd = -1; }
         }
     }
-#if defined(__linux__)
-    if (syslog_enabled) closelog();
-#endif
     if (idxfd >= 0) close(idxfd);
     close(logfd);
     _exit(0);
@@ -1106,7 +998,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     int argc = opts->argc;
     char **argv = opts->argv;
     const char *exec_path = opts->exec_path;
-    const char *run_alias = opts->profile_alias;
     const char *requested_run_name = opts->run_name;
     int envc = opts->envc;
     char **env = opts->env;
@@ -1116,7 +1007,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     char **volumes = opts->volumes;
     const char *restart_policy = opts->restart_policy;
     int restart_delay_seconds = opts->restart_delay_seconds;
-    const char *log_destination = opts->log_destination;
     int cap_addc = opts->cap_addc;
     char **cap_add = opts->cap_add;
     int cap_dropc = opts->cap_dropc;
@@ -1208,7 +1098,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         }
     } else {
         if (reserve_hashed_run_id(store,
-                                  run_alias,
                                   resolved_exec_path,
                                   argc,
                                   launch_argv,
@@ -1578,19 +1467,10 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         pid = target_pid;
     }
 
-    char logger_cmdline[HOLD_PATH_MAX];
-    if (hold_format_argv_human(logger_cmdline, sizeof(logger_cmdline), argc, launch_argv) != 0) {
-        snprintf(logger_cmdline, sizeof(logger_cmdline), "?");
-    }
     if (!console_mode) {
         if (spawn_log_capture(stdout_pipe[0],
                               stderr_pipe[0],
-                              log_path,
-                              log_destination,
-                              id,
-                              run_name,
-                              run_alias,
-                              logger_cmdline) != 0) {
+                              log_path) != 0) {
             int saved = errno;
             stdout_pipe[0] = -1;
             stderr_pipe[0] = -1;
@@ -1654,12 +1534,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
             r.invoked_via_sudo = false;
         }
     }
-    if (run_alias && hold_valid_alias(run_alias)) {
-        r.has_alias = true;
-        if (hold_checked_snprintf(r.alias, sizeof(r.alias), "%s", run_alias) != 0) {
-            hold_die_errno("hold: alias too long");
-        }
-    }
     if (run_name[0]) {
         r.has_name = true;
         if (hold_checked_snprintf(r.name, sizeof(r.name), "%s", run_name) != 0) {
@@ -1711,12 +1585,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     }
     r.recipe.restart_delay_seconds = restart_delay_seconds;
     r.recipe.has_restart_delay = restart_delay_seconds > 0;
-    if (log_destination && *log_destination) {
-        if (hold_checked_snprintf(r.recipe.log_destination, sizeof(r.recipe.log_destination), "%s", log_destination) != 0) {
-            hold_die_errno("hold: log destination too long");
-        }
-        r.recipe.has_log_destination = true;
-    }
     r.has_log = true;
     if (hold_checked_snprintf(r.log_path, sizeof(r.log_path), "%s", log_path) != 0) {
         hold_die_errno("hold: log path too long");
@@ -1882,298 +1750,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     return 1;
 }
 
-static int private_start_hash_for_token(const struct hold_store *store,
-                                        const char *token,
-                                        char hash[PROFILE_HASH_STR_LEN],
-                                        bool *matched) {
-    *matched = false;
-    if (hold_valid_profile_hash(token)) {
-        *matched = true;
-        if (hold_profile_exists_in_store(store, token) != 0) {
-            return -1;
-        }
-        snprintf(hash, PROFILE_HASH_STR_LEN, "%s", token);
-        return 1;
-    }
-    if (hold_valid_alias(token)) {
-        if (hold_alias_lookup_hash(store, token, hash) != 0) {
-            return 0;
-        }
-        *matched = true;
-        if (hold_profile_exists_in_store(store, hash) != 0) {
-            return -1;
-        }
-        return 1;
-    }
-    return 0;
-}
-
-static int private_start_recipe_for_token(const struct hold_store *store,
-                                          const char *token,
-                                          struct hold_profile *recipe,
-                                          bool *matched) {
-    *matched = false;
-    memset(recipe, 0, sizeof(*recipe));
-    if (!hold_valid_alias(token)) {
-        return 0;
-    }
-    if (hold_alias_lookup_recipe(store, token, recipe) != 0) {
-        return 0;
-    }
-    *matched = true;
-    return 1;
-}
-
-static void free_start_profile_target(struct start_profile_target *target) {
-    if (target && target->has_recipe) {
-        hold_free_profile(&target->recipe);
-        target->has_recipe = false;
-    }
-}
-
-static void start_target_set_alias(struct start_profile_target *target, const char *alias) {
-    if (hold_valid_alias(alias)) {
-        if (hold_checked_snprintf(target->alias, sizeof(target->alias), "%s", alias) == 0) {
-            target->has_alias = true;
-        }
-    }
-}
-
-static int start_target_set_recipe(struct start_profile_target *target,
-                                   const struct hold_store *store,
-                                   const char *alias) {
-    target->store = *store;
-    target->has_recipe = true;
-    start_target_set_alias(target, alias);
-    return 1;
-}
-
-static int start_target_set_hash(struct start_profile_target *target,
-                                 const struct hold_store *store,
-                                 const char *hash,
-                                 const char *alias,
-                                 bool requires_root) {
-    if (!hold_valid_profile_hash(hash)) {
-        errno = EINVAL;
-        return -1;
-    }
-    target->store = *store;
-    if (hold_checked_snprintf(target->hash, sizeof(target->hash), "%s", hash) != 0) {
-        return -1;
-    }
-    target->has_hash = true;
-    target->requires_root = requires_root;
-    start_target_set_alias(target, alias);
-    return 1;
-}
-
-static int count_running_alias(const struct hold_store *store, const char *alias, size_t *count_out) {
-    struct alias_match_list matches;
-    if (hold_collect_private_alias_matches(store, alias, "start", &matches) != 0) {
-        return -1;
-    }
-    *count_out = matches.count;
-    hold_free_alias_match_list(&matches);
-    return 0;
-}
-
-static int reconnect_running_console_alias(const struct hold_invocation *inv,
-                                           const struct hold_store *user_store,
-                                           const struct hold_store *system_store,
-                                           const struct hold_store *store,
-                                           const char *alias,
-                                           bool *handled) {
-    *handled = false;
-    struct alias_match_list matches;
-    if (hold_collect_private_alias_matches(store, alias, "console", &matches) != 0) {
-        return -1;
-    }
-    if (matches.count == 0) {
-        hold_free_alias_match_list(&matches);
-        return 0;
-    }
-    *handled = true;
-    if (matches.count == 1) {
-        char id[sizeof(matches.items[0].id)];
-        snprintf(id, sizeof(id), "%s", matches.items[0].id);
-        hold_free_alias_match_list(&matches);
-        return hold_cmd_console_action(inv, user_store, system_store, id);
-    }
-    hold_free_alias_match_list(&matches);
-    return hold_cmd_console_action(inv, user_store, system_store, alias);
-}
-
-static int resolve_start_profile_target(const struct hold_invocation *inv,
-                                        const struct hold_store *current_user_store,
-                                        const struct hold_store *system_store,
-                                        const char *token,
-                                        struct start_profile_target *out) {
-    memset(out, 0, sizeof(*out));
-    const char *atom = NULL;
-    enum id_token_scope scope = hold_parse_id_token(token, &atom);
-    if (scope == ID_TOKEN_INVALID) {
-        return 0;
-    }
-    if (!hold_valid_profile_hash(atom) && !hold_valid_alias(atom)) {
-        return 0;
-    }
-
-    if (inv->euid_root) {
-        if (scope == ID_TOKEN_USER) {
-            struct hold_store user_store;
-            if (hold_init_invoking_user_store(inv, &user_store) != 0) {
-                fprintf(stderr, "hold: error: user:%s requires sudo provenance\n", atom);
-                return -1;
-            }
-            bool matched = false;
-            int rc = private_start_recipe_for_token(&user_store, atom, &out->recipe, &matched);
-            if (rc == 1) {
-                return start_target_set_recipe(out, &user_store, atom);
-            }
-            rc = private_start_hash_for_token(&user_store, atom, out->hash, &matched);
-            if (rc == 1) {
-                return start_target_set_hash(out, &user_store, out->hash, hold_valid_alias(atom) ? atom : NULL, false);
-            }
-            if (rc < 0 && matched) {
-                fprintf(stderr, "hold: error: profile for '%s' is unavailable\n", token);
-                return -1;
-            }
-            return 0;
-        }
-        if (scope == ID_TOKEN_SYSTEM) {
-            bool matched = false;
-            int rc = private_start_hash_for_token(system_store, atom, out->hash, &matched);
-            if (rc == 1) {
-                return start_target_set_hash(out, system_store, out->hash, hold_valid_alias(atom) ? atom : NULL, false);
-            }
-            if (rc < 0 && matched) {
-                fprintf(stderr, "hold: error: profile for '%s' is unavailable\n", token);
-                return -1;
-            }
-            return 0;
-        }
-
-        bool matched = false;
-        int rc = private_start_hash_for_token(system_store, atom, out->hash, &matched);
-        if (rc == 1) {
-            return start_target_set_hash(out, system_store, out->hash, hold_valid_alias(atom) ? atom : NULL, false);
-        }
-        if (rc < 0 && matched) {
-            fprintf(stderr, "hold: error: profile for '%s' is unavailable\n", token);
-            return -1;
-        }
-        if (inv->have_sudo_user) {
-            struct hold_store user_store;
-            if (hold_init_invoking_user_store(inv, &user_store) == 0) {
-                matched = false;
-                rc = private_start_recipe_for_token(&user_store, atom, &out->recipe, &matched);
-                if (rc == 1) {
-                    return start_target_set_recipe(out, &user_store, atom);
-                }
-                rc = private_start_hash_for_token(&user_store, atom, out->hash, &matched);
-                if (rc == 1) {
-                    return start_target_set_hash(out, &user_store, out->hash, hold_valid_alias(atom) ? atom : NULL, false);
-                }
-                if (rc < 0 && matched) {
-                    fprintf(stderr, "hold: error: profile for '%s' is unavailable\n", token);
-                    return -1;
-                }
-            }
-        }
-        return 0;
-    }
-
-    if (scope == ID_TOKEN_USER || scope == ID_TOKEN_PLAIN) {
-        bool matched = false;
-        int rc = private_start_recipe_for_token(current_user_store, atom, &out->recipe, &matched);
-        if (rc == 1) {
-            return start_target_set_recipe(out, current_user_store, atom);
-        }
-        rc = private_start_hash_for_token(current_user_store, atom, out->hash, &matched);
-        if (rc == 1) {
-            return start_target_set_hash(out, current_user_store, out->hash, hold_valid_alias(atom) ? atom : NULL, false);
-        }
-        if (rc < 0 && matched) {
-            fprintf(stderr, "hold: error: profile for '%s' is unavailable\n", token);
-            return -1;
-        }
-        if (scope == ID_TOKEN_USER) {
-            return 0;
-        }
-    }
-
-    if (scope == ID_TOKEN_SYSTEM || scope == ID_TOKEN_PLAIN) {
-        int rc = hold_resolve_public_profile_token(system_store, atom, out->hash);
-        if (rc == 1) {
-            return start_target_set_hash(out, system_store, out->hash, hold_valid_alias(atom) ? atom : NULL, true);
-        }
-    }
-    return 0;
-}
-
-static int hold_perform_profile_start_options(const struct hold_invocation *inv,
-                                                const struct hold_store *store,
-                                                bool tail,
-                                                bool console_mode,
-                                                bool auto_remove,
-                                                bool interactive_stdin,
-                                                const char *hash,
-                                                const char *alias,
-                                                const char *restart_policy,
-                                                int restart_delay_seconds,
-                                                const char *log_destination) {
-    struct hold_profile p;
-    if (hold_load_profile_by_hash(store, hash, &p) != 0) {
-        fprintf(stderr, "hold: error: profile %s is unavailable\n", hash);
-        return 5;
-    }
-    bool eff_console = console_mode || p.recipe.mode_tty;
-    bool eff_interactive = interactive_stdin || p.recipe.mode_interactive;
-    bool eff_tail = tail;
-    if (!tail && p.recipe.mode_detach && !console_mode && !interactive_stdin) {
-        eff_tail = false;
-    }
-    struct hold_start_options opts = {
-        .tail = eff_tail,
-        .console_mode = eff_console,
-        .auto_remove = auto_remove,
-        .interactive_stdin = eff_interactive,
-        .argc = p.recipe.argc,
-        .argv = p.recipe.argv,
-        .exec_path = p.recipe.binary_path,
-        .profile_alias = alias,
-        .envc = p.recipe.envc,
-        .env = p.recipe.env,
-        .portc = p.recipe.portc,
-        .ports = p.recipe.ports,
-        .volumec = p.recipe.volumec,
-        .volumes = p.recipe.volumes,
-        .cap_addc = p.recipe.cap_addc,
-        .cap_add = p.recipe.cap_add,
-        .cap_dropc = p.recipe.cap_dropc,
-        .cap_drop = p.recipe.cap_drop,
-        .restart_policy = restart_policy ? restart_policy : (p.recipe.has_restart_policy ? p.recipe.restart_policy : NULL),
-        .restart_delay_seconds = restart_policy ? restart_delay_seconds : p.recipe.restart_delay_seconds,
-        .log_destination = log_destination ? log_destination : (p.recipe.has_log_destination ? p.recipe.log_destination : NULL),
-    };
-    int rc = hold_perform_start_options(inv, store, &opts);
-    hold_free_profile(&p);
-    return rc;
-}
-
-int hold_cmd_start_action(const struct hold_invocation *inv,
-                            const struct hold_store *user_store,
-                            const struct hold_store *system_store,
-                            const struct hold_store *fallback_store,
-                            bool tail,
-                            bool console_mode,
-                            bool multi,
-                            int multi_count,
-                            int argc,
-                            char **argv) {
-    return hold_cmd_start_action_options(inv, user_store, system_store, fallback_store, tail, console_mode, false, false, multi, multi_count, NULL, 0, argc, argv);
-}
-
 int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                     const struct hold_store *user_store,
                                     const struct hold_store *system_store,
@@ -2190,7 +1766,7 @@ int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                     char **argv) {
     return hold_cmd_start_action_name_options(inv, user_store, system_store, fallback_store, tail, console_mode,
                                               auto_remove, interactive_stdin, multi, multi_count, restart_policy,
-                                              restart_delay_seconds, NULL, NULL, true, argc, argv);
+                                              restart_delay_seconds, NULL, true, argc, argv);
 }
 
 int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
@@ -2206,157 +1782,54 @@ int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
                                         const char *restart_policy,
                                         int restart_delay_seconds,
                                         const char *requested_run_name,
-                                        const char *log_destination,
                                         bool allow_existing_restart,
                                         int argc,
                                         char **argv) {
-    if (argc == 1) {
-        if (allow_existing_restart) {
-            char restart_id[ID_STR_LEN];
-            const struct hold_store *restart_store = NULL;
-            int restart_match = 0;
-            if (user_store && user_store->record_dir[0]) {
-                restart_match = find_restart_record(user_store, argv[0], restart_id);
-                if (restart_match == 1) restart_store = user_store;
-            }
-            if (restart_match == 0 && system_store && system_store->record_dir[0] &&
-                (inv->euid_root || (fallback_store && fallback_store->kind == STORE_SYSTEM_MANAGED))) {
-                restart_match = find_restart_record(system_store, argv[0], restart_id);
-                if (restart_match == 1) restart_store = system_store;
-            }
-            if (restart_match == -2) {
-                return 6;
-            }
-            if (restart_match < 0) {
-                return 3;
-            }
-            if (restart_store) {
-                if (multi) {
-                    fprintf(stderr, "hold: error: --multi applies only to profile starts\n");
-                    return 5;
-                }
-                if (requested_run_name) {
-                    fprintf(stderr, "hold: error: --name cannot rename an existing run during start\n");
-                    return 5;
-                }
-                return restart_existing_run(inv,
-                                            restart_store,
-                                            tail,
-                                            console_mode,
-                                            auto_remove,
-                                            interactive_stdin,
-                                            restart_policy,
-                                            restart_delay_seconds,
-                                            restart_id);
-            }
+    (void)multi_count;
+    if (argc == 1 && allow_existing_restart) {
+        char restart_id[ID_STR_LEN];
+        const struct hold_store *restart_store = NULL;
+        int restart_match = 0;
+        if (user_store && user_store->record_dir[0]) {
+            restart_match = find_restart_record(user_store, argv[0], restart_id);
+            if (restart_match == 1) restart_store = user_store;
         }
-        struct start_profile_target target;
-        int rc = resolve_start_profile_target(inv, user_store, system_store, argv[0], &target);
-        if (rc < 0) {
-            return 5;
+        if (restart_match == 0 && system_store && system_store->record_dir[0] &&
+            (inv->euid_root || (fallback_store && fallback_store->kind == STORE_SYSTEM_MANAGED))) {
+            restart_match = find_restart_record(system_store, argv[0], restart_id);
+            if (restart_match == 1) restart_store = system_store;
         }
-        if (rc == 1) {
-            int start_rc;
-            int starts = multi ? multi_count : 1;
-            if (tail && starts > 1) {
-                fprintf(stderr, "hold: error: --tail cannot follow multiple starts\n");
-                free_start_profile_target(&target);
+        if (restart_match == -2) {
+            return 6;
+        }
+        if (restart_match < 0) {
+            return 3;
+        }
+        if (restart_store) {
+            if (multi) {
+                fprintf(stderr, "hold: error: --multi applies only to profile starts\n");
                 return 5;
             }
-            if (target.requires_root) {
-                free_start_profile_target(&target);
-                return hold_report_requires_root(argv[0]);
-            } else {
-                if (console_mode && target.has_alias && !multi) {
-                    bool reconnected = false;
-                    int reconnect_rc = reconnect_running_console_alias(inv,
-                                                                        user_store,
-                                                                        system_store,
-                                                                        &target.store,
-                                                                        target.alias,
-                                                                        &reconnected);
-                    if (reconnect_rc != 0 || reconnected) {
-                        free_start_profile_target(&target);
-                        return reconnect_rc < 0 ? 3 : reconnect_rc;
-                    }
-                }
-                bool profile_allows_multi = target.has_recipe && target.recipe.recipe.allow_multi;
-                if (target.has_alias && !multi && !profile_allows_multi) {
-                    size_t running = 0;
-                    if (count_running_alias(&target.store, target.alias, &running) != 0) {
-                        free_start_profile_target(&target);
-                        return 3;
-                    }
-                    if (running > 0) {
-                        fprintf(stderr,
-                                "hold: error: profile '%s' already has a running process; use --force to start another\n",
-                                target.alias);
-                        free_start_profile_target(&target);
-                        return 6;
-                    }
-                }
-                start_rc = 0;
-                for (int i = 0; i < starts; i++) {
-                    if (target.has_recipe) {
-                        bool eff_console = console_mode || target.recipe.recipe.mode_tty;
-                        bool eff_interactive = interactive_stdin || target.recipe.recipe.mode_interactive;
-                        bool eff_tail = tail;
-                        if (!tail && target.recipe.recipe.mode_detach && !console_mode && !interactive_stdin) {
-                            eff_tail = false;
-                        }
-                        struct hold_start_options opts = {
-                            .tail = eff_tail,
-                            .console_mode = eff_console,
-                            .auto_remove = auto_remove,
-                            .interactive_stdin = eff_interactive,
-                            .argc = target.recipe.recipe.argc,
-                            .argv = target.recipe.recipe.argv,
-                            .exec_path = target.recipe.recipe.binary_path,
-                            .profile_alias = target.has_alias ? target.alias : NULL,
-                            .run_name = requested_run_name,
-                            .envc = target.recipe.recipe.envc,
-                            .env = target.recipe.recipe.env,
-                            .portc = target.recipe.recipe.portc,
-                            .ports = target.recipe.recipe.ports,
-                            .volumec = target.recipe.recipe.volumec,
-                            .volumes = target.recipe.recipe.volumes,
-                            .cap_addc = target.recipe.recipe.cap_addc,
-                            .cap_add = target.recipe.recipe.cap_add,
-                            .cap_dropc = target.recipe.recipe.cap_dropc,
-                            .cap_drop = target.recipe.recipe.cap_drop,
-                            .restart_policy = restart_policy ? restart_policy : (target.recipe.recipe.has_restart_policy ? target.recipe.recipe.restart_policy : NULL),
-                            .restart_delay_seconds = restart_policy ? restart_delay_seconds : target.recipe.recipe.restart_delay_seconds,
-                            .log_destination = log_destination ? log_destination : (target.recipe.recipe.has_log_destination ? target.recipe.recipe.log_destination : NULL),
-                        };
-                        start_rc = hold_perform_start_options(inv, &target.store, &opts);
-                    } else {
-                        start_rc = hold_perform_profile_start_options(inv,
-                                                         &target.store,
-                                                         tail,
-                                                         console_mode,
-                                                         auto_remove,
-                                                         interactive_stdin,
-                                                         target.hash,
-                                                         target.has_alias ? target.alias : NULL,
-                                                         restart_policy,
-                                                         restart_delay_seconds,
-                                                         log_destination);
-                    }
-                    if (start_rc != 0) {
-                        break;
-                    }
-                }
+            if (requested_run_name) {
+                fprintf(stderr, "hold: error: --name cannot rename an existing run during start\n");
+                return 5;
             }
-            free_start_profile_target(&target);
-            return start_rc;
+            return restart_existing_run(inv,
+                                        restart_store,
+                                        tail,
+                                        console_mode,
+                                        auto_remove,
+                                        interactive_stdin,
+                                        restart_policy,
+                                        restart_delay_seconds,
+                                        restart_id);
         }
-        free_start_profile_target(&target);
     }
     if (multi) {
         fprintf(stderr, "hold: error: --multi applies only to profile starts\n");
         return 5;
     }
-    if (requested_run_name || log_destination) {
+    if (requested_run_name) {
         if (argc <= 0) {
             fprintf(stderr, "usage: hold start <cmd> [args...]\n");
             return 5;
@@ -2373,7 +1846,6 @@ int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
                 .run_name = requested_run_name,
                 .restart_policy = restart_policy,
                 .restart_delay_seconds = restart_delay_seconds,
-                .log_destination = log_destination,
             };
             return hold_perform_start_options(inv, fallback_store, &opts);
         }
@@ -2387,7 +1859,6 @@ int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
             .run_name = requested_run_name,
             .restart_policy = restart_policy,
             .restart_delay_seconds = restart_delay_seconds,
-            .log_destination = log_destination,
         };
         return hold_perform_start_options(inv, fallback_store, &opts);
     }

@@ -6,18 +6,6 @@
 #include "hold/types.h"
 #include "hold/runtime.h"
 
-struct alias_match {
-    char id[ID_STR_LEN];
-    enum run_state state;
-    char started_at[64];
-};
-
-struct alias_match_list {
-    struct alias_match *items;
-    size_t count;
-    bool alias_known;
-};
-
 void hold_report_session_escapees(const struct hold_run_record *r);
 enum run_state hold_eval_state(const struct hold_run_record *r, const char *current_boot);
 int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, bool follow_until_exit);
@@ -26,19 +14,7 @@ bool hold_wait_target_group_gone(const struct hold_run_record *r, int timeout_ms
 int hold_do_signal_action(const struct hold_store *store, const char *id, int sig, bool graceful, bool *already_done);
 const char *hold_state_str(enum run_state s);
 int hold_prune_one_run(const struct hold_store *store, const char *id, const char *boot, bool allow_stale, bool *removed);
-int hold_ensure_run_recorded_under_alias(const struct hold_store *store, const char *id, const char *alias);
-void hold_free_alias_match_list(struct alias_match_list *list);
-bool hold_command_all_allowed(const char *command);
 bool hold_record_matches_alias_intent(const char *command, const struct hold_run_record *r, enum run_state st);
-int hold_collect_private_alias_matches(const struct hold_store *store,
-                                         const char *alias,
-                                         const char *command,
-                                         struct alias_match_list *list);
-int hold_resolve_target(const struct hold_invocation *inv,
-                          const struct hold_store *current_user_store,
-                          const struct hold_store *system_store,
-                          const char *token,
-                          struct hold_resolved_target *out);
 int hold_report_not_found(const char *token);
 int hold_report_requires_root(const char *token);
 int hold_resolve_action_token(const struct hold_invocation *inv,

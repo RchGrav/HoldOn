@@ -147,9 +147,7 @@ static void write_docker_config_object(FILE *f, const struct hold_run_record *r,
     else fputs("null", f);
     fprintf(f, ",\n");
     fprintf(f, "    \"Privileged\": %s,\n", r->uid == 0 ? "true" : "false");
-    fprintf(f, "    \"LogConfig\": {\"Type\": \"");
-    hold_json_escape(f, r->recipe.has_log_destination && r->recipe.log_destination[0] ? r->recipe.log_destination : "local");
-    fprintf(f, "\", \"Config\": {}}\n");
+    fprintf(f, "    \"LogConfig\": {\"Type\": \"local\", \"Config\": {}}\n");
     fprintf(f, "  }");
 }
 
@@ -326,11 +324,6 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
     }
     if (r->recipe.has_restart_delay) {
         fprintf(f, "  \"restart_delay_seconds\": %d,\n", r->recipe.restart_delay_seconds);
-    }
-    if (r->recipe.has_log_destination && r->recipe.log_destination[0]) {
-        fprintf(f, "  \"log_destination\": \"");
-        hold_json_escape(f, r->recipe.log_destination);
-        fprintf(f, "\",\n");
     }
     fprintf(f, "  \"uid\": %u,\n", r->uid);
     fprintf(f, "  \"gid\": %u,\n", r->gid);
@@ -796,21 +789,6 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     if (hold_json_get_i64(j, "restart_delay_seconds", &tmp) == 0 && tmp >= 0 && tmp <= INT_MAX) {
         r->recipe.restart_delay_seconds = (int)tmp;
         r->recipe.has_restart_delay = true;
-    }
-    if (hold_json_get_str(j, "log_destination", r->recipe.log_destination, sizeof(r->recipe.log_destination)) == 0 &&
-        r->recipe.log_destination[0]) {
-        r->recipe.has_log_destination = true;
-    } else if (config_obj && *config_obj == '{') {
-        const char *log_config = NULL;
-        if (hold_json_find_key(config_obj, "LogConfig", &log_config) == 0 && log_config && *log_config == '{' &&
-            hold_json_get_str(log_config, "Type", r->recipe.log_destination, sizeof(r->recipe.log_destination)) == 0 &&
-            r->recipe.log_destination[0]) {
-            r->recipe.has_log_destination = true;
-        }
-    }
-    if (r->recipe.has_log_destination && strcmp(r->recipe.log_destination, "local") == 0) {
-        r->recipe.log_destination[0] = '\0';
-        r->recipe.has_log_destination = false;
     }
     if (hold_json_get_u64(j, "proc_starttime_ticks", &r->proc_starttime_ticks) != 0 ||
         hold_json_get_u64(j, "exe_dev", &r->exe_dev) != 0 ||

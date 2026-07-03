@@ -26,9 +26,6 @@ SRCS := $(wildcard src/*.c) \
         $(wildcard src/runtime/*.c) \
         $(wildcard src/viewer/*.c)
 
-# The profile-hash compatibility test links only the layers the hash depends on.
-HASH_VECTOR_SRCS := $(wildcard src/core/*.c) $(wildcard src/platform/*.c) $(wildcard src/store/*.c)
-
 # Separate object trees per build "personality" so the test objects (built with
 # -DHOLD_TESTING and a different HOLD_BOOT_ID_PATH) can never be linked
 # into a release binary, and vice versa.
@@ -59,14 +56,8 @@ test: $(TEST_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o hold $(TEST_OBJS)
 	@bash tests/test_hold.sh
 	@$(MAKE) viewer-filter-test
-	@$(MAKE) hash-vector
 	@bash tests/test_version_makefile.sh
 	@bash tests/test_release_installer.sh
-
-# Guards the profile-hash capability key against accidental framing changes.
-hash-vector:
-	$(CC) $(ALL_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o hash-vector tests/profile_hash_vector.c $(HASH_VECTOR_SRCS)
-	@./hash-vector
 
 viewer-filter-test:
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logging.c src/core/json.c src/core/util.c src/platform/paths.c
@@ -106,7 +97,7 @@ lint:
 	@bash scripts/lint_layers.sh
 
 clean:
-	rm -f hold hold-dynamic hash-vector viewer-filter-test
+	rm -f hold hold-dynamic viewer-filter-test
 	rm -rf obj obj-test
 
-.PHONY: all clean test test-040 check ci lint hash-vector viewer-filter-test print-version review-build review-fixture demo demo-stop demo-status
+.PHONY: all clean test test-040 check ci lint viewer-filter-test print-version review-build review-fixture demo demo-stop demo-status

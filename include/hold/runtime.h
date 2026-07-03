@@ -18,7 +18,6 @@ struct hold_start_options {
     int argc;
     char **argv;
     const char *exec_path;
-    const char *profile_alias;
     const char *run_name;
     int envc;
     char **env;
@@ -32,7 +31,6 @@ struct hold_start_options {
     char **cap_drop;
     const char *restart_policy;
     int restart_delay_seconds;
-    const char *log_destination;
     const char *existing_id;
     const char *existing_log_path;
     const char *existing_run_name;
@@ -54,9 +52,6 @@ int hold_cmd_ps_normal(const struct hold_store *user_store,
                          bool all);
 int hold_cmd_ps_system(const struct hold_store *system_store, bool all);
 enum id_token_scope hold_parse_id_token(const char *token, const char **id_out);
-int hold_resolve_public_profile_token(const struct hold_store *store,
-                                        const char *token,
-                                        char hash[PROFILE_HASH_STR_LEN]);
 int hold_cmd_signal_action(const struct hold_invocation *inv,
                              const struct hold_store *user_store,
                              const struct hold_store *system_store,
@@ -99,20 +94,6 @@ int hold_generate_run_name_for_id(const struct hold_store *store,
                                     const char *id,
                                     const char *requested,
                                     char out[ALIAS_MAX_LEN + 1]);
-int hold_cmd_captive_action(const struct hold_invocation *inv,
-                              const struct hold_store *user_store,
-                              const struct hold_store *system_store,
-                              const char *program);
-int hold_cmd_start_action(const struct hold_invocation *inv,
-                            const struct hold_store *user_store,
-                            const struct hold_store *system_store,
-                            const struct hold_store *fallback_store,
-                            bool tail,
-                            bool console_mode,
-                            bool multi,
-                            int multi_count,
-                            int argc,
-                            char **argv);
 int hold_cmd_start_action_options(const struct hold_invocation *inv,
                                     const struct hold_store *user_store,
                                     const struct hold_store *system_store,
@@ -140,7 +121,6 @@ int hold_cmd_start_action_name_options(const struct hold_invocation *inv,
                                         const char *restart_policy,
                                         int restart_delay_seconds,
                                         const char *run_name,
-                                        const char *log_destination,
                                         bool allow_existing_restart,
                                         int argc,
                                         char **argv);
@@ -151,56 +131,6 @@ int hold_ensure_start_store_for_command(const struct hold_invocation *inv,
                                           int argc,
                                           char **argv,
                                           struct hold_store *store);
-int hold_cmd_alias_action(const struct hold_invocation *inv,
-                            const struct hold_store *user_store,
-                            const struct hold_store *system_store,
-                            int argc,
-                            char **argv);
-int hold_cmd_aliases_action(const struct hold_invocation *inv,
-                              const struct hold_store *user_store,
-                              const struct hold_store *system_store,
-                              bool verbose);
-int hold_cmd_profile_action(const struct hold_invocation *inv,
-                              const struct hold_store *user_store,
-                              int argc,
-                              char **argv);
-int hold_cmd_profile_set_command(const struct hold_invocation *inv,
-                                    const struct hold_store *user_store,
-                                    const char *name,
-                                    int argc,
-                                    char **argv);
-int hold_cmd_profile_create_command(const struct hold_invocation *inv,
-                                       const struct hold_store *user_store,
-                                       const char *name,
-                                       int argc,
-                                       char **argv);
-int hold_cmd_profile_define_command(const struct hold_invocation *inv,
-                                      const struct hold_store *user_store,
-                                      const char *name,
-                                      int argc,
-                                      char **argv,
-                                      int envc,
-                                      char **env,
-                                      int volumec,
-                                      char **volumes,
-                                      int cap_addc,
-                                      char **cap_add,
-                                      int cap_dropc,
-                                      char **cap_drop,
-                                      bool mode_interactive,
-                                      bool mode_tty,
-                                      bool mode_detach,
-                                      bool allow_multi,
-                                      const char *restart_policy,
-                                      int restart_delay_seconds,
-                                      const char *log_destination);
-int hold_cmd_profile_delete(const struct hold_invocation *inv,
-                               const struct hold_store *user_store,
-                               const char *name);
-int hold_cmd_profile_rename(const struct hold_invocation *inv,
-                               const struct hold_store *user_store,
-                               const char *old_name,
-                               const char *new_name);
 void hold_usage(void);
 
 #endif /* HOLD_RUNTIME_H */
