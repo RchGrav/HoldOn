@@ -28,8 +28,11 @@ This directory preserves everything needed to execute the rest without re-discov
   the leader-gone branch carries a deliberate-best-effort comment. Do not
   re-open without new evidence of a real-world mis-kill.
 - **STILL OPEN (specs in r2-*.json):** c1 commits 2-3 (post-EOF attach hang, EAGAIN
-  backlog); c3 commits 1,2,4,5; c4 commit 3 (purge path derivation); c5 caps/--privileged cut
-  (owner sign-off) + --name grammar + remaining help items; all of c6.
+  backlog); c3 commits 1,2,4,5; c4 commit 3 (purge path derivation); c5 --name grammar hardening
+  (reject flag-look-alike names in validate.c); all of c6.
+- **DONE (owner-approved, 2026-07-04 evening):** the caps/--privileged cut
+  (267f396, revertable, -449 lines) with docs redline; purge path derivation
+  (6d06a9f); signal-validation finding resolved by SPEC redline (ead518f).
 
 ## Files here
 
