@@ -3553,6 +3553,40 @@ test_docker_restart_policy_restarts_failures() {
   "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
 }
 
+test_logs_plain_dumps_whole_log_and_tail_is_last_n() {
+  local out id got
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'seq 1 200' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  record_ended_soon "$id" || return 1
+  got=$("$HOLD_BIN" logs "$id" --plain | wc -l)
+  [ "$got" -eq 200 ] || { echo "plain dump lines=$got want 200" >&2; return 1; }
+  got=$("$HOLD_BIN" logs "$id" --plain -n 10)
+  [ "$(printf '%s\n' "$got" | wc -l)" -eq 10 ] || { printf '%s\n' "$got" >&2; return 1; }
+  printf '%s\n' "$got" | head -n1 | grep -qx '191' || { printf '%s\n' "$got" >&2; return 1; }
+  printf '%s\n' "$got" | tail -n1 | grep -qx '200' || { printf '%s\n' "$got" >&2; return 1; }
+  # Docker's --tail composes with --follow: last N, then the live stream
+  # (which for an ended call is nothing).
+  got=$("$HOLD_BIN" logs "$id" --plain -f -n 5)
+  [ "$(printf '%s\n' "$got" | wc -l)" -eq 5 ] || { printf '%s\n' "$got" >&2; return 1; }
+  printf '%s\n' "$got" | head -n1 | grep -qx '196' || { printf '%s\n' "$got" >&2; return 1; }
+}
+
+test_docker_foreground_propagates_exit_code() {
+  local rc
+  set +e
+  "$HOLD_BIN" -- /bin/sh -c 'exit 7' >/dev/null 2>"$TEST_ROOT/fg-exit.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 7 ] || { echo "foreground rc=$rc, want 7" >&2; cat "$TEST_ROOT/fg-exit.err" >&2; return 1; }
+  set +e
+  "$HOLD_BIN" --rm -- /bin/sh -c 'exit 5' >/dev/null 2>&1
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { echo "--rm foreground rc=$rc, want 5" >&2; return 1; }
+  "$HOLD_BIN" -- /bin/true >/dev/null 2>&1 || { echo "clean foreground exit not 0" >&2; return 1; }
+}
+
 test_restart_final_status_recorded() {
   local out id record
   out=$("$HOLD_BIN" -d --restart on-failure:1 --restart-delay 0 -- /bin/sh -c 'exit 3' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
@@ -4196,6 +4230,8 @@ run_test "bare foreground streams output; -d detaches with a 64-hex id" test_doc
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker restart policy restarts failed processes" test_docker_restart_policy_restarts_failures
+run_test "logs --plain dumps the whole log; -n/--tail is the last N" test_logs_plain_dumps_whole_log_and_tail_is_last_n
+run_test "foreground launch propagates the exit code" test_docker_foreground_propagates_exit_code
 run_test "restart call records its final exit status" test_restart_final_status_recorded
 run_test "ending a restart call records the term status" test_end_restart_call_records_term_status
 run_test "unwitnessed death renders Exited (?)" test_unwitnessed_death_renders_exited_unknown
