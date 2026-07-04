@@ -30,12 +30,12 @@ int hold_write_public_index_atomic(const struct hold_store *store, const struct 
     int rc = -1;
     int fd = -1;
     FILE *f = NULL;
-    if (hold_checked_snprintf(fin, sizeof(fin), "%s/%s.json", store->public_dir, r->id) != 0 ||
-        hold_checked_snprintf(tmp, sizeof(tmp), "%s/.%s.tmp", store->public_dir, r->id) != 0) {
+    if (hold_checked_snprintf(fin, sizeof(fin), "%s/%s.json", store->public_dir, r->id) != 0) {
         return -1;
     }
 
-    fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644);
+    /* Unique temp names: a crash mid-write must never block future rewrites. */
+    fd = hold_open_unique_temp(store->public_dir, r->id, 0644, tmp, sizeof(tmp));
     if (fd < 0) {
         return -1;
     }

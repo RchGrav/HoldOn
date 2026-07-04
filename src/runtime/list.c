@@ -659,6 +659,47 @@ struct prune_sweep_stats {
     int kept_saved;
 };
 
+/* A young .<id>.reserve marks a call mid-creation (log and socket exist
+ * before the record JSON); the sweep must not eat it. A stale reserve is a
+ * dead start's litter: clear it and let the orphan collection proceed. */
+static bool orphan_creation_reserved(const struct hold_store *store, const char *id) {
+    char reserve[HOLD_PATH_MAX];
+    struct stat st;
+    if (hold_checked_snprintf(reserve, sizeof(reserve), "%s/.%s.reserve", store->record_dir, id) != 0) {
+        return false;
+    }
+    if (lstat(reserve, &st) != 0 || !S_ISREG(st.st_mode)) {
+        return false;
+    }
+    if (time(NULL) - st.st_mtime < 600) {
+        return true;
+    }
+    unlink(reserve);
+    return false;
+}
+
+/* Collect abandoned dot-prefixed temp files (unique-temp litter and legacy
+ * fixed-name tombs); a 60s age gate protects any live writer's window. */
+static void sweep_tmp_litter(const char *dir) {
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] != '.' || !hold_has_suffix(e->d_name, ".tmp")) {
+            continue;
+        }
+        char path[HOLD_PATH_MAX];
+        struct stat st;
+        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", dir, e->d_name) != 0) {
+            continue;
+        }
+        if (lstat(path, &st) == 0 && S_ISREG(st.st_mode) && time(NULL) - st.st_mtime > 60) {
+            unlink(path);
+        }
+    }
+    closedir(d);
+}
+
 /* One orphan sweep: any artifact in dir with the given suffix whose id has
  * no record left is removed (a public entry, log, or console socket whose
  * record is gone must never resurrect a call). is_log also drops the
@@ -697,7 +738,7 @@ static void sweep_orphaned_artifacts(const struct hold_store *store,
             hold_checked_snprintf(artifact_path, sizeof(artifact_path), "%s/%s", dir, e->d_name) != 0) {
             continue;
         }
-        if (access(json_path, F_OK) != 0) {
+        if (access(json_path, F_OK) != 0 && !orphan_creation_reserved(store, id)) {
             if (is_log) {
                 unlink_log_index_for_log(artifact_path);
             }
@@ -707,6 +748,7 @@ static void sweep_orphaned_artifacts(const struct hold_store *store,
     }
     closedir(d);
 }
+
 
 
 static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, struct prune_sweep_stats *stats) {
@@ -769,6 +811,8 @@ sweep_logs:
     sweep_orphaned_artifacts(store, store->log_dir, ".log", true, stats);
     sweep_orphaned_artifacts(store, store->console_dir, ".sock", false, stats);
     sweep_orphaned_artifacts(store, store->public_dir, ".json", false, stats);
+    sweep_tmp_litter(store->record_dir);
+    sweep_tmp_litter(store->public_dir);
     return 0;
 }
 

@@ -31,6 +31,8 @@ void hold_sha256_init(struct sha256_ctx *c);
 void hold_sha256_update(struct sha256_ctx *c, const void *data, size_t n);
 void hold_sha256_final(struct sha256_ctx *c, unsigned char out[32]);
 void hold_hex_encode(const unsigned char *bytes, size_t n, char *out, size_t out_n);
+int hold_rand_bytes(uint8_t *buf, size_t n);
+int hold_open_unique_temp(const char *dir, const char *prefix, mode_t mode, char *tmp, size_t tmp_n);
 int hold_mkdir_p_mode(const char *dir, mode_t mode);
 int hold_parse_uid_env(const char *s, uid_t *out);
 int hold_parse_gid_env(const char *s, gid_t *out);

@@ -24,14 +24,12 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
     if (hold_checked_snprintf(fin, sizeof(fin), "%s/%s.json", dir, r->id) != 0) {
         return -1;
     }
-    if (hold_checked_snprintf(tmp, sizeof(tmp), "%s/.%s.tmp", dir, r->id) != 0) {
-        return -1;
-    }
     if (hold_checked_snprintf(reserve, sizeof(reserve), "%s/.%s.reserve", dir, r->id) != 0) {
         return -1;
     }
 
-    fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    /* Unique temp names: a crash mid-write must never block future rewrites. */
+    fd = hold_open_unique_temp(dir, r->id, 0600, tmp, sizeof(tmp));
     if (fd < 0) {
         return -1;
     }
