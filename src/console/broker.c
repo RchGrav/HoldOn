@@ -11,6 +11,21 @@
 /* Set by the SIGWINCH handler below; read by run_native_console in attach.c. */
 volatile sig_atomic_t g_console_resized = 0;
 
+/* The child-mode broker's forked target group, set right after the pid is
+ * reported and cleared at every reap site. The SIGTERM forwarder reads it so a
+ * TERM aimed at the broker (e.g. a raw kill of the broker pid) reaches the held
+ * group instead of orphaning it. Never set by the adopted entry, which must
+ * never signal its adopted group. */
+static volatile pid_t g_broker_forward_target = 0;
+
+static void broker_forward_term(int signo) {
+    (void)signo;
+    pid_t t = g_broker_forward_target;
+    if (t > 1) {
+        kill(-t, SIGTERM);
+    }
+}
+
 static void broker_cleanup_and_exit(int parent_pipe,
                                     const char *sock_path,
                                     int listener,
@@ -129,6 +144,7 @@ static bool authorize_console_client(int client,
 }
 
 void hold_run_console_broker(int parent_pipe,
+                               int target_pid_fd,
                                const struct hold_store *store,
                                const char *run_id,
                                const char *log_path,
@@ -247,8 +263,27 @@ void hold_run_console_broker(int parent_pipe,
     if (handshake > 0) {
         broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, child_errno);
     }
+    /* Report the real held group to the parent before releasing the handshake:
+     * a failed write must still ride the handshake pipe as an errno, and the
+     * write-before-close ordering keeps the parent's pid read deadlock-free. */
+    if (target_pid_fd >= 0) {
+        if (hold_write_all(target_pid_fd, &target, sizeof(target)) != 0) {
+            broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
+        }
+        close(target_pid_fd);
+    }
     close(parent_pipe);
     parent_pipe = -1;
+
+    /* Forward a TERM aimed at the broker to the held group (no SA_RESTART so the
+     * serve loop's poll/waitpid see EINTR). The handler is async-signal-safe and
+     * also unblocks a TERM that arrives during the post-loop blocking waitpid. */
+    g_broker_forward_target = target;
+    struct sigaction term_sa;
+    memset(&term_sa, 0, sizeof(term_sa));
+    term_sa.sa_handler = broker_forward_term;
+    sigemptyset(&term_sa.sa_mask);
+    (void)sigaction(SIGTERM, &term_sa, NULL);
 
     broker_serve(store, run_id, sock_path, listener, master, logfd, logidxfd,
                  owner_uid, have_allowed_peer_uid, allowed_peer_uid,
@@ -318,6 +353,7 @@ static void broker_serve(const struct hold_store *store,
                     (void)hold_mark_run_finished(store, run_id, target_status);
                 }
                 target = -1;
+                g_broker_forward_target = 0;
             }
         }
         if (adopted && !target_done && adopted_pgid > 1 && adopted_sid > 0 &&
@@ -431,8 +467,10 @@ static void broker_serve(const struct hold_store *store,
                 (void)hold_mark_run_finished(store, run_id, target_status);
             }
             target = -1;
+            g_broker_forward_target = 0;
         } else if (got < 0 && errno == ECHILD) {
             target = -1;
+            g_broker_forward_target = 0;
         }
     }
     if (adopted && hup_pid > 0) {
