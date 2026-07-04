@@ -659,6 +659,47 @@ struct prune_sweep_stats {
     int kept_saved;
 };
 
+/* A young .<id>.reserve marks a call mid-creation (log and socket exist
+ * before the record JSON); the sweep must not eat it. A stale reserve is a
+ * dead start's litter: clear it and let the orphan collection proceed. */
+static bool orphan_creation_reserved(const struct hold_store *store, const char *id) {
+    char reserve[HOLD_PATH_MAX];
+    struct stat st;
+    if (hold_checked_snprintf(reserve, sizeof(reserve), "%s/.%s.reserve", store->record_dir, id) != 0) {
+        return false;
+    }
+    if (lstat(reserve, &st) != 0 || !S_ISREG(st.st_mode)) {
+        return false;
+    }
+    if (time(NULL) - st.st_mtime < 600) {
+        return true;
+    }
+    unlink(reserve);
+    return false;
+}
+
+/* Collect abandoned dot-prefixed temp files (unique-temp litter and legacy
+ * fixed-name tombs); a 60s age gate protects any live writer's window. */
+static void sweep_tmp_litter(const char *dir) {
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] != '.' || !hold_has_suffix(e->d_name, ".tmp")) {
+            continue;
+        }
+        char path[HOLD_PATH_MAX];
+        struct stat st;
+        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", dir, e->d_name) != 0) {
+            continue;
+        }
+        if (lstat(path, &st) == 0 && S_ISREG(st.st_mode) && time(NULL) - st.st_mtime > 60) {
+            unlink(path);
+        }
+    }
+    closedir(d);
+}
+
 static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, struct prune_sweep_stats *stats) {
     memset(stats, 0, sizeof(*stats));
     char boot[128] = {0};
@@ -745,7 +786,7 @@ sweep_logs:
         if (hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s", store->log_dir, e->d_name) != 0) {
             continue;
         }
-        if (access(json_path, F_OK) != 0) {
+        if (access(json_path, F_OK) != 0 && !orphan_creation_reserved(store, id)) {
             unlink_log_index_for_log(log_path);
             unlink(log_path);
             stats->removed++;
@@ -781,12 +822,14 @@ sweep_consoles:
             hold_checked_snprintf(sock_path, sizeof(sock_path), "%s/%s", store->console_dir, e->d_name) != 0) {
             continue;
         }
-        if (access(json_path, F_OK) != 0) {
+        if (access(json_path, F_OK) != 0 && !orphan_creation_reserved(store, id)) {
             unlink(sock_path);
             stats->removed++;
         }
     }
     closedir(d);
+    sweep_tmp_litter(store->record_dir);
+    sweep_tmp_litter(store->public_dir);
 
 sweep_public:
     d = opendir(store->public_dir);

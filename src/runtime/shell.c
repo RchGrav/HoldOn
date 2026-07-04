@@ -322,6 +322,10 @@ static bool shell_id_available(const struct hold_store *store,
         hold_path_exists(path)) {
         return false;
     }
+    if (hold_checked_snprintf(path, sizeof(path), "%s/.%s.reserve", store->record_dir, id) != 0 ||
+        hold_path_exists(path)) {
+        return false;
+    }
     if (hold_checked_snprintf(path, sizeof(path), "%s/%s.log", store->log_dir, id) != 0 ||
         hold_path_exists(path)) {
         return false;
@@ -471,6 +475,14 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
         hold_free_argv_alloc(observed_argv, argc);
         return 3;
     }
+    /* Two-phase creation, like launched calls: hold the reserve across the
+     * log/socket-before-JSON window so a purge sweep cannot eat them. */
+    char adopt_reserve[HOLD_PATH_MAX];
+    adopt_reserve[0] = '\0';
+    if (hold_checked_snprintf(adopt_reserve, sizeof(adopt_reserve), "%s/.%s.reserve", store->record_dir, id) == 0) {
+        int rfd = open(adopt_reserve, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (rfd >= 0) close(rfd);
+    }
 
     /* Prefer serving the adopted PTY through a console broker so the run stays
      * reattachable; every fd is opened here so the child has no failure path.
@@ -504,6 +516,7 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
             if (console_logfd >= 0) close(console_logfd);
             unlink(console_sock);
         }
+        if (adopt_reserve[0]) unlink(adopt_reserve);
         hold_free_argv_alloc(normalized_argv, argc);
         hold_free_argv_alloc(observed_argv, argc);
         return 3;
@@ -569,6 +582,7 @@ static int adopt_foreground_group(const struct hold_invocation *inv,
     if (hold_write_record_atomic(store->record_dir, &r, argc, normalized_argv, record_path, sizeof(record_path)) != 0) {
         int saved = errno;
         kill(logger, SIGTERM);
+        if (adopt_reserve[0]) unlink(adopt_reserve);
         hold_free_argv_alloc(normalized_argv, argc);
         hold_free_argv_alloc(observed_argv, argc);
         errno = saved;
