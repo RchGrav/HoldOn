@@ -647,7 +647,11 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
         r->has_ended_at = true;
     } else if (state_obj && *state_obj == '{' &&
                hold_json_get_str(state_obj, "FinishedAt", r->ended_at, sizeof(r->ended_at)) == 0) {
-        r->has_ended_at = true;
+        if (strncmp(r->ended_at, "0001-01-01", 10) == 0) {
+            r->ended_at[0] = '\0'; /* Docker zero time: not finished */
+        } else {
+            r->has_ended_at = true;
+        }
     }
     if (hold_json_get_str(j, "state", r->state, sizeof(r->state)) == 0) {
         r->has_state = true;
@@ -659,7 +663,10 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
         r->has_exit_code = true;
         r->exit_code = (int)tmp;
     } else if (state_obj && *state_obj == '{' &&
+               ((r->has_state && strcmp(r->state, "exited") == 0) || r->has_ended_at) &&
                hold_json_get_i64(state_obj, "ExitCode", &tmp) == 0) {
+        /* Docker writes ExitCode 0 while a call is still running; only an
+         * ended record may carry it as a real exit status. */
         r->has_exit_code = true;
         r->exit_code = (int)tmp;
     }
