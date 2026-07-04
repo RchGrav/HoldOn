@@ -7,11 +7,7 @@ bool hold_valid_id(const char *id) {
         return false;
     }
     size_t len = strlen(id);
-    if (len != ID_HEX_LEN && len != ID_LEGACY_HEX_LEN) {
-        return false;
-    }
-    if ((len == ID_LEGACY_HEX_LEN &&
-         (strcmp(id, "000000000000") == 0 || strcmp(id, "ffffffffffff") == 0))) {
+    if (len != ID_HEX_LEN) {
         return false;
     }
     for (size_t i = 0; i < len; i++) {
@@ -64,6 +60,8 @@ bool hold_valid_profile_hash(const char *hash) {
     return true;
 }
 
+/* Validates a call name (the identifier kept for its own sake, not the deleted
+ * profile-era alias). The function name predates the rename and is left as-is. */
 bool hold_valid_alias(const char *alias) {
     if (!alias) {
         return false;

@@ -35,7 +35,6 @@ struct hold_run_record {
     int version;
     char id[ID_STR_LEN];
     char run_id[ID_STR_LEN];
-    char alias[ALIAS_MAX_LEN + 1];
     char name[ALIAS_MAX_LEN + 1];
     char console_sock[HOLD_PATH_MAX];
     pid_t pid;
@@ -71,7 +70,6 @@ struct hold_run_record {
     bool has_term_signal;
     bool has_launch_error;
     bool has_invocation;
-    bool has_alias;
     bool has_name;
     bool has_created_at;
     bool has_console;
@@ -127,10 +125,8 @@ struct hold_resolved_target {
 
 struct hold_public_index {
     char id[ID_STR_LEN];
-    char alias[ALIAS_MAX_LEN + 1];
     char name[ALIAS_MAX_LEN + 1];
     bool root_managed;
-    bool has_alias;
     bool has_name;
     char state_hint[16];
     char started_at[64];

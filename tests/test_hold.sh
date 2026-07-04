@@ -653,13 +653,13 @@ test_exec_replacement_remains_controllable() {
 
 test_corrupt_record_handling() {
   ensure_user_fixture_store || return 1
-  printf 'garbage\n' > "$HOME/.local/state/hold/badbad00cafe.json" || return 1
+  printf 'garbage\n' > "$HOME/.local/state/hold/badbad00cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^badbad00cafe' "$TEST_ROOT/list.out"
   ! grep -Eq '^0[[:space:]]' "$TEST_ROOT/list.out"
-  grep -q 'warning: skipping corrupt record badbad00cafe.json' "$TEST_ROOT/list.err"
+  grep -q 'warning: skipping corrupt record badbad00cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
   "$HOLD_BIN" prune >/dev/null || return 1
-  [ ! -e "$HOME/.local/state/hold/badbad00cafe.json" ]
+  [ ! -e "$HOME/.local/state/hold/badbad00cafe0000000000000000000000000000000000000000000000000000.json" ]
 }
 
 test_deep_json_record_rejected_not_crashed() {
@@ -670,21 +670,21 @@ test_deep_json_record_rejected_not_crashed() {
   json="${json}0"
   for i in $(seq 1 80); do json="${json}]"; done
   json="${json},\"version\":1,\"id\":\"abc12445cafe\",\"pid\":12345,\"pgid\":12345,\"sid\":12345,\"start_unix_ns\":0,\"argv\":[\"x\"],\"cmdline_display\":\"x\",\"uid\":0,\"gid\":0,\"proc_starttime_ticks\":0,\"exe_dev\":0,\"exe_ino\":0}"
-  printf '%s\n' "$json" > "$HOME/.local/state/hold/abc12445cafe.json" || return 1
+  printf '%s\n' "$json" > "$HOME/.local/state/hold/abc12445cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^abc12445cafe' "$TEST_ROOT/list.out" || return 1
-  grep -q 'warning: skipping corrupt record abc12445cafe.json' "$TEST_ROOT/list.err"
+  grep -q 'warning: skipping corrupt record abc12445cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
 }
 
 test_symlinked_record_rejected() {
   ensure_user_fixture_store || return 1
   cat > "$TEST_ROOT/record-target.json" <<'JSON'
-{"version":1,"id":"abc12545cafe","pid":12345,"pgid":12345,"sid":12345,"start_unix_ns":0,"argv":["x"],"cmdline_display":"x","uid":0,"gid":0,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0}
+{"version":1,"id":"abc12545cafe0000000000000000000000000000000000000000000000000000","pid":12345,"pgid":12345,"sid":12345,"start_unix_ns":0,"argv":["x"],"cmdline_display":"x","uid":0,"gid":0,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0}
 JSON
-  ln -s "$TEST_ROOT/record-target.json" "$HOME/.local/state/hold/abc12545cafe.json" || return 1
+  ln -s "$TEST_ROOT/record-target.json" "$HOME/.local/state/hold/abc12545cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^abc12545cafe' "$TEST_ROOT/list.out" || return 1
-  grep -q 'warning: skipping corrupt record abc12545cafe.json' "$TEST_ROOT/list.err"
+  grep -q 'warning: skipping corrupt record abc12545cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
 }
 
 test_symlinked_log_rejected() {
@@ -709,8 +709,8 @@ test_symlinked_log_rejected() {
 
 test_invalid_pgid_record() {
   ensure_user_fixture_store || return 1
-  cat > "$HOME/.local/state/hold/abc12345cafe.json" <<'JSON'
-{"version":1,"id":"abc12345cafe","pid":12345,"pgid":0,"sid":12345,"start_unix_ns":0,"argv":["x"],"cmdline_display":"x","uid":0,"gid":0,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0}
+  cat > "$HOME/.local/state/hold/abc12345cafe0000000000000000000000000000000000000000000000000000.json" <<'JSON'
+{"version":1,"id":"abc12345cafe0000000000000000000000000000000000000000000000000000","pid":12345,"pgid":0,"sid":12345,"start_unix_ns":0,"argv":["x"],"cmdline_display":"x","uid":0,"gid":0,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0}
 JSON
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^abc12345cafe' "$TEST_ROOT/list.out"
@@ -718,10 +718,10 @@ JSON
 
 test_orphan_log_cleanup() {
   ensure_user_fixture_store || return 1
-  : > "$HOME/.local/state/hold/a1b2c3d4e5f6.log" || return 1
-  : > "$HOME/.local/state/hold/deadbeefcafe.log" || return 1
+  : > "$HOME/.local/state/hold/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" || return 1
+  : > "$HOME/.local/state/hold/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" || return 1
   "$HOLD_BIN" prune >/dev/null || return 1
-  [ ! -e "$HOME/.local/state/hold/a1b2c3d4e5f6.log" ] && [ ! -e "$HOME/.local/state/hold/deadbeefcafe.log" ]
+  [ ! -e "$HOME/.local/state/hold/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" ] && [ ! -e "$HOME/.local/state/hold/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" ]
 }
 
 test_id_sanitization() {
@@ -2651,7 +2651,7 @@ test_raw_start_does_not_steal_trailing_system() {
 }
 
 test_public_root_index_list_is_redacted() {
-  write_public_index_fixture abc12345cafe running 2026-06-15T18:42:11Z || return 1
+  write_public_index_fixture abc12345cafe0000000000000000000000000000000000000000000000000000 running 2026-06-15T18:42:11Z || return 1
   # Public root-index rows appear with -a in redacted form: the USER and COMMAND
   # cells both read the literal "hidden" (exists-but-not-yours-to-see, not "-"),
   # and the STATUS reflects the projected state.
@@ -2662,12 +2662,12 @@ test_public_root_index_list_is_redacted() {
 }
 
 test_public_root_index_list_reads_projected_state() {
-  local id=deadbeefcafe
+  local id=deadbeefcafe0000000000000000000000000000000000000000000000000000
   mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   chmod 755 "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   cat > "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" <<'JSON'
 {
-  "id": "deadbeefcafe",
+  "id": "deadbeefcafe0000000000000000000000000000000000000000000000000000",
   "root_managed": true,
   "requires_elevation": true,
   "created_at": "2026-06-15T18:42:10Z",
@@ -2723,40 +2723,56 @@ test_list_default_is_full_ledger_live_narrows() {
   "$HOLD_BIN" stop "$live_id" >/dev/null 2>&1 || true
 }
 
+# `hold list <name>` narrows the ledger to the call whose NAME matches. Regression
+# for the filter matching the deleted profile-era alias field, which nothing set,
+# so a named lookup of a real call printed an empty table.
+test_list_name_filter_matches_call_name() {
+  local out webby_id other_id
+  out=$("$HOLD_BIN" -d --name webby sleep 300 2>&1) || return 1
+  webby_id=$(printf '%s\n' "$out" | extract_id); [ -n "$webby_id" ] || return 1
+  out=$("$HOLD_BIN" -d --name other_call sleep 300 2>&1) || return 1
+  other_id=$(printf '%s\n' "$out" | extract_id); [ -n "$other_id" ] || return 1
+  "$HOLD_BIN" list webby >"$TEST_ROOT/named.out" 2>&1 || return 1
+  grep -Eq "^$webby_id[[:space:]].*[[:space:]]webby$" "$TEST_ROOT/named.out" || { cat "$TEST_ROOT/named.out" >&2; return 1; }
+  ! grep -q 'other_call' "$TEST_ROOT/named.out" || { echo "name filter leaked another call" >&2; cat "$TEST_ROOT/named.out" >&2; return 1; }
+  "$HOLD_BIN" stop "$webby_id" >/dev/null 2>&1 || true
+  "$HOLD_BIN" stop "$other_id" >/dev/null 2>&1 || true
+}
+
 # list -a renders the observed ports root projected into a global call's public
 # entry, in the same redacted row (USER and COMMAND both "hidden").
 test_list_all_renders_global_ports_projection() {
-  local id=facefeed1234
+  local id=facefeed12340000000000000000000000000000000000000000000000000000
   mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   chmod 755 "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   cat > "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" <<'JSON'
-{"id":"facefeed1234","root_managed":true,"name":"global_web","state_hint":"running","created_at":"2026-06-15T18:42:11Z","observed_ports":"127.0.0.1:8080/tcp, [::]:9090/tcp","argv":["secret"],"cmdline_display":"secret command"}
+{"id":"facefeed12340000000000000000000000000000000000000000000000000000","root_managed":true,"name":"global_web","state_hint":"running","created_at":"2026-06-15T18:42:11Z","observed_ports":"127.0.0.1:8080/tcp, [::]:9090/tcp","argv":["secret"],"cmdline_display":"secret command"}
 JSON
   chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
   "$HOLD_BIN" list -a >"$TEST_ROOT/list.out" 2>&1 || return 1
   # The redacted row shows the generated name and the projected ports; USER and
   # COMMAND read "hidden" and the command line never appears.
-  grep -Eq "^$id[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*127\\.0\\.0\\.1:8080/tcp.*global_web$" "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
+  grep -Eq "^${id:0:12}[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*127\\.0\\.0\\.1:8080/tcp.*global_web$" "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
   ! grep -q 'secret' "$TEST_ROOT/list.out"
 }
 
 # `hold list -s/--system` (and the equivalent `--system list`) is exactly the
 # redacted global view: no personal calls leak into it.
 test_system_list_is_redacted_global_only() {
-  local out personal_id gid=beadfeed5678 form
+  local out personal_id gid=beadfeed56780000000000000000000000000000000000000000000000000000 form
   out=$("$HOLD_BIN" -d --name my_personal sleep 300 2>&1) || return 1
   personal_id=$(printf '%s\n' "$out" | extract_id); [ -n "$personal_id" ] || return 1
   mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   chmod 755 "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   cat > "$HOLD_TEST_SYSTEM_STATE_DIR/public/$gid.json" <<'JSON'
-{"id":"beadfeed5678","root_managed":true,"name":"global_only","state_hint":"running","created_at":"2026-06-15T18:42:11Z","argv":["secret"],"cmdline_display":"secret command"}
+{"id":"beadfeed56780000000000000000000000000000000000000000000000000000","root_managed":true,"name":"global_only","state_hint":"running","created_at":"2026-06-15T18:42:11Z","argv":["secret"],"cmdline_display":"secret command"}
 JSON
   chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$gid.json" || return 1
   # -s, --system, and the pre-command --system spelling all mean the same view.
   for form in "list -s" "list --system" "--system list"; do
     # shellcheck disable=SC2086
     "$HOLD_BIN" $form >"$TEST_ROOT/system-list.out" 2>&1 || { echo "form: $form" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
-    grep -Eq "^$gid[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*global_only$" "$TEST_ROOT/system-list.out" || { echo "form: $form" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
+    grep -Eq "^${gid:0:12}[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*global_only$" "$TEST_ROOT/system-list.out" || { echo "form: $form" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
     ! grep -q "^$personal_id" "$TEST_ROOT/system-list.out" || { echo "form '$form' leaked a personal call" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
     ! grep -q 'my_personal' "$TEST_ROOT/system-list.out" || { echo "form: $form" >&2; cat "$TEST_ROOT/system-list.out" >&2; return 1; }
   done
@@ -2766,7 +2782,7 @@ JSON
 # ps is Docker's machine-wide running view: running calls from both scopes, the
 # global ones redacted, no USER column; -a adds ended; non-Docker flags reject.
 test_ps_is_docker_machine_wide_running_view() {
-  local live_out live_id ended_out ended_id gid=c1cadafeed99 rc
+  local live_out live_id ended_out ended_id gid=c1cadafeed990000000000000000000000000000000000000000000000000000 rc
   live_out=$("$HOLD_BIN" -d --name ps_live sleep 300 2>&1) || return 1
   live_id=$(printf '%s\n' "$live_out" | extract_id); [ -n "$live_id" ] || return 1
   ended_out=$("$HOLD_BIN" -d --name ps_past /bin/sh -c 'exit 2' 2>&1) || return 1
@@ -2775,14 +2791,14 @@ test_ps_is_docker_machine_wide_running_view() {
   mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   chmod 755 "$HOLD_TEST_SYSTEM_STATE_DIR" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
   cat > "$HOLD_TEST_SYSTEM_STATE_DIR/public/$gid.json" <<'JSON'
-{"id":"c1cadafeed99","root_managed":true,"name":"ps_global","state_hint":"running","created_at":"2026-06-15T18:42:11Z","argv":["secret"],"cmdline_display":"secret command"}
+{"id":"c1cadafeed990000000000000000000000000000000000000000000000000000","root_managed":true,"name":"ps_global","state_hint":"running","created_at":"2026-06-15T18:42:11Z","argv":["secret"],"cmdline_display":"secret command"}
 JSON
   chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$gid.json" || return 1
   # ps: Docker's header (no USER column), running personal + global, past hidden.
   "$HOLD_BIN" ps >"$TEST_ROOT/ps.out" 2>&1 || return 1
   grep -Eq "^CALL ID[[:space:]]+COMMAND[[:space:]]+CREATED[[:space:]]+STATUS[[:space:]]+PORTS[[:space:]]+NAMES$" "$TEST_ROOT/ps.out" || { cat "$TEST_ROOT/ps.out" >&2; return 1; }
   grep -Eq "^$live_id[[:space:]].*Up .*ps_live$" "$TEST_ROOT/ps.out" || { cat "$TEST_ROOT/ps.out" >&2; return 1; }
-  grep -Eq "^$gid[[:space:]]+hidden[[:space:]].*ps_global$" "$TEST_ROOT/ps.out" || { cat "$TEST_ROOT/ps.out" >&2; return 1; }
+  grep -Eq "^${gid:0:12}[[:space:]]+hidden[[:space:]].*ps_global$" "$TEST_ROOT/ps.out" || { cat "$TEST_ROOT/ps.out" >&2; return 1; }
   ! grep -q "^$ended_id" "$TEST_ROOT/ps.out" || { echo "ps default showed an ended call" >&2; cat "$TEST_ROOT/ps.out" >&2; return 1; }
   ! grep -q 'secret' "$TEST_ROOT/ps.out"
   # ps -a includes the ended personal call.
@@ -2830,8 +2846,8 @@ test_root_list_all_labels_owner_and_walks_homes() {
   # the invoking user (so its USER resolves via /etc/passwd). The record shape
   # mirrors the minimal valid record, with a live-looking pgid so it is a row.
   mkdir -p "$homes/somebody/.local/state/hold" || return 1
-  cat > "$homes/somebody/.local/state/hold/aa11bb22cc33.json" <<JSON
-{"version":1,"id":"aa11bb22cc33","pid":2,"pgid":2,"sid":2,"start_unix_ns":0,"argv":["peer-cmd"],"cmdline_display":"peer-cmd","uid":$uid,"gid":$uid,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0,"name":"peer_call"}
+  cat > "$homes/somebody/.local/state/hold/aa11bb22cc330000000000000000000000000000000000000000000000000000.json" <<JSON
+{"version":1,"id":"aa11bb22cc330000000000000000000000000000000000000000000000000000","pid":2,"pgid":2,"sid":2,"start_unix_ns":0,"argv":["peer-cmd"],"cmdline_display":"peer-cmd","uid":$uid,"gid":$uid,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0,"name":"peer_call"}
 JSON
   chmod -R 755 "$homes" || return 1
   # A global call in the system store (root's own view).
@@ -2859,12 +2875,15 @@ test_user_local_wins_over_public_root_collision() {
   id=$(printf '%s\n' "$out" | extract_id)
   pgid=$(record_pgid "$id")
   [ -n "$id" ] && [ -n "$pgid" ] || return 1
-  write_public_index_fixture "$id" running 2026-06-15T18:42:11Z || return 1
+  # A root-public entry that collides on the call's display prefix: the local
+  # record must win so stop resolves it without a sudo re-exec.
+  local pub_id="${id}0000000000000000000000000000000000000000000000000000"
+  write_public_index_fixture "$pub_id" running 2026-06-15T18:42:11Z || return 1
   make_fake_sudo || return 1
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
   [ ! -s "$HOLD_FAKE_SUDO_ARGV" ] || return 1
   pgid_terminated "$pgid" || return 1
-  record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public"
+  record_exists "$pub_id" "$HOLD_TEST_SYSTEM_STATE_DIR/public"
 }
 
 test_explicit_user_target() {
@@ -4175,6 +4194,7 @@ run_test "sudo context can stop unique invoking-user local run" test_sudo_contex
 run_test "public root index rows are redacted in normal list" test_public_root_index_list_is_redacted
 run_test "public root index list reads projected State" test_public_root_index_list_reads_projected_state
 run_test "list is the ledger with a USER column; -l/--live narrows to running" test_list_default_is_full_ledger_live_narrows
+run_test "list <name> filters the ledger by the call's name" test_list_name_filter_matches_call_name
 run_test "list -a renders the projected global ports" test_list_all_renders_global_ports_projection
 run_test "list -s/--system shows the redacted global view only" test_system_list_is_redacted_global_only
 run_test "ps is Docker's machine-wide running view" test_ps_is_docker_machine_wide_running_view

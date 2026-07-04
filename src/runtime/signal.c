@@ -870,7 +870,6 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         struct hold_log_viewer_context viewer_context = {
             .run_id = r.id[0] ? r.id : target.id,
             .name = r.has_name && r.name[0] ? r.name : NULL,
-            .profile = r.has_alias ? r.alias : NULL,
             .command = r.cmdline,
             .log_path = r.log_path,
             .active = view_state == STATE_RUNNING,

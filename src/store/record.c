@@ -72,11 +72,6 @@ static void write_docker_identity_fields(FILE *f, const struct hold_run_record *
     fprintf(f, "  \"Created\": \"");
     hold_json_escape(f, created ? created : record_created_timestamp(r, "0001-01-01T00:00:00Z"));
     fprintf(f, "\",\n");
-    if (r && r->has_alias) {
-        fprintf(f, "  \"Origin\": \"");
-        hold_json_escape(f, r->alias);
-        fprintf(f, "\",\n");
-    }
 }
 
 static void write_docker_name_field(FILE *f, const struct hold_run_record *r, const char *tail) {
@@ -115,11 +110,6 @@ static void write_state_object(FILE *f, const struct hold_run_record *r, const c
 static void write_docker_config_object(FILE *f, const struct hold_run_record *r, bool public_projection) {
     fprintf(f, "  \"Config\": {\n");
     if (public_projection) {
-        if (r && r->has_alias) {
-            fprintf(f, "    \"Origin\": \"");
-            hold_json_escape(f, r->alias);
-            fprintf(f, "\"\n");
-        }
         fprintf(f, "  }");
         return;
     }
@@ -137,11 +127,6 @@ static void write_docker_config_object(FILE *f, const struct hold_run_record *r,
         fputs("[]", f);
     }
     fprintf(f, ",\n");
-    if (r->has_alias) {
-        fprintf(f, "    \"Origin\": \"");
-        hold_json_escape(f, r->alias);
-        fprintf(f, "\",\n");
-    }
     fprintf(f, "    \"WorkingDir\": \"");
     if (r->has_observed && r->observed_cwd[0] == '/') {
         hold_json_escape(f, r->observed_cwd);
@@ -248,11 +233,6 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
     fprintf(f, "  \"cmdline_display\": \"");
     hold_json_escape(f, r->cmdline);
     fprintf(f, "\",\n");
-    if (r->has_alias) {
-        fprintf(f, "  \"alias\": \"");
-        hold_json_escape(f, r->alias);
-        fprintf(f, "\",\n");
-    }
     if (r->has_name) {
         fprintf(f, "  \"name\": \"");
         hold_json_escape(f, r->name);
@@ -446,11 +426,6 @@ int hold_write_public_index_atomic(const struct hold_store *store, const struct 
     hold_json_escape(f, r->id);
     fprintf(f, "\",\n");
     fprintf(f, "  \"root_managed\": true,\n");
-    if (r->has_alias) {
-        fprintf(f, "  \"alias\": \"");
-        hold_json_escape(f, r->alias);
-        fprintf(f, "\",\n");
-    }
     if (r->has_name) {
         fprintf(f, "  \"name\": \"");
         hold_json_escape(f, r->name);
@@ -641,11 +616,6 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     if (hold_json_get_bool(j, "invoked_via_sudo", &r->invoked_via_sudo) == 0) {
         r->has_invocation = true;
     }
-    if ((hold_json_get_str(j, "alias", r->alias, sizeof(r->alias)) == 0 ||
-         hold_json_get_str(j, "Origin", r->alias, sizeof(r->alias)) == 0) &&
-        hold_valid_alias(r->alias)) {
-        r->has_alias = true;
-    }
     if (hold_json_get_str(j, "name", r->name, sizeof(r->name)) == 0 && hold_valid_alias(r->name)) {
         r->has_name = true;
     } else if (hold_json_get_str(j, "Name", r->name, sizeof(r->name)) == 0 && hold_valid_alias(r->name)) {
@@ -724,11 +694,6 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
         if (hold_json_get_bool(config_obj, "Tty", &b) == 0) r->tty = b;
         if (hold_json_get_bool(config_obj, "OpenStdin", &b) == 0) r->open_stdin = b;
         if (hold_json_get_bool(config_obj, "StdinOnce", &b) == 0) r->stdin_once = b;
-        if (!r->has_alias &&
-            hold_json_get_str(config_obj, "Origin", r->alias, sizeof(r->alias)) == 0 &&
-            hold_valid_alias(r->alias)) {
-            r->has_alias = true;
-        }
     } else {
         r->attach_stdout = true;
         r->attach_stderr = true;
@@ -847,19 +812,6 @@ int hold_load_public_index(const char *path, struct hold_public_index *pi) {
     }
     if (hold_json_get_bool(j, "root_managed", &pi->root_managed) != 0) {
         pi->root_managed = true;
-    }
-    if ((hold_json_get_str(j, "alias", pi->alias, sizeof(pi->alias)) == 0 ||
-         hold_json_get_str(j, "Origin", pi->alias, sizeof(pi->alias)) == 0) &&
-        hold_valid_alias(pi->alias)) {
-        pi->has_alias = true;
-    }
-    if (!pi->has_alias) {
-        const char *config_obj = NULL;
-        if (hold_json_find_key(j, "Config", &config_obj) == 0 && config_obj && *config_obj == '{' &&
-            hold_json_get_str(config_obj, "Origin", pi->alias, sizeof(pi->alias)) == 0 &&
-            hold_valid_alias(pi->alias)) {
-            pi->has_alias = true;
-        }
     }
     if ((hold_json_get_str(j, "name", pi->name, sizeof(pi->name)) == 0 ||
          hold_json_get_str(j, "Name", pi->name, sizeof(pi->name)) == 0) &&

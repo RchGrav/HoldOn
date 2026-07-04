@@ -32,15 +32,15 @@ static void free_list_rows(struct list_rows *rows);
 static int append_list_row(struct list_rows *rows, const struct list_row *row);
 static int compare_list_rows(const void *a, const void *b);
 static int collect_list_private(const struct hold_store *store,
-                                const char *alias_filter,
+                                const char *name_filter,
                                 bool running_only,
                                 bool system_scope,
                                 struct list_rows *rows);
 static int collect_list_public(const struct hold_store *store,
-                               const char *alias_filter,
+                               const char *name_filter,
                                bool running_only,
                                struct list_rows *rows);
-static int collect_all_user_stores(const char *alias_filter,
+static int collect_all_user_stores(const char *name_filter,
                                     bool running_only,
                                     struct list_rows *rows);
 static void refresh_system_public_ports(const struct hold_store *store);
@@ -177,7 +177,7 @@ static void resolve_user_label(const struct hold_run_record *r, bool system_scop
  * store). running_only narrows to live calls; otherwise the full ledger, live
  * and past. system_scope selects how the USER column is attributed. */
 static int collect_list_private(const struct hold_store *store,
-                                const char *alias_filter,
+                                const char *name_filter,
                                 bool running_only,
                                 bool system_scope,
                                 struct list_rows *rows) {
@@ -207,7 +207,7 @@ static int collect_list_private(const struct hold_store *store,
             hold_free_run_record(&r);
             continue;
         }
-        if (alias_filter && (!r.has_alias || strcmp(r.alias, alias_filter) != 0)) {
+        if (name_filter && (!r.has_name || strcmp(r.name, name_filter) != 0)) {
             hold_free_run_record(&r);
             continue;
         }
@@ -260,7 +260,7 @@ static int collect_list_private(const struct hold_store *store,
  * if the entry has one, the honest projected status, CREATED, and the ports
  * root last observed. */
 static int collect_list_public(const struct hold_store *store,
-                               const char *alias_filter,
+                               const char *name_filter,
                                bool running_only,
                                struct list_rows *rows) {
     DIR *d = opendir(store->public_dir);
@@ -290,7 +290,7 @@ static int collect_list_public(const struct hold_store *store,
         if (hold_load_public_index(path, &pi) != 0 || strcmp(pi.id, file_id) != 0) {
             continue;
         }
-        if (alias_filter && (!pi.has_alias || strcmp(pi.alias, alias_filter) != 0)) {
+        if (name_filter && (!pi.has_name || strcmp(pi.name, name_filter) != 0)) {
             continue;
         }
         bool running = pi.state_hint[0] && strcmp(pi.state_hint, "running") == 0;
@@ -446,7 +446,7 @@ static const char *user_home_root(void) {
  * comes from the record's own uid (see resolve_user_label), so a home named
  * differently from its account still attributes honestly. Unreadable stores
  * are simply skipped. */
-static int collect_all_user_stores(const char *alias_filter,
+static int collect_all_user_stores(const char *name_filter,
                                     bool running_only,
                                     struct list_rows *rows) {
     const char *home_root = user_home_root();
@@ -468,7 +468,7 @@ static int collect_all_user_stores(const char *alias_filter,
         if (hold_init_user_store_from_home(home, &store) != 0) {
             continue;
         }
-        if (collect_list_private(&store, alias_filter, running_only, false, rows) != 0) {
+        if (collect_list_private(&store, name_filter, running_only, false, rows) != 0) {
             rc = -1;
             break;
         }
@@ -531,7 +531,7 @@ static void refresh_system_public_ports(const struct hold_store *store) {
 int hold_cmd_list(const struct hold_invocation *inv,
                     const struct hold_store *user_store,
                     const struct hold_store *system_store,
-                    const char *alias_filter,
+                    const char *name_filter,
                     enum hold_list_scope scope,
                     bool live_only) {
     if (scope == HOLD_LIST_SCOPE_DEFAULT) {
@@ -541,29 +541,29 @@ int hold_cmd_list(const struct hold_invocation *inv,
     int rc = 0;
     switch (scope) {
     case HOLD_LIST_SCOPE_USER:
-        if (collect_list_private(user_store, alias_filter, live_only, false, &rows) != 0) {
+        if (collect_list_private(user_store, name_filter, live_only, false, &rows) != 0) {
             rc = 3;
         }
         break;
     case HOLD_LIST_SCOPE_SYSTEM:
         if (inv->euid_root) {
             refresh_system_public_ports(system_store);
-            if (collect_list_private(system_store, alias_filter, live_only, true, &rows) != 0) {
+            if (collect_list_private(system_store, name_filter, live_only, true, &rows) != 0) {
                 rc = 3;
             }
-        } else if (collect_list_public(system_store, alias_filter, live_only, &rows) != 0) {
+        } else if (collect_list_public(system_store, name_filter, live_only, &rows) != 0) {
             rc = 3;
         }
         break;
     case HOLD_LIST_SCOPE_BOTH:
         if (inv->euid_root) {
             refresh_system_public_ports(system_store);
-            if (collect_list_private(system_store, alias_filter, live_only, true, &rows) != 0 ||
-                collect_all_user_stores(alias_filter, live_only, &rows) != 0) {
+            if (collect_list_private(system_store, name_filter, live_only, true, &rows) != 0 ||
+                collect_all_user_stores(name_filter, live_only, &rows) != 0) {
                 rc = 3;
             }
-        } else if (collect_list_private(user_store, alias_filter, live_only, false, &rows) != 0 ||
-                   collect_list_public(system_store, alias_filter, live_only, &rows) != 0) {
+        } else if (collect_list_private(user_store, name_filter, live_only, false, &rows) != 0 ||
+                   collect_list_public(system_store, name_filter, live_only, &rows) != 0) {
             rc = 3;
         }
         break;
@@ -585,18 +585,18 @@ int hold_cmd_list(const struct hold_invocation *inv,
 int hold_cmd_ps(const struct hold_invocation *inv,
                   const struct hold_store *user_store,
                   const struct hold_store *system_store,
-                  const char *alias_filter,
+                  const char *name_filter,
                   bool all) {
     bool running_only = !all;
     struct list_rows rows = {0};
     int rc = 0;
     if (inv->euid_root) {
         refresh_system_public_ports(system_store);
-        if (collect_list_private(system_store, alias_filter, running_only, true, &rows) != 0) {
+        if (collect_list_private(system_store, name_filter, running_only, true, &rows) != 0) {
             rc = 3;
         }
-    } else if (collect_list_private(user_store, alias_filter, running_only, false, &rows) != 0 ||
-               collect_list_public(system_store, alias_filter, running_only, &rows) != 0) {
+    } else if (collect_list_private(user_store, name_filter, running_only, false, &rows) != 0 ||
+               collect_list_public(system_store, name_filter, running_only, &rows) != 0) {
         rc = 3;
     }
     if (rc == 0) {

@@ -814,9 +814,9 @@ int hold_cli_main(int argc, char **argv) {
     if (!strcmp(canon, "list")) {
         /* list is Hold's scoped ledger. The scope flags select which stores it
          * draws from; the command resolves DEFAULT against privilege. */
-        const char *alias_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
-        if (alias_filter && !hold_valid_alias(alias_filter)) {
-            fprintf(stderr, "hold: error: invalid name '%s'\n", alias_filter);
+        const char *name_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
+        if (name_filter && !hold_valid_alias(name_filter)) {
+            fprintf(stderr, "hold: error: invalid name '%s'\n", name_filter);
             free(cmd_argv);
             return 5;
         }
@@ -828,7 +828,7 @@ int hold_cli_main(int argc, char **argv) {
         } else if (all) {
             scope = HOLD_LIST_SCOPE_BOTH;
         }
-        int rc = hold_cmd_list(&inv, &user_store, &system_store, alias_filter, scope, live_only);
+        int rc = hold_cmd_list(&inv, &user_store, &system_store, name_filter, scope, live_only);
         free(cmd_argv);
         return rc;
     }
@@ -836,13 +836,13 @@ int hold_cli_main(int argc, char **argv) {
     if (!strcmp(canon, "ps")) {
         /* ps is Docker's machine-wide running view: both scopes, no USER column,
          * only the -a (include-ended) flag. */
-        const char *alias_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
-        if (alias_filter && !hold_valid_alias(alias_filter)) {
-            fprintf(stderr, "hold: error: invalid name '%s'\n", alias_filter);
+        const char *name_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
+        if (name_filter && !hold_valid_alias(name_filter)) {
+            fprintf(stderr, "hold: error: invalid name '%s'\n", name_filter);
             free(cmd_argv);
             return 5;
         }
-        int rc = hold_cmd_ps(&inv, &user_store, &system_store, alias_filter, all);
+        int rc = hold_cmd_ps(&inv, &user_store, &system_store, name_filter, all);
         free(cmd_argv);
         return rc;
     }

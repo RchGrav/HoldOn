@@ -52,7 +52,7 @@ enum hold_list_scope {
 int hold_cmd_list(const struct hold_invocation *inv,
                     const struct hold_store *user_store,
                     const struct hold_store *system_store,
-                    const char *alias_filter,
+                    const char *name_filter,
                     enum hold_list_scope scope,
                     bool live_only);
 /* ps is Docker's machine-wide view: running calls (plus ended with -a) across
@@ -60,7 +60,7 @@ int hold_cmd_list(const struct hold_invocation *inv,
 int hold_cmd_ps(const struct hold_invocation *inv,
                   const struct hold_store *user_store,
                   const struct hold_store *system_store,
-                  const char *alias_filter,
+                  const char *name_filter,
                   bool all);
 enum id_token_scope hold_parse_id_token(const char *token, const char **id_out);
 int hold_cmd_signal_action(const struct hold_invocation *inv,
@@ -109,6 +109,8 @@ int hold_cmd_purge_action(const struct hold_invocation *inv,
 int hold_cmd_shell_action(const struct hold_invocation *inv,
                             const struct hold_store *store);
 int hold_cmd_off_action(void);
+/* Call-record operations (src/runtime/call.c): redial a retained recipe, save or
+ * rename a call, and assign a generated adjective_noun name. */
 int hold_cmd_rename_action(const struct hold_invocation *inv,
                              const struct hold_store *user_store,
                              const struct hold_store *system_store,
