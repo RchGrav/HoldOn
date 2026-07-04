@@ -38,6 +38,16 @@ exits 0. Detach with `Ctrl-P Ctrl-Q`, exactly like Docker.
 Flags that would require a container substrate are rejected with an honest
 message, never faked: `-p`/`-P` (Hold observes real host ports instead;
 see `hold ports` and the PORTS column) and `-v` (host paths are just paths).
+Flags that grant or remove privilege are rejected the same way, never
+remapped: `--privileged` and `--cap-add`/`--cap-drop` — Hold launches
+ordinary host processes with the invoker's rights, and store scope is
+selected with `--system`.
+
+One launch flag is Hold-native rather than Docker-borrowed:
+
+```text
+    --restart-delay N   seconds between restart attempts (requires --restart)
+```
 
 ## The call table
 

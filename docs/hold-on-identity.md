@@ -184,7 +184,7 @@ when the log would otherwise be misleadingly empty.
 | --- | --- |
 | `run` verb and its parser paths | delete — flags move to the bare/`-d`/`-it` forms |
 | profiles, alias store, `profile`/`profiles`/`export`/`import`/`commit` | delete — replaced by save/rename on run records |
-| grants, sudoers pinning, elevation, `--cap` paths (`src/access/`) | delete — cruft; do one thing well |
+| grants, sudoers pinning, elevation, `--cap-add`/`--cap-drop`/`--privileged` launch flags | deleted (executed 2026-07-04) — Hold launches with the invoker's rights; `--system` selects scope; the flags are rejected honestly |
 | captive CLI (`src/runtime/captive.c`) and the `hcli` idea | delete — with profiles gone there is nothing to edit |
 | viewer (`src/viewer/`) | stays — rebuilt in core to the before-0.5 design as `hold logs` |
 | `hold shell` | becomes `hold on` / `hold off` |
