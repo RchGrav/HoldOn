@@ -17,10 +17,6 @@ struct hold_recipe {
     char **ports;
     int volumec;
     char **volumes;
-    int cap_addc;
-    char **cap_add;
-    int cap_dropc;
-    char **cap_drop;
     bool mode_interactive;
     bool mode_tty;
     bool mode_detach;

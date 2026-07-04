@@ -12,30 +12,12 @@ static void print_command_usage_stderr(const char *command);
 static bool parse_docker_run_flag(const char *arg,
                                   bool *detach,
                                   bool *interactive,
-                                  bool *tty,
-                                  bool *privileged);
+                                  bool *tty);
 static int append_env_assignment(const char *arg, char ***env_out, int *envc_out);
-static int append_string_option(const char *what, const char *arg, char ***items_out, int *count_out);
-static int append_string_option(const char *what, const char *arg, char ***items_out, int *count_out) {
-    if (!arg || !*arg) {
-        fprintf(stderr, "hold: error: %s requires a value\n", what);
-        return 5;
-    }
-    char *copy = strdup(arg);
-    if (!copy) return 3;
-    char **next = realloc(*items_out, ((size_t)*count_out + 1) * sizeof(*next));
-    if (!next) {
-        free(copy);
-        return 3;
-    }
-    next[*count_out] = copy;
-    *items_out = next;
-    (*count_out)++;
-    return 0;
-}
 
 static int reject_publish_option(void);
 static int reject_volume_option(void);
+static int reject_capability_option(void);
 static int parse_restart_policy_arg(const char *arg, char out[64]);
 static int parse_restart_delay_arg(const char *arg, int *out);
 static bool restart_policy_arg_enabled(const char *arg);
@@ -46,7 +28,6 @@ struct cli_run_options {
     bool detach;
     bool interactive;
     bool tty;
-    bool privileged;
     bool auto_remove;
     const char *name;
     char **env;
@@ -55,10 +36,6 @@ struct cli_run_options {
     int portc;
     char **volumes;
     int volumec;
-    char **cap_add;
-    int cap_addc;
-    char **cap_drop;
-    int cap_dropc;
     char restart_policy[64];
     int restart_delay_seconds;
     bool restart_delay_seen;
@@ -69,8 +46,6 @@ static void free_run_options(struct cli_run_options *run) {
     hold_free_argv_alloc(run->env, run->envc);
     hold_free_argv_alloc(run->ports, run->portc);
     hold_free_argv_alloc(run->volumes, run->volumec);
-    hold_free_argv_alloc(run->cap_add, run->cap_addc);
-    hold_free_argv_alloc(run->cap_drop, run->cap_dropc);
     memset(run, 0, sizeof(*run));
 }
 
@@ -94,10 +69,6 @@ static struct hold_start_options start_options_from_run(const struct cli_run_opt
         .ports = run->ports,
         .volumec = run->volumec,
         .volumes = run->volumes,
-        .cap_addc = run->cap_addc,
-        .cap_add = run->cap_add,
-        .cap_dropc = run->cap_dropc,
-        .cap_drop = run->cap_drop,
         .restart_policy = run->restart_policy[0] ? run->restart_policy : NULL,
         .restart_delay_seconds = run->restart_delay_seconds,
     };
@@ -113,8 +84,7 @@ static void print_command_usage_stderr(const char *command) {
 static bool parse_docker_run_flag(const char *arg,
                                   bool *detach,
                                   bool *interactive,
-                                  bool *tty,
-                                  bool *privileged) {
+                                  bool *tty) {
     if (!arg || arg[0] != '-') return false;
     if (!strcmp(arg, "-d") || !strcmp(arg, "--detach")) {
         *detach = true;
@@ -131,10 +101,6 @@ static bool parse_docker_run_flag(const char *arg,
     if (!strcmp(arg, "-it") || !strcmp(arg, "-ti")) {
         *interactive = true;
         *tty = true;
-        return true;
-    }
-    if (!strcmp(arg, "--privileged")) {
-        *privileged = true;
         return true;
     }
     return false;
@@ -288,6 +254,12 @@ static int reject_volume_option(void) {
     return 5;
 }
 
+static int reject_capability_option(void) {
+    fprintf(stderr,
+            "hold: error: Hold does not grant or drop privilege; it launches ordinary host processes with the invoker's rights (store scope is --system)\n");
+    return 5;
+}
+
 static int append_env_file(const char *path, char ***env_out, int *envc_out) {
     if (!path || !*path) {
         fprintf(stderr, "hold: error: --env-file requires a path\n");
@@ -330,14 +302,12 @@ static int parse_run_options(int argc,
                              char **argv,
                              int *index,
                              struct cli_run_options *run,
-                             bool *requested_system,
                              bool *tail,
                              bool *console_mode,
                              bool *parsed) {
     const char *arg = argv[*index];
     *parsed = true;
-    if (parse_docker_run_flag(arg, &run->detach, &run->interactive, &run->tty, &run->privileged)) {
-        if (run->privileged) *requested_system = true;
+    if (parse_docker_run_flag(arg, &run->detach, &run->interactive, &run->tty)) {
         if (run->tty) *console_mode = true;
         (*index)++;
         return 0;
@@ -391,37 +361,10 @@ static int parse_run_options(int argc,
     if (!strcmp(arg, "-v") || !strcmp(arg, "--volume") || !strncmp(arg, "--volume=", 9)) {
         return reject_volume_option();
     }
-    if (!strcmp(arg, "--cap-add")) {
-        if (*index + 1 >= argc) {
-            fprintf(stderr, "hold: error: --cap-add requires a capability\n");
-            return 5;
-        }
-        int rc = append_string_option("--cap-add", argv[*index + 1], &run->cap_add, &run->cap_addc);
-        if (rc != 0) return rc;
-        *index += 2;
-        return 0;
-    }
-    if (!strncmp(arg, "--cap-add=", 10)) {
-        int rc = append_string_option("--cap-add", arg + 10, &run->cap_add, &run->cap_addc);
-        if (rc != 0) return rc;
-        (*index)++;
-        return 0;
-    }
-    if (!strcmp(arg, "--cap-drop")) {
-        if (*index + 1 >= argc) {
-            fprintf(stderr, "hold: error: --cap-drop requires a capability\n");
-            return 5;
-        }
-        int rc = append_string_option("--cap-drop", argv[*index + 1], &run->cap_drop, &run->cap_dropc);
-        if (rc != 0) return rc;
-        *index += 2;
-        return 0;
-    }
-    if (!strncmp(arg, "--cap-drop=", 11)) {
-        int rc = append_string_option("--cap-drop", arg + 11, &run->cap_drop, &run->cap_dropc);
-        if (rc != 0) return rc;
-        (*index)++;
-        return 0;
+    if (!strcmp(arg, "--privileged") ||
+        !strcmp(arg, "--cap-add") || !strncmp(arg, "--cap-add=", 10) ||
+        !strcmp(arg, "--cap-drop") || !strncmp(arg, "--cap-drop=", 11)) {
+        return reject_capability_option();
     }
     if (!strcmp(arg, "--detach-keys")) {
         if (*index + 1 >= argc) {
@@ -516,7 +459,7 @@ int hold_cli_main(int argc, char **argv) {
 
     while (argi < argc) {
         bool parsed_run_option = false;
-        int option_rc = parse_run_options(argc, argv, &argi, &run, &requested_system,
+        int option_rc = parse_run_options(argc, argv, &argi, &run,
                                           &tail, &console_mode, &parsed_run_option);
         if (option_rc != 0) {
             free_run_options(&run);

@@ -11,22 +11,16 @@ void hold_free_run_record(struct hold_run_record *r) {
     hold_free_argv_alloc(r->recipe.env, r->recipe.envc);
     hold_free_argv_alloc(r->recipe.ports, r->recipe.portc);
     hold_free_argv_alloc(r->recipe.volumes, r->recipe.volumec);
-    hold_free_argv_alloc(r->recipe.cap_add, r->recipe.cap_addc);
-    hold_free_argv_alloc(r->recipe.cap_drop, r->recipe.cap_dropc);
     hold_free_argv_alloc(r->observed_argv, r->observed_argc);
     r->recipe.argv = NULL;
     r->recipe.env = NULL;
     r->recipe.ports = NULL;
     r->recipe.volumes = NULL;
-    r->recipe.cap_add = NULL;
-    r->recipe.cap_drop = NULL;
     r->observed_argv = NULL;
     r->recipe.argc = 0;
     r->recipe.envc = 0;
     r->recipe.portc = 0;
     r->recipe.volumec = 0;
-    r->recipe.cap_addc = 0;
-    r->recipe.cap_dropc = 0;
     r->observed_argc = 0;
 }
 
@@ -132,14 +126,9 @@ static void write_docker_config_object(FILE *f, const struct hold_run_record *r,
         hold_json_escape(f, r->observed_cwd);
     }
     fprintf(f, "\",\n");
-    fprintf(f, "    \"CapAdd\": ");
-    if (r->recipe.cap_addc > 0 && r->recipe.cap_add) hold_write_json_argv(f, r->recipe.cap_addc, r->recipe.cap_add);
-    else fputs("null", f);
-    fprintf(f, ",\n");
-    fprintf(f, "    \"CapDrop\": ");
-    if (r->recipe.cap_dropc > 0 && r->recipe.cap_drop) hold_write_json_argv(f, r->recipe.cap_dropc, r->recipe.cap_drop);
-    else fputs("null", f);
-    fprintf(f, ",\n");
+    /* Docker key-set parity: the keys stay, the machinery is gone. */
+    fprintf(f, "    \"CapAdd\": null,\n");
+    fprintf(f, "    \"CapDrop\": null,\n");
     fprintf(f, "    \"Privileged\": %s,\n", r->uid == 0 ? "true" : "false");
     fprintf(f, "    \"LogConfig\": {\"Type\": \"local\", \"Config\": {}}\n");
     fprintf(f, "  }");
@@ -285,16 +274,6 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
     if (r->recipe.volumec > 0 && r->recipe.volumes) {
         fprintf(f, "  \"volumes\": ");
         hold_write_json_argv(f, r->recipe.volumec, r->recipe.volumes);
-        fprintf(f, ",\n");
-    }
-    if (r->recipe.cap_addc > 0 && r->recipe.cap_add) {
-        fprintf(f, "  \"cap_add\": ");
-        hold_write_json_argv(f, r->recipe.cap_addc, r->recipe.cap_add);
-        fprintf(f, ",\n");
-    }
-    if (r->recipe.cap_dropc > 0 && r->recipe.cap_drop) {
-        fprintf(f, "  \"cap_drop\": ");
-        hold_write_json_argv(f, r->recipe.cap_dropc, r->recipe.cap_drop);
         fprintf(f, ",\n");
     }
     if (r->recipe.mode_interactive || r->recipe.mode_tty || r->recipe.mode_detach || r->recipe.allow_multi) {
@@ -762,20 +741,6 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
     if (hold_json_get_volumes_alloc(j, &r->recipe.volumes, &r->recipe.volumec) != 0) {
         r->recipe.volumes = NULL;
         r->recipe.volumec = 0;
-    }
-    if (hold_json_get_string_array_key_alloc(j, "cap_add", &r->recipe.cap_add, &r->recipe.cap_addc) != 0 &&
-        hold_json_get_string_array_key_alloc(j, "CapAdd", &r->recipe.cap_add, &r->recipe.cap_addc) != 0 &&
-        (!config_obj || *config_obj != '{' ||
-         hold_json_get_string_array_key_alloc(config_obj, "CapAdd", &r->recipe.cap_add, &r->recipe.cap_addc) != 0)) {
-        r->recipe.cap_add = NULL;
-        r->recipe.cap_addc = 0;
-    }
-    if (hold_json_get_string_array_key_alloc(j, "cap_drop", &r->recipe.cap_drop, &r->recipe.cap_dropc) != 0 &&
-        hold_json_get_string_array_key_alloc(j, "CapDrop", &r->recipe.cap_drop, &r->recipe.cap_dropc) != 0 &&
-        (!config_obj || *config_obj != '{' ||
-         hold_json_get_string_array_key_alloc(config_obj, "CapDrop", &r->recipe.cap_drop, &r->recipe.cap_dropc) != 0)) {
-        r->recipe.cap_drop = NULL;
-        r->recipe.cap_dropc = 0;
     }
     if (hold_json_get_str(j, "restart", r->recipe.restart_policy, sizeof(r->recipe.restart_policy)) == 0 &&
         r->recipe.restart_policy[0]) {

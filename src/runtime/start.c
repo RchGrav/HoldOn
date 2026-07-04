@@ -17,7 +17,6 @@ static volatile sig_atomic_t g_restart_stop = 0;
 
 static const char *explicit_start_argv0(bool owned, const char *command, int argc, char **argv);
 static int apply_child_env(int envc, char **env, bool clean_base);
-static int apply_child_capabilities(int cap_addc, char **cap_add, int cap_dropc, char **cap_drop);
 static int perform_start_with_metadata_name_options_internal(const struct hold_invocation *inv,
                                                              const struct hold_store *store,
                                                              const struct hold_start_options *opts);
@@ -329,10 +328,6 @@ static void run_restart_supervisor(const struct hold_store *store,
                                    bool clean_child_env,
                                    const char *resolved_exec_path,
                                    char **launch_argv,
-                                   int cap_addc,
-                                   char **cap_add,
-                                   int cap_dropc,
-                                   char **cap_drop,
                                    const char *restart_policy,
                                    int restart_delay_seconds,
                                    bool pin_privileged_cwd) {
@@ -383,10 +378,6 @@ static void run_restart_supervisor(const struct hold_store *store,
             signal(SIGTERM, SIG_DFL);
             signal(SIGINT, SIG_DFL);
             signal(SIGHUP, SIG_DFL);
-            if (apply_child_capabilities(cap_addc, cap_add, cap_dropc, cap_drop) != 0) {
-                fprintf(stderr, "hold: cannot apply restart capabilities for '%s': %s\n", resolved_exec_path, strerror(errno));
-                _exit(127);
-            }
             execv(resolved_exec_path, launch_argv);
             fprintf(stderr, "hold: cannot restart '%s': %s\n", resolved_exec_path, strerror(errno));
             _exit(127);
@@ -476,246 +467,6 @@ static int apply_child_env(int envc, char **env, bool clean_base) {
     }
     return 0;
 }
-
-#if defined(__linux__) && defined(SYS_capget) && defined(SYS_capset)
-struct hold_cap_name { const char *name; int value; };
-static const struct hold_cap_name HOLD_CAP_NAMES[] = {
-#ifdef CAP_CHOWN
-    {"CHOWN", CAP_CHOWN},
-#endif
-#ifdef CAP_DAC_OVERRIDE
-    {"DAC_OVERRIDE", CAP_DAC_OVERRIDE},
-#endif
-#ifdef CAP_DAC_READ_SEARCH
-    {"DAC_READ_SEARCH", CAP_DAC_READ_SEARCH},
-#endif
-#ifdef CAP_FOWNER
-    {"FOWNER", CAP_FOWNER},
-#endif
-#ifdef CAP_FSETID
-    {"FSETID", CAP_FSETID},
-#endif
-#ifdef CAP_KILL
-    {"KILL", CAP_KILL},
-#endif
-#ifdef CAP_SETGID
-    {"SETGID", CAP_SETGID},
-#endif
-#ifdef CAP_SETUID
-    {"SETUID", CAP_SETUID},
-#endif
-#ifdef CAP_SETPCAP
-    {"SETPCAP", CAP_SETPCAP},
-#endif
-#ifdef CAP_LINUX_IMMUTABLE
-    {"LINUX_IMMUTABLE", CAP_LINUX_IMMUTABLE},
-#endif
-#ifdef CAP_NET_BIND_SERVICE
-    {"NET_BIND_SERVICE", CAP_NET_BIND_SERVICE},
-#endif
-#ifdef CAP_NET_BROADCAST
-    {"NET_BROADCAST", CAP_NET_BROADCAST},
-#endif
-#ifdef CAP_NET_ADMIN
-    {"NET_ADMIN", CAP_NET_ADMIN},
-#endif
-#ifdef CAP_NET_RAW
-    {"NET_RAW", CAP_NET_RAW},
-#endif
-#ifdef CAP_IPC_LOCK
-    {"IPC_LOCK", CAP_IPC_LOCK},
-#endif
-#ifdef CAP_IPC_OWNER
-    {"IPC_OWNER", CAP_IPC_OWNER},
-#endif
-#ifdef CAP_SYS_MODULE
-    {"SYS_MODULE", CAP_SYS_MODULE},
-#endif
-#ifdef CAP_SYS_RAWIO
-    {"SYS_RAWIO", CAP_SYS_RAWIO},
-#endif
-#ifdef CAP_SYS_CHROOT
-    {"SYS_CHROOT", CAP_SYS_CHROOT},
-#endif
-#ifdef CAP_SYS_PTRACE
-    {"SYS_PTRACE", CAP_SYS_PTRACE},
-#endif
-#ifdef CAP_SYS_PACCT
-    {"SYS_PACCT", CAP_SYS_PACCT},
-#endif
-#ifdef CAP_SYS_ADMIN
-    {"SYS_ADMIN", CAP_SYS_ADMIN},
-#endif
-#ifdef CAP_SYS_BOOT
-    {"SYS_BOOT", CAP_SYS_BOOT},
-#endif
-#ifdef CAP_SYS_NICE
-    {"SYS_NICE", CAP_SYS_NICE},
-#endif
-#ifdef CAP_SYS_RESOURCE
-    {"SYS_RESOURCE", CAP_SYS_RESOURCE},
-#endif
-#ifdef CAP_SYS_TIME
-    {"SYS_TIME", CAP_SYS_TIME},
-#endif
-#ifdef CAP_SYS_TTY_CONFIG
-    {"SYS_TTY_CONFIG", CAP_SYS_TTY_CONFIG},
-#endif
-#ifdef CAP_MKNOD
-    {"MKNOD", CAP_MKNOD},
-#endif
-#ifdef CAP_LEASE
-    {"LEASE", CAP_LEASE},
-#endif
-#ifdef CAP_AUDIT_WRITE
-    {"AUDIT_WRITE", CAP_AUDIT_WRITE},
-#endif
-#ifdef CAP_AUDIT_CONTROL
-    {"AUDIT_CONTROL", CAP_AUDIT_CONTROL},
-#endif
-#ifdef CAP_SETFCAP
-    {"SETFCAP", CAP_SETFCAP},
-#endif
-#ifdef CAP_MAC_OVERRIDE
-    {"MAC_OVERRIDE", CAP_MAC_OVERRIDE},
-#endif
-#ifdef CAP_MAC_ADMIN
-    {"MAC_ADMIN", CAP_MAC_ADMIN},
-#endif
-#ifdef CAP_SYSLOG
-    {"SYSLOG", CAP_SYSLOG},
-#endif
-#ifdef CAP_WAKE_ALARM
-    {"WAKE_ALARM", CAP_WAKE_ALARM},
-#endif
-#ifdef CAP_BLOCK_SUSPEND
-    {"BLOCK_SUSPEND", CAP_BLOCK_SUSPEND},
-#endif
-#ifdef CAP_AUDIT_READ
-    {"AUDIT_READ", CAP_AUDIT_READ},
-#endif
-#ifdef CAP_PERFMON
-    {"PERFMON", CAP_PERFMON},
-#endif
-#ifdef CAP_BPF
-    {"BPF", CAP_BPF},
-#endif
-#ifdef CAP_CHECKPOINT_RESTORE
-    {"CHECKPOINT_RESTORE", CAP_CHECKPOINT_RESTORE},
-#endif
-};
-
-static int cap_last_cap_value(void) {
-    long fallback = 40;
-#ifdef CAP_LAST_CAP
-    fallback = CAP_LAST_CAP;
-#endif
-    FILE *f = fopen("/proc/sys/kernel/cap_last_cap", "r");
-    if (!f) return (int)fallback;
-    long n = fallback;
-    if (fscanf(f, "%ld", &n) != 1 || n < 0 || n > 63) n = fallback;
-    fclose(f);
-    return (int)n;
-}
-
-static int normalize_cap_name(const char *in, char out[64]) {
-    if (!in || !*in) { errno = EINVAL; return -1; }
-    const char *src = in;
-    if (!strncasecmp(src, "CAP_", 4)) src += 4;
-    size_t n = strlen(src);
-    if (n == 0 || n >= 64) { errno = EINVAL; return -1; }
-    for (size_t i = 0; i < n; i++) {
-        unsigned char c = (unsigned char)src[i];
-        if (c == '-') c = '_';
-        if (!(isalnum(c) || c == '_')) { errno = EINVAL; return -1; }
-        out[i] = (char)toupper(c);
-    }
-    out[n] = '\0';
-    return 0;
-}
-
-static int cap_name_to_value(const char *name) {
-    char norm[64];
-    if (normalize_cap_name(name, norm) != 0) return -1;
-    for (size_t i = 0; i < sizeof(HOLD_CAP_NAMES) / sizeof(HOLD_CAP_NAMES[0]); i++) {
-        if (!strcmp(norm, HOLD_CAP_NAMES[i].name)) return HOLD_CAP_NAMES[i].value;
-    }
-    errno = EINVAL;
-    return -1;
-}
-
-static void cap_set_bit(struct __user_cap_data_struct data[2], int cap, bool enabled) {
-    unsigned idx = (unsigned)cap / 32U;
-    __u32 mask = ((__u32)1U) << ((unsigned)cap % 32U);
-    if (idx >= 2) return;
-    if (enabled) {
-        data[idx].effective |= mask;
-        data[idx].permitted |= mask;
-    } else {
-        data[idx].effective &= ~mask;
-        data[idx].permitted &= ~mask;
-        data[idx].inheritable &= ~mask;
-    }
-}
-
-static bool cap_permitted_bit_is_set(const struct __user_cap_data_struct data[2], int cap) {
-    unsigned idx = (unsigned)cap / 32U;
-    __u32 mask = ((__u32)1U) << ((unsigned)cap % 32U);
-    return idx < 2 && (data[idx].permitted & mask) != 0;
-}
-
-static int apply_child_capabilities(int cap_addc, char **cap_add, int cap_dropc, char **cap_drop) {
-    if (cap_addc <= 0 && cap_dropc <= 0) return 0;
-    if ((cap_addc > 0 && !cap_add) || (cap_dropc > 0 && !cap_drop)) { errno = EINVAL; return -1; }
-    struct __user_cap_header_struct hdr;
-    struct __user_cap_data_struct data[2];
-    bool drop_all = false;
-    bool drop_explicit[64];
-    memset(&hdr, 0, sizeof(hdr));
-    memset(data, 0, sizeof(data));
-    memset(drop_explicit, 0, sizeof(drop_explicit));
-    hdr.version = _LINUX_CAPABILITY_VERSION_3;
-    hdr.pid = 0;
-    if (syscall(SYS_capget, &hdr, data) != 0) return -1;
-    int last = cap_last_cap_value();
-    for (int i = 0; i < cap_dropc; i++) {
-        char norm[64];
-        if (normalize_cap_name(cap_drop[i], norm) != 0) return -1;
-        if (!strcmp(norm, "ALL")) {
-            drop_all = true;
-            for (int c = 0; c <= last && c < 64; c++) cap_set_bit(data, c, false);
-            continue;
-        }
-        int c = cap_name_to_value(norm);
-        if (c < 0 || c > last) return -1;
-        cap_set_bit(data, c, false);
-        if (c < 64) drop_explicit[c] = true;
-    }
-    for (int i = 0; i < cap_addc; i++) {
-        char norm[64];
-        if (normalize_cap_name(cap_add[i], norm) != 0) return -1;
-        if (!strcmp(norm, "ALL")) {
-            for (int c = 0; c <= last && c < 64; c++) cap_set_bit(data, c, true);
-            continue;
-        }
-        int c = cap_name_to_value(norm);
-        if (c < 0 || c > last) return -1;
-        cap_set_bit(data, c, true);
-    }
-    for (int c = 0; c <= last && c < 64; c++) {
-        if ((drop_all || drop_explicit[c]) && !cap_permitted_bit_is_set(data, c)) {
-            (void)prctl(PR_CAPBSET_DROP, c, 0, 0, 0);
-        }
-    }
-    return syscall(SYS_capset, &hdr, data) == 0 ? 0 : -1;
-}
-#else
-static int apply_child_capabilities(int cap_addc, char **cap_add, int cap_dropc, char **cap_drop) {
-    (void)cap_add; (void)cap_drop;
-    if (cap_addc > 0 || cap_dropc > 0) { errno = ENOTSUP; return -1; }
-    return 0;
-}
-#endif
 
 static void close_stdio_to_devnull(void) {
     int fd = open("/dev/null", O_RDWR);
@@ -840,10 +591,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     char **volumes = opts->volumes;
     const char *restart_policy = opts->restart_policy;
     int restart_delay_seconds = opts->restart_delay_seconds;
-    int cap_addc = opts->cap_addc;
-    char **cap_add = opts->cap_add;
-    int cap_dropc = opts->cap_dropc;
-    char **cap_drop = opts->cap_drop;
     const char *existing_id = opts->existing_id;
     const char *existing_log_path = opts->existing_log_path;
     const char *existing_run_name = opts->existing_run_name;
@@ -853,8 +600,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         envc < 0 || (envc > 0 && !env) ||
         portc < 0 || (portc > 0 && !ports) ||
         volumec < 0 || (volumec > 0 && !volumes) ||
-        cap_addc < 0 || (cap_addc > 0 && !cap_add) ||
-        cap_dropc < 0 || (cap_dropc > 0 && !cap_drop) ||
         restart_delay_seconds < 0) {
         hold_usage();
         return 5;
@@ -1117,10 +862,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
                                    clean_child_env,
                                    resolved_exec_path,
                                    launch_argv,
-                                   cap_addc,
-                                   cap_add,
-                                   cap_dropc,
-                                   cap_drop,
                                    restart_policy,
                                    restart_delay_seconds,
                                    pin_privileged_cwd);
@@ -1174,11 +915,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
             _exit(127);
         }
         if (apply_child_env(envc, env, clean_child_env) != 0) {
-            int e = errno;
-            hold_write_all(pipefd[1], &e, sizeof(e));
-            _exit(127);
-        }
-        if (apply_child_capabilities(cap_addc, cap_add, cap_dropc, cap_drop) != 0) {
             int e = errno;
             hold_write_all(pipefd[1], &e, sizeof(e));
             _exit(127);
@@ -1405,14 +1141,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         hold_die_errno("hold: failed to copy volume metadata");
     }
     r.recipe.volumec = volumec;
-    if (cap_addc > 0 && hold_copy_argv(&r.recipe.cap_add, cap_addc, cap_add) != 0) {
-        hold_die_errno("hold: failed to copy capability add metadata");
-    }
-    r.recipe.cap_addc = cap_addc;
-    if (cap_dropc > 0 && hold_copy_argv(&r.recipe.cap_drop, cap_dropc, cap_drop) != 0) {
-        hold_die_errno("hold: failed to copy capability drop metadata");
-    }
-    r.recipe.cap_dropc = cap_dropc;
     if (restart_enabled) {
         if (hold_checked_snprintf(r.recipe.restart_policy, sizeof(r.recipe.restart_policy), "%s", restart_policy) != 0) {
             hold_die_errno("hold: restart policy too long");
@@ -1556,8 +1284,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
             hold_free_argv_alloc(r.recipe.env, r.recipe.envc);
             hold_free_argv_alloc(r.recipe.ports, r.recipe.portc);
             hold_free_argv_alloc(r.recipe.volumes, r.recipe.volumec);
-            hold_free_argv_alloc(r.recipe.cap_add, r.recipe.cap_addc);
-            hold_free_argv_alloc(r.recipe.cap_drop, r.recipe.cap_dropc);
             return tail_rc;
         }
         if (auto_remove) {
@@ -1566,8 +1292,6 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         hold_free_argv_alloc(r.recipe.env, r.recipe.envc);
         hold_free_argv_alloc(r.recipe.ports, r.recipe.portc);
         hold_free_argv_alloc(r.recipe.volumes, r.recipe.volumec);
-        hold_free_argv_alloc(r.recipe.cap_add, r.recipe.cap_addc);
-        hold_free_argv_alloc(r.recipe.cap_drop, r.recipe.cap_dropc);
         free_launch_and_observed_argv(launch_argv, observed_argv, argc);
         return 0;
     }

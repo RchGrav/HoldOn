@@ -25,10 +25,6 @@ struct hold_start_options {
     char **ports;
     int volumec;
     char **volumes;
-    int cap_addc;
-    char **cap_add;
-    int cap_dropc;
-    char **cap_drop;
     const char *restart_policy;
     int restart_delay_seconds;
     const char *existing_id;

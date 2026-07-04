@@ -2624,92 +2624,8 @@ JSON
 
 
 
-test_root_capability_drop_all_then_add_preserves_added_cap() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "root actor unavailable"
-  [ -r /proc/self/status ] || skip "/proc status unavailable"
-  local out cap_hex
-  out=$(as_root "$HOLD_REAL_BIN" --rm --cap-drop ALL --cap-add NET_BIND_SERVICE -- /bin/sh -c 'grep "^CapEff:" /proc/self/status' 2>&1) || {
-    printf '%s
-' "$out" >&2
-    return 1
-  }
-  cap_hex=$(printf '%s
-' "$out" | awk '/^CapEff:/ { print $2; exit }')
-  [ -n "$cap_hex" ] || { printf '%s
-' "$out" >&2; return 1; }
-  python3 - "$cap_hex" <<'PY'
-import sys
-cap_eff = int(sys.argv[1], 16)
-net_bind_service = 1 << 10
-if cap_eff != net_bind_service:
-    raise SystemExit(f"expected only CAP_NET_BIND_SERVICE after cap-drop ALL + cap-add NET_BIND_SERVICE, got 0x{cap_eff:x}")
-PY
-}
 
-test_direct_capability_metadata_projects_to_inspect() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "root actor unavailable"
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id
-  out=$(as_root "$HOLD_REAL_BIN" -d --cap-add NET_BIND_SERVICE --cap-drop ALL -- /bin/sleep 60 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  as_root "$HOLD_REAL_BIN" inspect "$id" >"$TEST_ROOT/direct-cap-inspect.json" || return 1
-  python3 - "$TEST_ROOT/direct-cap-inspect.json" <<'PY' || { cat "$TEST_ROOT/direct-cap-inspect.json" >&2; return 1; }
-import json, sys
-r = json.load(open(sys.argv[1], encoding="utf-8"))[0]
-cfg = r.get("Config") or {}
-if cfg.get("CapAdd") != ["NET_BIND_SERVICE"]:
-    raise SystemExit(f"CapAdd mismatch: {cfg!r}")
-if cfg.get("CapDrop") != ["ALL"]:
-    raise SystemExit(f"CapDrop mismatch: {cfg!r}")
-PY
-  as_root "$HOLD_REAL_BIN" stop "$id" >/dev/null || return 1
-}
 
-test_restart_worker_applies_capability_metadata() {
-  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "root actor unavailable"
-  [ -r /proc/self/status ] || skip "/proc status unavailable"
-  local script out id count logs
-  script="$TEST_ROOT/restart-cap.sh"
-  cat >"$script" <<'EOS' || return 1
-#!/bin/sh
-grep '^CapEff:' /proc/self/status
-exit 7
-EOS
-  chmod 755 "$script" || return 1
-  out=$(as_root "$HOLD_REAL_BIN" -d --restart on-failure:1 --restart-delay 0 \
-      --cap-drop ALL --cap-add NET_BIND_SERVICE -- \
-      "$script" 2>&1) || {
-    printf '%s\n' "$out" >&2
-    return 1
-  }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  for _ in $(seq 1 40); do
-    logs=$(as_root "$HOLD_REAL_BIN" logs "$id" --plain -n 50 2>/dev/null || true)
-    count=$(printf '%s\n' "$logs" | grep -c '^CapEff:' || true)
-    [ "$count" -ge 2 ] && break
-    sleep 0.1
-  done
-  [ "$count" -ge 2 ] || { echo "restart capability attempts: $count" >&2; as_root "$HOLD_REAL_BIN" logs "$id" --plain -n 50 >&2 || true; return 1; }
-  logs=$(as_root "$HOLD_REAL_BIN" logs "$id" --plain -n 50) || return 1
-  printf '%s\n' "$logs" >"$TEST_ROOT/restart-cap.log" || return 1
-  python3 - "$TEST_ROOT/restart-cap.log" <<'PY' || { printf '%s\n' "$logs" >&2; return 1; }
-import sys
-lines = [line.split()[1] for line in open(sys.argv[1], encoding="utf-8") if line.startswith("CapEff:")]
-if len(lines) < 2:
-    raise SystemExit(f"expected at least 2 CapEff lines, got {lines!r}")
-want = 1 << 10
-for line in lines:
-    got = int(line, 16)
-    if got != want:
-        raise SystemExit(f"restart worker capabilities not constrained: got 0x{got:x}, want 0x{want:x}")
-PY
-  as_root "$HOLD_REAL_BIN" stop "$id" >/dev/null 2>&1 || true
-}
 
 
 
@@ -3673,6 +3589,23 @@ test_purge_never_follows_stored_paths() {
   grep -q 'outside the store; left untouched' "$TEST_ROOT/purge-derive.err" || { cat "$TEST_ROOT/purge-derive.err" >&2; return 1; }
 }
 
+test_capability_flags_are_rejected_honestly() {
+  local rc flag
+  for flag in --privileged --cap-add=ALL --cap-drop=ALL; do
+    set +e
+    "$HOLD_BIN" "$flag" -d -- /bin/true >/dev/null 2>"$TEST_ROOT/cap-reject.err"
+    rc=$?
+    set -e
+    [ "$rc" -eq 5 ] || { echo "$flag rc=$rc want 5" >&2; return 1; }
+    grep -q 'does not grant or drop privilege' "$TEST_ROOT/cap-reject.err" || { cat "$TEST_ROOT/cap-reject.err" >&2; return 1; }
+  done
+  set +e
+  "$HOLD_BIN" --cap-add NET_BIND_SERVICE -d -- /bin/true >/dev/null 2>"$TEST_ROOT/cap-reject.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 5 ] || { echo "split --cap-add rc=$rc want 5" >&2; return 1; }
+}
+
 test_usage_errors_go_to_stderr_and_help_names_both_views() {
   local rc out err
   set +e
@@ -4399,6 +4332,7 @@ run_test "Docker run foreground follows output by default" test_docker_run_foreg
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker restart policy restarts failed processes" test_docker_restart_policy_restarts_failures
 run_test "purge never follows stored paths" test_purge_never_follows_stored_paths
+run_test "capability flags are rejected honestly" test_capability_flags_are_rejected_honestly
 run_test "usage errors go to stderr; help names both views" test_usage_errors_go_to_stderr_and_help_names_both_views
 run_test "crash-leftover temp does not block record rewrites" test_crash_leftover_tmp_does_not_block_rewrites
 run_test "purge sweep respects the creation reserve" test_purge_sweep_respects_creation_reserve
@@ -4499,9 +4433,6 @@ run_test "purge -s re-execs the global sweep through sudo" test_purge_system_ree
 run_test "root list -a labels owners and walks user homes" test_root_list_all_labels_owner_and_walks_homes
 run_test "normal run does not self-elevate on local/root ID conflict" test_user_local_wins_over_public_root_collision
 run_test "explicit user:<id> targets user-local run" test_explicit_user_target
-run_test "root capability drop-all then add applies requested cap" test_root_capability_drop_all_then_add_preserves_added_cap
-run_test "direct capability metadata projects to inspect" test_direct_capability_metadata_projects_to_inspect
-run_test "restart worker applies capability metadata" test_restart_worker_applies_capability_metadata
 run_test "Docker --rm removes run artifacts after exit" test_docker_rm_removes_run_artifacts_after_exit
 run_test "env flags are recipe data, not hold's own environment" test_env_flag_is_recipe_data_only
 run_test "tail Ctrl-C detaches from tail and does not stop run" test_tail_ctrl_c_detaches_from_tail_and_keeps_run
