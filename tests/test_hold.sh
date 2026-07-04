@@ -2730,6 +2730,23 @@ test_docker_rm_removes_run_artifacts_after_exit() {
   path_absent_soon "$log" || { echo "--rm did not remove log $log" >&2; return 1; }
 }
 
+test_env_flag_is_recipe_data_only() {
+  local out id store fake record log
+  store="$HOME/.local/state/hold"
+  fake="$TEST_ROOT/fake-home"
+  mkdir -p "$fake" || return 1
+  out=$("$HOLD_BIN" -d -e HOME="$fake" -e HOLD_MARKER=recipe -- /bin/sh -c 'echo "home:$HOME marker:$HOLD_MARKER"' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  record=$(record_path "$id" "$store") || { echo "-e HOME relocated the record store" >&2; return 1; }
+  [ -f "$record" ] || { echo "-e HOME relocated the record store" >&2; return 1; }
+  [ ! -d "$fake/.local/state/hold" ] || { echo "-e HOME leaked into hold's own environment" >&2; return 1; }
+  record_ended_soon "$id" || return 1
+  log=$(log_path "$id" "$store") || return 1
+  grep -q "home:$fake marker:recipe" "$log" || { cat "$log" >&2; return 1; }
+  out=$("$HOLD_BIN" -d -e PATH=/nonexistent -- sleep 0.1 2>&1) || { echo "-e PATH broke invoking-PATH command resolution" >&2; printf '%s\n' "$out" >&2; return 1; }
+}
+
 
 
 
@@ -4327,6 +4344,7 @@ run_test "root capability drop-all then add applies requested cap" test_root_cap
 run_test "direct capability metadata projects to inspect" test_direct_capability_metadata_projects_to_inspect
 run_test "restart worker applies capability metadata" test_restart_worker_applies_capability_metadata
 run_test "Docker --rm removes run artifacts after exit" test_docker_rm_removes_run_artifacts_after_exit
+run_test "env flags are recipe data, not hold's own environment" test_env_flag_is_recipe_data_only
 run_test "tail Ctrl-C detaches from tail and does not stop run" test_tail_ctrl_c_detaches_from_tail_and_keeps_run
 run_test "build artifacts for static and dynamic coexist" test_build_artifact_coexistence
 run_test "concurrent starts produce unique ids" test_concurrent_unique_ids
