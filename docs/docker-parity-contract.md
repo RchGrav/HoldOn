@@ -26,6 +26,10 @@ bare launch form (`hold [flags] <cmd> ...`):
     --detach-keys   detach sequence (default ctrl-p,ctrl-q)
 ```
 
+The command is resolved against the invoking environment's `PATH`;
+`-e`/`--env-file` configure the held process's environment only, never
+Hold's own.
+
 Foreground launches print **nothing** of their own — only the process
 output. Detach with `Ctrl-P Ctrl-Q`, exactly like Docker.
 

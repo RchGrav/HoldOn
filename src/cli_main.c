@@ -224,9 +224,6 @@ static int append_env_assignment(const char *arg, char ***env_out, int *envc_out
             return 5;
         }
     }
-    if (setenv(key, eq + 1, 1) != 0) {
-        hold_die_errno("hold: failed to set launch environment");
-    }
     char *copy = strdup(arg);
     if (!copy) return 1;
     char **next = realloc(*env_out, ((size_t)*envc_out + 1) * sizeof(*next));
