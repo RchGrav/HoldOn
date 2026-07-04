@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1
+
+### Fixed
+
+- `hold list <name>` matched a deleted profile-era field and printed an
+  empty table for calls that plainly exist; the name argument now filters
+  on the call's name in every view.
+
+### Changed
+
+- The last profile-era record fields and the ancient 12-hex full-id format
+  are gone; call-record operations (save, rename, redial, name generation)
+  moved from start.c into their own call.c.
+
 ## 0.6.0 - The ledger and the mirror
 
 `ps` speaks only Docker; `list` speaks only Hold.

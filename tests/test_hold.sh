@@ -3995,8 +3995,16 @@ test_public_index_write_rollback() {
   rc=$?
   set -e
   [ "$rc" -eq 1 ] || { echo "public-index rollback start: rc=$rc (want 1)" >&2; return 1; }
-  pids=$(ps -eo pid=,args= | awk '/hold_pubidx_test/ && !/awk/ {print $1}')
-  [ -z "$pids" ] || { echo "leaked process after public-index rollback" >&2; return 1; }
+  # The rollback SIGKILLs the group; poll for its disappearance instead of
+  # sampling one instant. A genuine leak survives the whole window.
+  local rb_tries=0
+  while :; do
+    pids=$(ps -eo pid=,args= | awk '/hold_pubidx_test/ && !/awk/ {print $1}')
+    [ -z "$pids" ] && break
+    rb_tries=$((rb_tries + 1))
+    [ "$rb_tries" -lt 20 ] || { echo "leaked process after public-index rollback" >&2; return 1; }
+    sleep 0.1
+  done
   leftover=$(as_root sh -c 'ls "$1"/runs/*.json "$1"/public/*.json 2>/dev/null' sh "$HOLD_TEST_SYSTEM_STATE_DIR" 2>/dev/null || true)
   [ -z "$leftover" ] || { echo "leftover state after rollback: $leftover" >&2; return 1; }
 }
