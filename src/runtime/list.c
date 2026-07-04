@@ -623,6 +623,25 @@ static void unlink_log_index_for_log(const char *log_path) {
     }
 }
 
+/* Purge derives its unlink targets from the store layout and the call id;
+ * a path string stored inside a record is never followed for deletion. */
+static void unlink_call_artifacts(const struct hold_store *store, const struct hold_run_record *r) {
+    char log_path[HOLD_PATH_MAX], sock_path[HOLD_PATH_MAX];
+    if (hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, r->id) == 0) {
+        if (r->has_log && strcmp(r->log_path, log_path) != 0) {
+            fprintf(stderr, "hold: warning: record %s names a log outside the store; left untouched: %s\n", r->id, r->log_path);
+        }
+        unlink_log_index_for_log(log_path);
+        unlink(log_path);
+    }
+    if (hold_format_console_sock_path(store, r->id, sock_path, sizeof(sock_path)) == 0) {
+        if (r->has_console && strcmp(r->console_sock, sock_path) != 0) {
+            fprintf(stderr, "hold: warning: record %s names a console socket outside the store; left untouched: %s\n", r->id, r->console_sock);
+        }
+        unlink(sock_path);
+    }
+}
+
 int hold_prune_one_run(const struct hold_store *store, const char *id, const char *boot, bool allow_stale, bool *removed) {
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
@@ -637,13 +656,7 @@ int hold_prune_one_run(const struct hold_store *store, const char *id, const cha
         return 2;
     }
     unlink(path);
-    if (r.has_log) {
-        unlink_log_index_for_log(r.log_path);
-        unlink(r.log_path);
-    }
-    if (r.has_console) {
-        unlink(r.console_sock);
-    }
+    unlink_call_artifacts(store, &r);
     unlink_public_index(store, id);
     if (removed) {
         *removed = true;
@@ -790,12 +803,7 @@ static int cmd_prune_store_all(const struct hold_store *store, bool include_stal
             stats->kept_saved++;
         } else if (st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE) {
             unlink(path);
-            if (r.has_log) {
-                unlink(r.log_path);
-            }
-            if (r.has_console) {
-                unlink(r.console_sock);
-            }
+            unlink_call_artifacts(store, &r);
             unlink_public_index(store, r.id);
             char display_id[ID_DISPLAY_HEX_LEN + 1];
             hold_run_id_display(r.id, display_id);
