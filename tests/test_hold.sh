@@ -2015,6 +2015,116 @@ test_console_exit_code_is_recorded() {
   "$HOLD_BIN" prune "$id" >/dev/null || return 1
 }
 
+test_end_console_call_signals_target() {
+  # 'hold end' on a console call must end the HELD group, not the broker. The
+  # target ignores SIGHUP so an incidental PTY hangup cannot masquerade as the
+  # group signal: under the pre-anchoring bug the record named the broker, the
+  # group survived, and the record fabricated Exited (0). No red test caught this
+  # because the best-effort 'stop' cleanups elsewhere (2015-2037, 2068) silently
+  # leaked the target; this test is the pin.
+  local out id store record pgid sock got ok _
+  out=$("$HOLD_BIN" --console /bin/sh -c 'trap "" HUP; sleep 45' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  store="$HOME/.local/state/hold"
+  record=$(record_path "$id" "$store") || return 1
+  pgid=$(record_pgid "$id" "$store") || return 1
+  [ -n "$pgid" ] || return 1
+  # Target-anchoring: pid==pgid==sid names the held sh/sleep, not a hold broker.
+  # Under the bug the recorded group is the broker's and holds no sleep.
+  ps -o args= -g "$pgid" >"$TEST_ROOT/end-signal-group.txt" 2>/dev/null || true
+  grep -q 'sleep 45' "$TEST_ROOT/end-signal-group.txt" || {
+    echo "record pgid $pgid is not the held group:" >&2
+    cat "$TEST_ROOT/end-signal-group.txt" >&2
+    return 1
+  }
+  sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
+  [ -n "$sock" ] || { cat "$record" >&2; return 1; }
+  # The honest --print surface names the real group.
+  got=$("$HOLD_BIN" stop --print "$id") || return 1
+  [ "$got" = "kill -TERM -- -$pgid" ] || {
+    echo "stop --print: [$got] want [kill -TERM -- -$pgid]" >&2
+    return 1
+  }
+  "$HOLD_BIN" end "$id" >/dev/null || return 1
+  pgid_terminated "$pgid" || { echo "held group $pgid survived end" >&2; return 1; }
+  record_ended_soon "$id" "$store" || { cat "$record" >&2; return 1; }
+  # Poll the record; never grep list before this (the zombie window renders
+  # Exited (0) transiently until the broker's mark lands with 143).
+  ok=0
+  for _ in $(seq 1 50); do
+    grep -q '"exit_code": 143' "$record" && { ok=1; break; }
+    sleep 0.1
+  done
+  [ "$ok" -eq 1 ] || { echo "record did not reach exit_code 143:" >&2; cat "$record" >&2; return 1; }
+  grep -q '"term_signal": 15' "$record" || { cat "$record" >&2; return 1; }
+  path_absent_soon "$sock" || { ls -la "$(dirname "$sock")" >&2 || true; return 1; }
+  "$HOLD_BIN" ps -a | grep -Eq "^$id[[:space:]].*Exited \(143\)" || { "$HOLD_BIN" ps -a >&2; return 1; }
+}
+
+test_end_console_call_escalates_to_kill() {
+  # SPEC 'end: TERM, then KILL' holds for consoles too. The leader traps both TERM
+  # and HUP and keeps a child alive across TERM, so only the KILL escalation can
+  # bring the group down; the record must reach exit_code 137 (128+SIGKILL).
+  local out id store record pgid ok _
+  out=$("$HOLD_BIN" --console /bin/sh -c 'trap "" TERM HUP; while :; do sleep 30; done' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  store="$HOME/.local/state/hold"
+  record=$(record_path "$id" "$store") || return 1
+  pgid=$(record_pgid "$id" "$store") || return 1
+  [ -n "$pgid" ] || return 1
+  "$HOLD_BIN" end "$id" >/dev/null || return 1
+  pgid_terminated "$pgid" || { echo "held group $pgid survived end escalation" >&2; return 1; }
+  record_ended_soon "$id" "$store" || { cat "$record" >&2; return 1; }
+  ok=0
+  for _ in $(seq 1 50); do
+    grep -q '"exit_code": 137' "$record" && { ok=1; break; }
+    sleep 0.1
+  done
+  [ "$ok" -eq 1 ] || { echo "record did not reach exit_code 137:" >&2; cat "$record" >&2; return 1; }
+  grep -q '"term_signal": 9' "$record" || { cat "$record" >&2; return 1; }
+}
+
+test_console_broker_term_forwards_to_target() {
+  # A raw SIGTERM to the broker pid itself (not routed through 'hold end') must
+  # forward to the held group and clean up the socket. The record no longer names
+  # the broker, so without the forwarder a bare kill would orphan the target.
+  local out id store record pgid sock broker ok _
+  out=$("$HOLD_BIN" --console /bin/sh -c 'trap "" HUP; sleep 45' 2>&1) || {
+    printf '%s\n' "$out" >&2
+    return 1
+  }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
+  store="$HOME/.local/state/hold"
+  record=$(record_path "$id" "$store") || return 1
+  pgid=$(record_pgid "$id" "$store") || return 1
+  [ -n "$pgid" ] || return 1
+  sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
+  [ -n "$sock" ] || { cat "$record" >&2; return 1; }
+  # The broker is the parent of the target group leader (it forked the target).
+  broker=$(ps -o ppid= -p "$pgid" 2>/dev/null | tr -d ' ')
+  [ -n "$broker" ] && [ "$broker" -gt 1 ] || { echo "could not find broker for pgid $pgid" >&2; return 1; }
+  kill -TERM "$broker" || return 1
+  pgid_terminated "$pgid" || { echo "held group $pgid survived broker TERM" >&2; return 1; }
+  record_ended_soon "$id" "$store" || { cat "$record" >&2; return 1; }
+  ok=0
+  for _ in $(seq 1 50); do
+    grep -q '"exit_code": 143' "$record" && { ok=1; break; }
+    sleep 0.1
+  done
+  [ "$ok" -eq 1 ] || { echo "record did not reach exit_code 143 after broker TERM:" >&2; cat "$record" >&2; return 1; }
+  grep -q '"term_signal": 15' "$record" || { cat "$record" >&2; return 1; }
+  path_absent_soon "$sock" || { ls -la "$(dirname "$sock")" >&2 || true; return 1; }
+}
+
 test_console_socket_lives_in_store_dir() {
   # The console socket must live inside the store's console directory, never in
   # /tmp, even though the harness's store path is longer than the AF_UNIX
@@ -4077,6 +4187,9 @@ run_test "--console works without an external attach tool" test_console_does_not
 run_test "console reports a normal run has no console" test_console_reports_non_console_run
 run_test "console attach round-trips and tees to the log" test_console_round_trip_and_log_tee
 run_test "console exit code is recorded" test_console_exit_code_is_recorded
+run_test "end on a console call signals the held group, not the broker" test_end_console_call_signals_target
+run_test "end on a console call escalates TERM to KILL" test_end_console_call_escalates_to_kill
+run_test "SIGTERM to the console broker forwards to the held group" test_console_broker_term_forwards_to_target
 run_test "console rejects unrelated peer UID before replay" test_console_rejects_unrelated_peer_uid_before_replay
 run_test "console can reattach after detach" test_console_can_reattach_after_detach
 run_test "console socket lives in store dir, not /tmp, for long paths" test_console_socket_lives_in_store_dir

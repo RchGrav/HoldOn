@@ -752,7 +752,7 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
             (void)fcntl(stderr_pipe[1], F_SETFD, FD_CLOEXEC);
         }
     }
-    if (!console_mode && !restart_enabled) {
+    if (!restart_enabled) {
 #if defined(__linux__) && defined(O_CLOEXEC)
         if (pipe2(target_pid_pipe, O_CLOEXEC) != 0)
 #endif
@@ -890,6 +890,7 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
                 close(nullfd);
             }
             hold_run_console_broker(pipefd[1],
+                                      target_pid_pipe[1],
                                       store,
                                       id,
                                       log_path,

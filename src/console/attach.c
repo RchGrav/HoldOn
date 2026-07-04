@@ -94,7 +94,9 @@ retry_current:
 int hold_run_native_console(const char *sock_path) {
     int sock = hold_connect_console_socket(sock_path);
     if (sock < 0) {
-        return errno == ENOTSOCK || errno == ENAMETOOLONG ? 5 : 3;
+        int e = errno;
+        fprintf(stderr, "hold: cannot attach: %s\n", strerror(e));
+        return e == ENOTSOCK || e == ENAMETOOLONG ? 5 : 3;
     }
 
     bool interactive = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
