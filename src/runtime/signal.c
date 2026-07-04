@@ -483,6 +483,61 @@ static int stream_view_result(const struct hold_log_filter_result *result) {
     return print_view_result(result, false);
 }
 
+/* Docker --tail semantics: the newest N records. Anchor at EOF and widen the
+ * scan window until N lines are in view or the window covers the whole log;
+ * the engine's byte-budget semantics stay untouched. */
+static int view_backward_last_n(int fd,
+                                const struct hold_log_filter_options *opts,
+                                bool debug_stats,
+                                off_t *resume_out) {
+    off_t end = lseek(fd, 0, SEEK_END);
+    if (end < 0) return -1;
+    size_t budget = 1u << 20;
+    struct hold_log_filter_result result;
+    for (;;) {
+        if (hold_log_filter_backward_fd(fd, opts, end, budget, &result) != 0) return -1;
+        if (result.line_count >= opts->max_results || (off_t)budget >= end) break;
+        hold_log_filter_result_free(&result);
+        budget *= 4;
+    }
+    int rc = print_view_result(&result, debug_stats);
+    if (resume_out) *resume_out = result.line_count > 0 ? result.next_offset : end;
+    hold_log_filter_result_free(&result);
+    return rc;
+}
+
+/* Plain output without a limit dumps the whole log, batch by batch, and
+ * keeps the single debug-stats stderr line shape. */
+static int view_forward_full(int fd, const struct hold_log_filter_options *opts, bool debug_stats) {
+    struct hold_log_filter_result result;
+    size_t bytes = 0, scanned = 0, matches = 0, visible = 0;
+    bool eof = false;
+    off_t off = 0;
+    for (;;) {
+        if (lseek(fd, off, SEEK_SET) < 0) return -1;
+        if (hold_log_filter_fd(fd, opts, &result) != 0) return -1;
+        bytes += result.bytes_read;
+        scanned += result.lines_scanned;
+        eof = result.reached_eof;
+        if (result.line_count == 0) {
+            hold_log_filter_result_free(&result);
+            break;
+        }
+        matches += result.match_count;
+        visible += result.line_count;
+        int rc = print_view_result(&result, false);
+        off = result.next_offset;
+        hold_log_filter_result_free(&result);
+        if (rc != 0) return rc;
+    }
+    if (debug_stats) {
+        fprintf(stderr,
+                "hold logs viewer: bytes_read=%zu lines_scanned=%zu matches=%zu visible=%zu eof=%s\n",
+                bytes, scanned, matches, visible, eof ? "yes" : "no");
+    }
+    return 0;
+}
+
 struct interactive_view_liveness {
     const struct hold_run_record *record;
     const char *record_dir;
@@ -751,6 +806,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
     struct hold_log_filter_options opts;
     hold_log_filter_options_init(&opts);
     bool debug_stats = false;
+    bool have_limit = false;
     bool force_plain = false;
     bool force_interactive = false;
     bool follow = false;
@@ -774,12 +830,14 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
                 return 5;
             }
             opts.visible_capacity = opts.max_results;
+            have_limit = true;
         } else if (!strncmp(argv[i], "--tail=", 7)) {
             if (!parse_view_limit(argv[i] + 7, &opts.max_results)) {
                 fprintf(stderr, "hold: error: invalid log line limit\n");
                 return 5;
             }
             opts.visible_capacity = opts.max_results;
+            have_limit = true;
         } else if (!strcmp(argv[i], "--debug-stats")) {
             debug_stats = true;
         } else if (!strcmp(argv[i], "--plain") || !strcmp(argv[i], "--print") || !strcmp(argv[i], "-p")) {
@@ -887,17 +945,35 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         char boot[128] = {0};
         bool have_boot = hold_current_boot_id(boot, sizeof(boot));
         enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
-        rc = stream_view_follow_until_exit(fd, &r, &opts, st == STATE_RUNNING, st == STATE_RUNNING, debug_stats);
-    } else {
-        struct hold_log_filter_result result;
-        if (hold_log_filter_fd(fd, &opts, &result) != 0) {
+        if (have_limit) {
+            off_t resume = 0;
+            if (view_backward_last_n(fd, &opts, false, &resume) != 0 ||
+                lseek(fd, resume, SEEK_SET) < 0) {
+                close(fd);
+                hold_free_run_record(&r);
+                free(targets);
+                hold_die_errno("hold: failed while filtering log");
+            }
+            rc = stream_view_follow_until_exit(fd, &r, &opts, false, st == STATE_RUNNING, debug_stats);
+        } else {
+            rc = stream_view_follow_until_exit(fd, &r, &opts, st == STATE_RUNNING, st == STATE_RUNNING, debug_stats);
+        }
+    } else if (have_limit) {
+        if (view_backward_last_n(fd, &opts, debug_stats, NULL) != 0) {
             close(fd);
             hold_free_run_record(&r);
             free(targets);
             hold_die_errno("hold: failed while filtering log");
         }
-        rc = print_view_result(&result, debug_stats);
-        hold_log_filter_result_free(&result);
+        rc = 0;
+    } else {
+        if (view_forward_full(fd, &opts, debug_stats) != 0) {
+            close(fd);
+            hold_free_run_record(&r);
+            free(targets);
+            hold_die_errno("hold: failed while filtering log");
+        }
+        rc = 0;
     }
     close(fd);
     hold_free_run_record(&r);
