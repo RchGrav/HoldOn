@@ -64,6 +64,8 @@ from it.
   group. A recycled PID is never knowingly signaled.
 - Records are trusted only after validation; corrupt records are reported
   (and swept by purge), never silently obeyed.
+- Purge removes only store-resident artifacts derived from the call id;
+  paths stored in records are never followed for deletion.
 - stdout carries machine data; human notes go to stderr; `--quiet`
   silences them.
 - Hold never elevates on a user's behalf, with one deliberate exception:

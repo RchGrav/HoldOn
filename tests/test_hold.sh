@@ -3649,6 +3649,30 @@ test_docker_restart_policy_restarts_failures() {
   "$HOLD_BIN" stop "$id" >/dev/null 2>&1 || true
 }
 
+test_purge_never_follows_stored_paths() {
+  local out id store json victim
+  store="$HOME/.local/state/hold"
+  victim="$TEST_ROOT/victim.file"
+  printf 'victim' >"$victim"
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo x' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  record_ended_soon "$id" || return 1
+  json=$(record_path "$id" "$store") || return 1
+  local full log
+  full=$(basename "$json" .json)
+  log="$store/$full.log"
+  [ -f "$log" ] || return 1
+  # Point the record's log_path at an innocent file; purge must derive its
+  # unlink targets from the layout and warn, never follow the stored string.
+  sed -i "s|\"log_path\": \"[^\"]*\"|\"log_path\": \"$victim\"|" "$json"
+  "$HOLD_BIN" purge "$id" >/dev/null 2>"$TEST_ROOT/purge-derive.err" || { cat "$TEST_ROOT/purge-derive.err" >&2; return 1; }
+  [ -f "$victim" ] || { echo "purge followed a stored path and deleted the victim" >&2; return 1; }
+  [ ! -f "$log" ] || { echo "purge left the store-resident log behind" >&2; return 1; }
+  [ ! -f "$log.idx" ] || { echo "purge left the log index sidecar behind" >&2; return 1; }
+  grep -q 'outside the store; left untouched' "$TEST_ROOT/purge-derive.err" || { cat "$TEST_ROOT/purge-derive.err" >&2; return 1; }
+}
+
 test_usage_errors_go_to_stderr_and_help_names_both_views() {
   local rc out err
   set +e
@@ -4374,6 +4398,7 @@ run_test "bare foreground streams output; -d detaches with a 64-hex id" test_doc
 run_test "Docker run foreground follows output by default" test_docker_run_foreground_follows_output_by_default
 run_test "unsupported Docker-shaped options fail loudly" test_docker_unsupported_options_fail_loudly
 run_test "Docker restart policy restarts failed processes" test_docker_restart_policy_restarts_failures
+run_test "purge never follows stored paths" test_purge_never_follows_stored_paths
 run_test "usage errors go to stderr; help names both views" test_usage_errors_go_to_stderr_and_help_names_both_views
 run_test "crash-leftover temp does not block record rewrites" test_crash_leftover_tmp_does_not_block_rewrites
 run_test "purge sweep respects the creation reserve" test_purge_sweep_respects_creation_reserve
