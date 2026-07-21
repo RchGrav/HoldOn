@@ -29,8 +29,52 @@ TEMPO is now a real engine at /home/rich/tempo (worklog 07-06: 72 tests,
 tempo run CLI, hash-chained ledger); Rich hinted the reconciliation may be
 its first real workout. tempo/ and .tempo/ are gitignored in this repo.
 
+**Open-decision registry (2026-07-21) — everything blocked on Rich, one
+place, each with a recommended disposition (approve or overrule):**
+
+1. Reconciliation lead lineage — (a) above.
+   **Recommend: ed2e316 leads; cherry-pick tempo-refinement onto it.**
+   ed2e316 is newer, sits on current main, and its schema/macOS/race work
+   spans 41 files; the branch's unique wins (restart exit recording,
+   foreground exit status, env-as-recipe, crash-safe temps, purge
+   layout-derivation, log -n) are small, self-contained commits that
+   cherry-pick cleanly. The +436 viewer navigation is additive in files
+   ed2e316 barely touched. Replaying the campaign onto a three-week-old
+   base is the strictly harder merge.
+2. "The code is the contract" docs verdict — (b) above.
+   **Recommend: reject the deletion; docs stay.** Design principle 4 says
+   the design documents are *binding* — the viewer spec IS the acceptance
+   checklist; §10 says docs are load-bearing and probe-verified. The
+   branch's real complaint is drift, and the fix for drift is the
+   claims-vs-tree verification pass (now standing), not deleting the
+   contract. Salvage: prune any file that merely restates code, case by
+   case.
+3. WO-5 zap visibility + un-zap (§5).
+   **Recommend: honor the spec both times — quiet chrome, Ctrl-R-only.**
+   The binding spec bans counters (:294); a cue is cheap to add after
+   real-usage confusion, impossible to remove cleanly once shipped.
+   Stepwise un-zap spends novelty budget on mechanics (principle 3);
+   revisit only if usage demands it.
+4. WO-9 foreground Ctrl-C semantics (§6b).
+   **Recommend: (a) announce-and-detach** — detach-on-interrupt IS the
+   brand promise; one stderr line closes the honesty gap; honoring
+   Ctrl-P Ctrl-Q in foreground gives Docker muscle-memory its exit.
+   Option (b) makes bare `hold` kill things — the opposite of the name.
+5. WO-6 rewind repaint (§6).
+   **Recommend: replay-from-nearest-clear**, re-emit-from-start as the
+   no-clear-found fallback — this is already how WO-10's term/vt
+   reconstructs screens, so the decision falls out of the architecture;
+   deciding otherwise would build a second mechanism.
+6. Untracked `.agentic/hold-amalgamation-*` artifacts.
+   **Recommend: delete.** Generated views, 12.8k lines, stale on the next
+   refactor; the audit doc already records everything they proved.
+
+Everything else in this document is either decided or mechanical.
+
 Source: full-codebase deep dive (runtime, console, store/core/platform, CLI/tests/build)
 plus design discussion with Rich. This document is the tracker; strike items as they land.
+Code `file:line` citations are as of ed2e316 unless a section says otherwise —
+re-grep before trusting one after further refactors.
 
 ## 0. Intent (read first, this governs every item below)
 
@@ -94,38 +138,42 @@ cut. Measured (C src+headers, excluding `include/hold/names/` word lists):
 | v0.3.9 (pre-expansion) | 9,021 |
 | v0.4.0 (bloom) | 21,539 |
 | v0.5.0 (the cut) | 14,309 |
-| HEAD | 14,672 and creeping |
+| 0.6.x pre-campaign | 14,672 |
+| HEAD after ed2e316 (measured 2026-07-21) | 13,517 |
 
 Confirmed dead/cruft, remove:
 
-- [ ] `--cap-add` / `--cap-drop`: parsed, threaded to record metadata, **acts on
-      nothing** (the grants subsystem that would have used it is deleted).
-      Violates the parity contract's own rule ("rejected, never faked").
-      Either honestly reject like `-p`/`-v`, or delete the plumbing:
-      parser in `src/cli_main.c`, record fields `cap_add`/`cap_drop`
-      (`src/store/record.c`, `include/hold/types.h`), start-option threading
-      (`src/runtime/start.c`), and the root-capability tests that pin the
-      projection. Decision: **delete** (Rich: "clearly cruft").
-- [ ] `hold_gen_id_for_store` (`src/store/layout.c:204`, decl `store.h:14`):
-      random-ID generator, zero callers. Live ID paths are hash-based
-      (`reserve_hashed_run_id` `start.c:197`, `shell_hashed_adopt_id`
-      `shell.c:347`). Delete function + declaration.
-- [ ] `hold_sha256_file_hex` (`include/hold/core.h:68`): declared, defined
-      nowhere. Profile-era vestige. Delete.
-- [ ] **Caller-less-function audit** — RAN 2026-07-20 (nm over obj/, grep for
-      call sites). Dead externals: `hold_chown_root_if_root`,
-      `hold_cli_command_is_public`, `hold_format_relative_age`,
-      `hold_fsync_dir_path`, `hold_gen_id_for_store`,
-      `hold_json_get_args_alloc`, `hold_open_unique_temp`,
-      `hold_valid_target_atom`, `hold_write_json_log_bytes_fd`,
-      `hold_write_json_log_entry_fd` (~300 lines with their helpers).
-- [ ] **Legacy JSON-lines log path** (~300): writers are dead code already;
-      remove the transparent decode in filter.c/signal.c/logging.c too.
-      Cost: release-note that pre-0.5 logs read as plain text.
-- [ ] **Single-schema records** (~450): stop writing Docker PascalCase AND
-      native snake_case in parallel; keep the Docker-inspect shape (it is the
-      documented `inspect` output), drop the dual-fallback reader.
-- [ ] **Consolidation tier** (~1,000–1,500): shell.c background logger vs
+- [x] `--cap-add` / `--cap-drop` — **LANDED ed2e316**, both halves of the
+      either/or: plumbing deleted (parser, record fields, start-option
+      threading, projection tests) AND the flags now honestly rejected with
+      a capsh/systemd-run pointer. Decision was Rich's: "clearly cruft"
+      (grants-era; a user runs sudo).
+- [x] `hold_gen_id_for_store` — deleted in ed2e316. Live ID paths remain
+      hash-based (`reserve_hashed_run_id`, `shell_hashed_adopt_id`).
+- [x] `hold_sha256_file_hex` — deleted in ed2e316.
+- [x] **Caller-less-function audit** — RAN 2026-07-20; all listed dead
+      externals removed in ed2e316 (17 symbols total including
+      late-orphaned `hold_rand_bytes`; ledger in
+      `.agentic/audit-2026-07-20.md`).
+- [x] **Legacy JSON-lines log path** — removed in ed2e316 (writers +
+      transparent decode in filter.c/signal.c/logging.c). Release note
+      still owed: pre-0.5 logs now read as plain text.
+- [x] **Single-schema records** — landed in ed2e316, but the decision
+      **inverted** from this item's original wording: Rich ruled later the
+      same day that the *native snake_case* schema is the one format and
+      the Docker shape goes ("it doesn't need to retain the docker shape,
+      just these cli commands"). Docker parity is CLI-surface only; the
+      one storage invariant kept is the public/private projection split
+      (ports visible, cmdline/env/owner never public). Pre-0.7 records
+      rely on a read shim for `Saved` — upgrade-fixture test recommended.
+- [ ] **Consolidation tier** (~1,000–1,500) — PARTIAL in ed2e316:
+      `sweep_orphaned_artifacts` (3 sweep blocks), `protect_record_action`
+      (save/rename fusion), `write_str_field` (8 has_* blocks),
+      `parse_id_number_env`, shell.c's duplicate proc-ids reader. Mapped
+      remainder (~1k, file:line maps in the audit doc): rollback ladder,
+      command dispatch table, flag-triplet table, reader has_* table,
+      G1 logger pump, G2 record builders, prune.c extraction. Also from
+      the original list: shell.c background logger vs
       broker tee; adoption record-assembly vs start.c's; restart supervisor's
       duplicated spawn/env logic; list.c triple collectors / double printers;
       filter.c forward/backward engine overlap.
@@ -142,6 +190,11 @@ Confirmed dead/cruft, remove:
       ~1.8k intended viewer). Hunt copy-paste siblings, over-general helpers
       with one caller, and parser paths only the deleted verbs used.
 - [ ] Re-measure after each stage; record the number here.
+      2026-07-21 (post-ed2e316 + record.c split + consolidation tranche):
+      **13,517** (method: src+include \*.c/\*.h, excl. names word lists).
+      Campaign net −1,155 vs pre-campaign. Distance to the ~10k identity
+      budget: ~3.5k — the mapped consolidation/boilerplate tiers plus
+      whatever the tempo-refinement reconciliation absorbs.
 
 Acceptance: no symbol without a caller; no flag without behavior; line count
 moves meaningfully toward the identity budget; `make lint && make test` green.
@@ -153,8 +206,8 @@ pretend a match does not exist just because an early budget expired. It should
 remember continuation positions and continue."
 
 Current behavior: scan budget = `visible_rows × VIEWER_SCAN_BYTES_PER_ROW`,
-1 MiB floor (`src/viewer/tty.c:423-424`). On exhaustion `scan_limited` is set
-(`src/viewer/filter.c:265-266,316,375`) and the scan **stops silently** — the
+1 MiB floor (`src/viewer/tty.c:423`). On exhaustion `scan_limited` is set
+(`src/viewer/filter.c:255,306,364`) and the scan **stops silently** — the
 polished UI never surfaces it (only the frozen `render_legacy` debug view
 prints `" | partial"`, `tty.c:889`). Matches past the window are reported as
 nonexistent. Rich: "patently broken."
@@ -173,9 +226,14 @@ resume anchors and `reached_eof`; the viewer runs a 250 ms poll loop):
 - [ ] Test: match placed at the tail of a >100 MB log must appear; filter typed
       while scan is mid-file must restart discovery from the new query.
 
+**Sequencing note (2026-07-21):** origin/tempo-refinement carries +436
+lines of viewer interactive navigation (see RECONCILIATION, top). Land or
+reject that branch's viewer work *before* implementing WO-2/WO-3 fresh —
+otherwise the reconciliation becomes a three-way merge.
+
 ## 3. WO-3 — Viewer: navigation/selection feel (the "every editor" contract)
 
-Spec violations, all in `src/viewer/tty.c`:
+Spec violations, all in `src/viewer/tty.c` (same sequencing note as WO-2):
 
 - [ ] **Arrow at edge must scroll one line, not jump a page** (spec:192).
       Current: edge arrows call `page_up()`/`page_down()` (`tty.c:1171-1181`)
@@ -490,7 +548,14 @@ anywhere keys are read pre-raw-mode.
 
 ## Suggested order
 
-WO-2 (correctness; no term dependency) → WO-10 screen+keys (the substrate) →
+Status 2026-07-21: WO-1's confirmed-dead + schema stages are DONE
+(ed2e316); remaining WO-1 = consolidation/boilerplate tiers, interleaved
+as below. **Step zero is now the tempo-refinement reconciliation** — it
+front-runs WO-2/3 (viewer navigation), touches the same files as the
+remaining cut, and its behavior fixes (restart exit recording, foreground
+exit status, crash-safe temps) are cheap wins whichever lineage leads.
+
+Reconciliation → WO-2 (correctness; no term dependency) → WO-10 screen+keys (the substrate) →
 WO-3 (feel, on term/keys) → WO-4 (polish, on term/screen) → WO-1 (cut,
 interleaved as review passes — offsets WO-10's added mass) → WO-5 decisions →
 WO-7 reboot resume → WO-6 linear playback (needs no emulator) → WO-8 BSD

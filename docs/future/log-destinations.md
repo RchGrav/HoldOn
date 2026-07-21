@@ -44,7 +44,6 @@ The destination model should be additive:
 4. Preserve run metadata consistently across destinations:
    - full run ID and 12-hex display ID;
    - run name;
-   - profile name when present;
    - command display;
    - stream;
    - capture timestamp;
@@ -61,7 +60,6 @@ PRIORITY=6 for stdout, 3 for stderr
 HOLD_RUN_ID=<full 64 hex run id>
 HOLD_RUN_ID_SHORT=<first 12 hex>
 HOLD_RUN_NAME=<generated/requested run name>
-HOLD_PROFILE=<profile name or empty>
 HOLD_STREAM=stdout|stderr
 HOLD_COMMAND=<command display>
 SYSLOG_IDENTIFIER=hold
@@ -73,8 +71,8 @@ Journald timestamps are assigned by journald at receive time. Hold's sidecar ind
 
 ## Current code map
 
-- `src/runtime/start.c`: normal-run pipe setup, logger process, syslog mirror, restart-supervisor capture.
-- `src/core/logging.c`: raw log writer, HLOGIDX sidecar writer, and legacy JSON decoder fallback.
+- `src/runtime/start.c`: normal-run pipe setup, logger process, restart-supervisor capture.
+- `src/core/logging.c`: raw log writer and HLOGIDX sidecar writer.
 - `src/runtime/signal.c`: `hold logs`, follow, plain output, and viewer entry.
 - `src/viewer/filter.c`: filter/viewer reads retained log text; future viewer work should use HLOGIDX for random access.
 - `src/console/broker.c`: PTY broker logging and console replay.
