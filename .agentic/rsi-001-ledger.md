@@ -72,4 +72,15 @@ Row format — one per generation, appended by the generation's agent:
   surgery — a capacity-1 backward probe finds the record above visible[0],
   and the existing refill/continuation machinery then owns every edge case;
   verify key escape bytes (\x1b[5~ is PageUp) before predicting pty tests.
-- validator: (pending)
+- validator: CONFIRMED — fresh-context check: HEAD is 319468a and matches the
+  claim, tree clean, `make -B` rebuilds warning-free (pre-existing glibc
+  static-link note only), independent `make test` reproduced "summary: 148
+  passed, 0 failed, 0 skipped" exactly; test_log_view_arrow_at_edge_scrolls_
+  one_line exists, is registered, and is substantive (rows-6 pty asserts
+  003-006 present with 002/007 absent after edge Downs, and again after
+  PageDown + two Ups); the tty.c diff matches the row (scroll_line_up/down
+  replace the page_up/page_down fallthrough, capacity-1 backward probe with
+  1 MiB budget floor, sparse-filter fallback to page ops); the unverified
+  list is honest — no test covers the sparse-fallback or no-yank-at-EOF
+  paths, exactly as disclosed; loop-file amendment matches the fed-forward
+  lesson.
