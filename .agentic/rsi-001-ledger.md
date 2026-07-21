@@ -37,4 +37,10 @@ Row format — one per generation, appended by the generation's agent:
   (pre-existing engine behavior); >100 MB timing only reasoned, not measured.
 - lesson fed forward: judge scan budgets by bytes consumed, not bytes read —
   a chunk-granular stop silently dropped in-budget lines; trust the pty suite.
-- validator:
+- validator: CONFIRMED — fresh-context check: HEAD is 8cdf8bc, tree clean,
+  `make -B` rebuilds warning-free (pre-existing glibc static-link note only),
+  independent `make test` reproduced "summary: 147 passed, 0 failed, 0
+  skipped" exactly (147 registered tests, so the new pty test ran and
+  passed); test_log_view_filter_scan_continues_across_ticks exists and is
+  substantive (2.7 MB needle past budget, asserts partial -> hit -> EOF);
+  ledger row and loop amendment match the diff and disclose deviations.
