@@ -201,6 +201,15 @@ moves meaningfully toward the identity budget; `make lint && make test` green.
 
 ## 2. WO-2 — Viewer: filter must search the whole file (correctness bug)
 
+**STATUS 2026-07-21: core fix LANDED** by experiment rsi-001 gen 1 (8cdf8bc,
+validator-confirmed, 147/0): continuation across poll ticks via persisted
+anchors, silent scan_limited stop gone, needle-past-budget test pins it.
+Remaining: center-out discovery order (spec:297-315) and the typed-filter
+pinned-page tension recorded in the rsi-001 ledger. Gen 2 (319468a) landed
+the WO-3 edge-arrow fix (148/0); gen 4 (f9c74e2) landed selection-as-record-
+identity + spec:189-190 selector placement (149/0). Ledger:
+`.agentic/rsi-001-ledger.md`.
+
 **Spec violation.** viewer-fixes-before-0.5.md:317 — the engine "must not
 pretend a match does not exist just because an early budget expired. It should
 remember continuation positions and continue."
