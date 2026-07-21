@@ -44,3 +44,32 @@ Row format — one per generation, appended by the generation's agent:
   passed); test_log_view_filter_scan_continues_across_ticks exists and is
   substantive (2.7 MB needle past budget, asserts partial -> hit -> EOF);
   ledger row and loop amendment match the diff and disclose deviations.
+
+## gen 2 — this commit ("rsi-001 gen 2", hash unknowable pre-commit) — ACCEPTED
+- item: a — WO-3: arrow at screen edge scrolls one line, never a page jump
+- changed: tty.c handle_key_up/handle_key_down no longer fall through to
+  page_up/page_down at the edge; new scroll_line_down re-anchors the page at
+  visible[1] and clamps the cursor to the bottom row, scroll_line_up probes
+  backward (capacity 1) for the record above visible[0] and re-anchors forward
+  with the cursor on the top row. Guards: no scroll while continuation is
+  still filling the page, EOF is not a line, idempotent at the oldest edge
+  (arrow-up-to-top pty tests hold), sparse filters whose adjacent record sits
+  beyond the probe budget fall back to the page ops (their continuation owns
+  the hunt). Side effect: arrow-down at EOF in a followed browse no longer
+  yanks back to the live tail — Ctrl-End/PageDown stay the follow-resume
+  paths, per spec:165-167.
+- evidence: "summary: 148 passed, 0 failed, 0 skipped" (baseline 147 + new
+  test); new test test_log_view_arrow_at_edge_scrolls_one_line (rows-6 pty:
+  five Downs land page 003-006 with 002/007 absent; PageDown then two Ups
+  land 003-006, not a history pop to 001-004); make lint clean; version and
+  installer scripts re-run green standalone; manual pty smokes of both
+  directions showed frame-by-frame one-line movement.
+- unverified: the sparse-filter fallback path (empty probe past the 1 MiB
+  budget) has no test; PageUp right after arrow-scrolling in forward mode
+  still follows the pre-existing history model (empty history jumps to top);
+  the no-yank-at-EOF side effect is asserted by no dedicated test.
+- lesson fed forward: scroll = re-anchor + refill, never manual cache
+  surgery — a capacity-1 backward probe finds the record above visible[0],
+  and the existing refill/continuation machinery then owns every edge case;
+  verify key escape bytes (\x1b[5~ is PageUp) before predicting pty tests.
+- validator: (pending)

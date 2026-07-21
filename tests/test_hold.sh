@@ -1095,6 +1095,64 @@ test_log_view_filter_scan_continues_across_ticks() {
   grep -q 'filter: deep-needle | EOF' "$TEST_ROOT/view-scan-continues.out" || { cat "$TEST_ROOT/view-scan-continues.out" >&2; return 1; }
 }
 
+# WO-3 (spec:192): an arrow key at the screen edge scrolls the viewport one
+# line in that direction — never a page jump.
+test_log_view_arrow_at_edge_scrolls_one_line() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'for i in $(seq 1 45); do printf "edge-line-%03d\n" "$i"; done; sleep 0.1' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.4
+  # Down to the bottom edge (3x), then two more Downs: each must scroll one
+  # line (rows 6 => 4 body rows: page 001-004 becomes 002-005, then 003-006).
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[B" * 5); out.flush(); time.sleep(0.3); out.write(b"\x1b"); out.flush(); time.sleep(0.1)' |
+    pty_run "stty rows 6 cols 120; $HOLD_BIN __view $id --interactive --debug-stats" >"$TEST_ROOT/view-edge-down.out" 2>"$TEST_ROOT/view-edge-down.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-edge-down.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-edge-down.out" <<'PY' || { cat "$TEST_ROOT/view-edge-down.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+frames = plain.split('hold logs ')
+if len(frames) < 2:
+    raise SystemExit('viewer header never rendered')
+final = frames[-1]
+for wanted in ('edge-line-003', 'edge-line-004', 'edge-line-005', 'edge-line-006'):
+    if wanted not in final:
+        raise SystemExit(f'down-arrow at edge lost {wanted}: expected the one-line-scrolled page 003-006')
+for unwanted in ('edge-line-002', 'edge-line-007'):
+    if unwanted in final:
+        raise SystemExit(f'down-arrow at edge rendered {unwanted}: viewport page-jumped instead of scrolling one line')
+PY
+  # PageDown to page 005-008, then two Ups from the top edge: each must
+  # scroll one line up (page 004-007, then 003-006), not pop a whole page.
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[6~"); out.flush(); time.sleep(0.2); out.write(b"\x1b[A\x1b[A"); out.flush(); time.sleep(0.3); out.write(b"\x1b"); out.flush(); time.sleep(0.1)' |
+    pty_run "stty rows 6 cols 120; $HOLD_BIN __view $id --interactive --debug-stats" >"$TEST_ROOT/view-edge-up.out" 2>"$TEST_ROOT/view-edge-up.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-edge-up.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-edge-up.out" <<'PY' || { cat "$TEST_ROOT/view-edge-up.out" >&2; return 1; }
+import re, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
+frames = plain.split('hold logs ')
+if len(frames) < 2:
+    raise SystemExit('viewer header never rendered')
+final = frames[-1]
+for wanted in ('edge-line-003', 'edge-line-004', 'edge-line-005', 'edge-line-006'):
+    if wanted not in final:
+        raise SystemExit(f'up-arrow at edge lost {wanted}: expected the one-line-scrolled page 003-006')
+for unwanted in ('edge-line-002', 'edge-line-007'):
+    if unwanted in final:
+        raise SystemExit(f'up-arrow at edge rendered {unwanted}: viewport page-jumped instead of scrolling one line')
+PY
+}
+
 test_log_view_follow_pages_filtered_windows() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
@@ -4360,6 +4418,7 @@ run_test "log viewer renders polished header footer timestamp and source chrome"
 run_test "log viewer space excludes similar lines and Ctrl-R resets filters" test_log_viewer_space_excludes_and_ctrl_r_resets_filters
 run_test "internal viewer selection movement uses cached filter rows" test_log_view_selection_uses_cached_rows
 run_test "internal viewer filter scan continues across ticks to a deep match" test_log_view_filter_scan_continues_across_ticks
+run_test "internal viewer arrow at screen edge scrolls one line not a page" test_log_view_arrow_at_edge_scrolls_one_line
 run_test "internal viewer follow pages older and newer filtered windows" test_log_view_follow_pages_filtered_windows
 run_test "internal viewer follow page-up stays at the first log page" test_log_view_follow_page_up_stays_at_start
 run_test "internal viewer follow oldest page does not wrap back to tail" test_log_view_follow_oldest_page_does_not_wrap_to_tail

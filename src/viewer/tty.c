@@ -1326,13 +1326,77 @@ static void page_up(struct viewer_state *state) {
     cache_invalidate(state);
 }
 
+/*
+ * WO-3 (spec:192): an arrow at the screen edge scrolls the viewport one line
+ * in that direction — never a page lurch. Both scrolls re-anchor the page one
+ * record over and refill, so the ordinary refill/continuation machinery keeps
+ * owning cache state. Only when the adjacent record is unknown (a sparse
+ * filter whose next match sits beyond the probe budget) do they fall back to
+ * the page operations, which already know how to hunt via idle-tick
+ * continuation.
+ */
+static void scroll_line_down(struct viewer_state *state) {
+    if (state->visible_count < 2) {
+        page_down(state);
+        return;
+    }
+    /* Rows below this page are still being discovered; let the ticks land. */
+    if (continuation_pending(state)) return;
+    if (state->cache_reached_eof) return; /* EOF is not a line */
+    off_t end = state->follow ? state->tail_anchor : lseek(state->fd, 0, SEEK_END);
+    if (end >= 0 && state->next_offset >= end) return;
+    clear_local_scan_limit(state);
+    state->scan_mode = VIEWER_SCAN_FORWARD;
+    state->start_offset = state->visible[1].offset;
+    state->at_live_edge = false;
+    /* Past any refill count: cache_load_result clamps to the bottom row. */
+    state->selected = viewer_body_rows(state);
+    cache_invalidate(state);
+}
+
+static void scroll_line_up(struct viewer_state *state) {
+    if (state->visible_count == 0) {
+        page_up(state);
+        return;
+    }
+    clear_local_scan_limit(state);
+    enter_browsing_mode(state, false);
+    if (state->at_oldest_edge || state->visible[0].offset <= 0) return;
+    struct hold_log_filter_options opts;
+    configure_filter_opts(state, &opts);
+    opts.visible_capacity = 1;
+    opts.max_results = 1;
+    opts.match_ring_capacity = 1;
+    size_t budget = viewer_body_rows(state) * VIEWER_SCAN_BYTES_PER_ROW;
+    if (budget < 1024u * 1024u) budget = 1024u * 1024u;
+    struct hold_log_filter_result probe;
+    if (hold_log_filter_backward_fd(state->fd, &opts, state->visible[0].offset, budget, &probe) != 0) return;
+    bool found = probe.line_count > 0;
+    bool limited = probe.scan_limited;
+    off_t prev_record = found ? probe.line_offsets[0] : 0;
+    hold_log_filter_result_free(&probe);
+    if (!found) {
+        if (limited) {
+            page_up(state); /* sparse filter: the page refill + continuation own the hunt */
+        } else {
+            state->at_oldest_edge = true; /* whole span above scanned; nothing visible up there */
+        }
+        return;
+    }
+    state->scan_mode = VIEWER_SCAN_FORWARD;
+    state->start_offset = prev_record;
+    state->at_live_edge = false;
+    state->selected = 0;
+    cache_invalidate(state);
+}
+
 static void handle_key_down(struct viewer_state *state) {
     if (state->follow && state->at_live_edge) return; /* nothing below the tail */
     if (state->selected + 1 < state->visible_count) {
         enter_browsing_mode(state, true);
         state->selected++;
     } else {
-        page_down(state);
+        scroll_line_down(state);
     }
 }
 
@@ -1346,7 +1410,7 @@ static void handle_key_up(struct viewer_state *state) {
         enter_browsing_mode(state, true);
         state->selected--;
     } else {
-        page_up(state);
+        scroll_line_up(state);
     }
 }
 
