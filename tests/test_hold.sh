@@ -1070,6 +1070,31 @@ test_log_view_selection_uses_cached_rows() {
   [ "$max_gen" -le 7 ] || { echo "scan_gen advanced during selection movement: $max_gen" >&2; cat "$TEST_ROOT/view-cache-selection.out" >&2; return 1; }
 }
 
+# WO-2: a budget-limited filter scan must keep going across idle poll ticks
+# until it finds the match or exhausts the file — never silently stop.
+test_log_view_filter_scan_continues_across_ticks() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  # ~2.7 MB of noise, then the needle: far past the initial per-page scan
+  # budget (visible_rows x 64 KiB), so only continuation can reach it.
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'yes noise-filler-abcdefghijklmnopqrstuvwxyz | head -n 80000; echo deep-needle-hit' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 1.0
+  set +e
+  python3 -c 'import sys,time; time.sleep(1.5); sys.stdout.write("\x1b"); sys.stdout.flush(); time.sleep(0.1)' |
+    pty_run "stty rows 6 cols 120; $HOLD_BIN __view $id --interactive --filter deep-needle --debug-stats" >"$TEST_ROOT/view-scan-continues.out" 2>"$TEST_ROOT/view-scan-continues.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-scan-continues.err" >&2; return 1; }
+  # The first frame is honest about being budget-limited...
+  grep -q 'filter: deep-needle | partial' "$TEST_ROOT/view-scan-continues.out" || { cat "$TEST_ROOT/view-scan-continues.out" >&2; return 1; }
+  # ...then idle-tick continuation finds the deep match and reaches EOF.
+  grep -q 'deep-needle-hit' "$TEST_ROOT/view-scan-continues.out" || { cat "$TEST_ROOT/view-scan-continues.out" >&2; return 1; }
+  grep -q 'filter: deep-needle | EOF' "$TEST_ROOT/view-scan-continues.out" || { cat "$TEST_ROOT/view-scan-continues.out" >&2; return 1; }
+}
+
 test_log_view_follow_pages_filtered_windows() {
   command -v script >/dev/null 2>&1 || skip "script not available"
   command -v python3 >/dev/null 2>&1 || skip "python3 not available"
@@ -4334,6 +4359,7 @@ run_test "internal viewer follow filters dynamically from typed TTY input" test_
 run_test "log viewer renders polished header footer timestamp and source chrome" test_log_viewer_integrated_chrome_help_and_info
 run_test "log viewer space excludes similar lines and Ctrl-R resets filters" test_log_viewer_space_excludes_and_ctrl_r_resets_filters
 run_test "internal viewer selection movement uses cached filter rows" test_log_view_selection_uses_cached_rows
+run_test "internal viewer filter scan continues across ticks to a deep match" test_log_view_filter_scan_continues_across_ticks
 run_test "internal viewer follow pages older and newer filtered windows" test_log_view_follow_pages_filtered_windows
 run_test "internal viewer follow page-up stays at the first log page" test_log_view_follow_page_up_stays_at_start
 run_test "internal viewer follow oldest page does not wrap back to tail" test_log_view_follow_oldest_page_does_not_wrap_to_tail

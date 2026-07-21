@@ -92,6 +92,7 @@ struct viewer_state {
     off_t newer_floor_offset;
     bool local_scan_limit_active;
     off_t local_scan_limit_end;
+    bool cache_local_limited;
     size_t cache_bytes_read;
     size_t cache_lines_scanned;
     size_t cache_match_count;
@@ -118,6 +119,12 @@ struct viewer_state {
  * browsed-away notification. When the user browses away, each follow tick scans
  * a bounded appended slice and advances `newer_scan_offset`; sparse matches in
  * large bursts are therefore deferred, not skipped.
+ *
+ * A budget-limited page is a slice, not an answer: while the viewport is
+ * unfilled and this page's boundary is unexplored, idle poll ticks resume the
+ * scan from `next_offset` (forward) or `prev_offset` (backward) until the
+ * page fills or the boundary is exhausted. The scan budget bounds per-tick
+ * latency, never total coverage.
  */
 
 struct raw_terminal {
@@ -310,6 +317,7 @@ static void cache_clear(struct viewer_state *state) {
     state->next_offset = state->start_offset;
     state->cache_scan_limited = false;
     state->cache_reached_eof = false;
+    state->cache_local_limited = false;
     state->cache_bytes_read = 0;
     state->cache_lines_scanned = 0;
     state->cache_match_count = 0;
@@ -626,6 +634,7 @@ static int refill_cache(struct viewer_state *state) {
     configure_filter_opts(state, &opts);
     size_t visible_rows = viewer_body_rows(state);
     size_t scan_budget = visible_rows * VIEWER_SCAN_BYTES_PER_ROW;
+    bool local_capped = false;
     struct hold_log_filter_result result;
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         if (state->follow && state->at_live_edge) {
@@ -667,6 +676,7 @@ static int refill_cache(struct viewer_state *state) {
             off_t local_budget = state->local_scan_limit_end - state->start_offset;
             if (local_budget > 0 && (uintmax_t)local_budget < (uintmax_t)opts.scan_byte_budget) {
                 opts.scan_byte_budget = (size_t)local_budget;
+                local_capped = true;
             }
         }
         if (lseek(state->fd, state->start_offset, SEEK_SET) < 0) return -1;
@@ -675,7 +685,104 @@ static int refill_cache(struct viewer_state *state) {
     clear_local_scan_limit(state);
     int rc = cache_load_result(state, &result, visible_rows);
     hold_log_filter_result_free(&result);
+    if (rc == 0) state->cache_local_limited = local_capped;
     return rc;
+}
+
+/*
+ * WO-2: the engine must never pretend a match does not exist because a budget
+ * expired. A page whose scan was budget-limited keeps scanning in idle-tick
+ * slices until the viewport is satisfied or the page's file boundary is
+ * exhausted. Pages deliberately pinned to a byte range (cache_local_limited)
+ * stay as scanned: their truncation is intent, not a budget accident.
+ */
+static bool continuation_pending(const struct viewer_state *state) {
+    return state->cache_valid && state->cache_scan_limited &&
+           !state->cache_local_limited &&
+           state->visible_count < viewer_body_rows(state);
+}
+
+static int continue_scan_tick(struct viewer_state *state) {
+    size_t body_rows = viewer_body_rows(state);
+    size_t room = body_rows - state->visible_count;
+    struct hold_log_filter_options opts;
+    configure_filter_opts(state, &opts);
+    opts.visible_capacity = room;
+    opts.max_results = room;
+    size_t budget = body_rows * VIEWER_SCAN_BYTES_PER_ROW;
+    if (budget < 1024u * 1024u) budget = 1024u * 1024u;
+    bool was_limited = state->cache_scan_limited;
+    bool changed = false;
+    struct hold_log_filter_result result;
+    if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
+        off_t anchor = state->prev_offset;
+        if (anchor <= 0) {
+            state->cache_scan_limited = false;
+            return 1;
+        }
+        if (hold_log_filter_backward_fd(state->fd, &opts, anchor, budget, &result) != 0) return -1;
+        size_t add = result.line_count;
+        if (add > 0) {
+            if (cache_ensure_capacity(state, state->visible_count + add) != 0) {
+                hold_log_filter_result_free(&result);
+                return -1;
+            }
+            memmove(state->visible + add, state->visible, state->visible_count * sizeof(*state->visible));
+            for (size_t i = 0; i < add; i++) {
+                char *copy = strdup(result.lines[i]);
+                if (!copy) {
+                    for (size_t j = 0; j < i; j++) free(state->visible[j].line);
+                    memmove(state->visible, state->visible + add, state->visible_count * sizeof(*state->visible));
+                    hold_log_filter_result_free(&result);
+                    return -1;
+                }
+                state->visible[i].line = copy;
+                state->visible[i].offset = result.line_offsets[i];
+            }
+            state->visible_count += add;
+            /* Older rows arrive above: the cursor stays on the same record. */
+            if (state->visible_count > add && !(state->follow && state->at_live_edge)) state->selected += add;
+            changed = true;
+        }
+        state->prev_offset = result.prev_offset;
+        state->cache_scan_limited = result.scan_limited;
+        if (!result.scan_limited && result.match_count <= result.line_count) state->at_oldest_edge = true;
+    } else {
+        if (state->cache_reached_eof) {
+            state->cache_scan_limited = false;
+            return 1;
+        }
+        if (lseek(state->fd, state->next_offset, SEEK_SET) < 0) return -1;
+        opts.scan_byte_budget = budget;
+        if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
+        size_t add = result.line_count;
+        if (add > 0) {
+            if (cache_ensure_capacity(state, state->visible_count + add) != 0) {
+                hold_log_filter_result_free(&result);
+                return -1;
+            }
+            for (size_t i = 0; i < add; i++) {
+                char *copy = strdup(result.lines[i]);
+                if (!copy) {
+                    hold_log_filter_result_free(&result);
+                    return -1;
+                }
+                state->visible[state->visible_count].line = copy;
+                state->visible[state->visible_count].offset = result.line_offsets[i];
+                state->visible_count++;
+            }
+            changed = true;
+        }
+        if (result.next_offset > state->next_offset) state->next_offset = result.next_offset;
+        state->cache_scan_limited = result.scan_limited;
+        state->cache_reached_eof = result.reached_eof;
+    }
+    state->cache_bytes_read += result.bytes_read;
+    state->cache_lines_scanned += result.lines_scanned;
+    state->cache_match_count += result.match_count;
+    hold_log_filter_result_free(&result);
+    if (was_limited && !state->cache_scan_limited) changed = true;
+    return changed ? 1 : 0;
 }
 
 static const char *viewer_run_label(const struct viewer_state *state) {
@@ -1308,7 +1415,9 @@ int hold_log_viewer_tty_fd(int fd,
             printable = pending_printable;
             pending = VIEWER_KEY_NONE;
         } else {
-            key = read_key(&printable, 250);
+            /* A pending continuation shortens the idle tick: scanning keeps
+             * its throughput while any keypress still lands instantly. */
+            key = read_key(&printable, continuation_pending(&state) ? 10 : 250);
         }
         if (key == VIEWER_KEY_NONE) {
             if (refresh_terminal_size(&state)) need_render = true;
@@ -1319,6 +1428,14 @@ int hold_log_viewer_tty_fd(int fd,
                     break;
                 }
                 if (tick > 0) need_render = true;
+            }
+            if (continuation_pending(&state)) {
+                int cont = continue_scan_tick(&state);
+                if (cont < 0) {
+                    rc = -1;
+                    break;
+                }
+                if (cont > 0) need_render = true;
             }
             continue;
         }

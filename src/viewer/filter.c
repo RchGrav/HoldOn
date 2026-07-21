@@ -252,11 +252,17 @@ int hold_log_filter_fd(int fd,
         size_t read_cap = sizeof(read_buf);
         if (opts.scan_byte_budget > 0) {
             if (result->bytes_read >= opts.scan_byte_budget) {
-                result->scan_limited = true;
-                break;
+                if (line_len == 0) {
+                    result->scan_limited = true;
+                    break;
+                }
+                /* Budget expired mid-line: finish the current record so
+                 * next_offset stays a record boundary a resumed scan can
+                 * trust — never a fragment that could hide a match. */
+            } else {
+                size_t remaining_budget = opts.scan_byte_budget - result->bytes_read;
+                if (remaining_budget < read_cap) read_cap = remaining_budget;
             }
-            size_t remaining_budget = opts.scan_byte_budget - result->bytes_read;
-            if (remaining_budget < read_cap) read_cap = remaining_budget;
         }
         ssize_t nr = read(fd, read_buf, read_cap);
         if (nr == 0) {
@@ -281,6 +287,7 @@ int hold_log_filter_fd(int fd,
             return -1;
         }
         result->bytes_read += (size_t)nr;
+        size_t chunk_base = result->bytes_read - (size_t)nr;
         for (ssize_t i = 0; i < nr; i++) {
             char c = read_buf[i];
             if (line_len + 2 > line_cap) {
@@ -300,12 +307,15 @@ int hold_log_filter_fd(int fd,
                 line_offset = next_offset;
                 result->next_offset = next_offset;
                 if (done) break;
+                /* The budget is judged by bytes consumed, not bytes read:
+                 * the tail of an already-read chunk still belongs to this
+                 * slice until the budget boundary itself is crossed. */
+                if (opts.scan_byte_budget > 0 && chunk_base + (size_t)i + 1 >= opts.scan_byte_budget) {
+                    result->scan_limited = true;
+                    done = true;
+                    break;
+                }
             }
-        }
-        if (opts.scan_byte_budget > 0 && result->bytes_read >= opts.scan_byte_budget && !done) {
-            result->scan_limited = true;
-            if (next_offset > result->next_offset) result->next_offset = next_offset;
-            break;
         }
     }
     if (result->next_offset == 0) result->next_offset = next_offset;

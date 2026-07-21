@@ -14,7 +14,7 @@ Hard cap: this file stays under 120 lines; compress before appending.
    `src/viewer/`.
 2. Pick the single highest-leverage unfinished item from the priority list
    below. One coherent improvement per generation — no drive-by fixes.
-3. Implement it. `make && make test` must both pass (suite baseline: 146/0).
+3. Implement it. `make && make test` must both pass (suite baseline: 147/0).
    If red after honest effort, `git checkout -- .` the code changes, and
    record the failure as the generation's result — a recorded failure is a
    valid generation; a broken commit is not.
@@ -32,21 +32,27 @@ Hard cap: this file stays under 120 lines; compress before appending.
 - Never claim a test ran that didn't. The suite is the gate; 146/0 is the
   floor, and new behavior deserves a new test pinning it.
 
-## Priorities (GEN-0 seed — reorder with reasons as generations learn)
+## Priorities (GEN-1 reorder — WO-2 continuation core landed, feel items lead)
 
-a. WO-2: filter must search the whole file. Budget bounds per-tick latency,
-   not coverage: persist continuation offsets (`next_offset`/`prev_offset`
-   plumbing exists), keep scanning across the 250ms poll ticks until the
-   viewport is satisfied or both boundaries are exhausted. Kill the silent
-   `scan_limited` stop (filter.c:255,306,364). Spec: lines ~297-317.
-b. WO-3: arrow at screen edge scrolls one line, never a page jump
-   (tty.c edge arrows currently call page_up/page_down). Spec :192.
-c. WO-3: selection is record identity, not a row number — survives filter
+a. WO-3: arrow at screen edge scrolls one line, never a page jump —
+   handle_key_up/handle_key_down (tty.c) fall through to page_up/page_down
+   at the edge. Spec :192.
+b. WO-3: selection is record identity, not a row number — survives filter
    and wrap changes; on exclusion resolves to the row underneath, else
-   nearest previous. Kill the blanket `selected = 0` resets.
+   nearest previous. Kill the blanket `selected = 0` resets. Note gen 1
+   already shifts `selected` when backward continuation prepends rows.
+c. WO-2 remainder: discovery is anchor-out, not center-out (spec:297-315
+   wants R, R+1, R-1, ...). And a design tension to settle with Rich:
+   typing a filter while browsed away pins the page's byte range
+   (local_scan_limit), so those pages deliberately stay truncated —
+   continue_scan_tick skips cache_local_limited pages on purpose.
 d. WO-4: no full-screen clears on redraw; diff or line-addressed updates.
+   Continuation renders only on change, so scan ticks add no repaints.
 
 ## Lessons (newest first, one line each)
 
+- GEN-1: judge scan budgets by bytes consumed, not bytes read — a
+  chunk-granular stop silently dropped in-budget lines, and only the
+  browsed-page-preserve pty test caught it; trust the pty suite over smokes.
 - GEN-0: the 247596d navigation rewrite just landed in tty.c — read the
   current code before trusting any line number in the work order.
