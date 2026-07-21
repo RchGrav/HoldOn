@@ -984,7 +984,9 @@ test_log_viewer_integrated_chrome_help_and_info() {
   set +e
   # Ctrl-T cycles timestamps to time; Ctrl-Y shows the source column; Ctrl-H
   # opens the centered help overlay; the next key dismisses it; Esc quits.
-  python3 -c 'import sys,time; o=sys.stdout.buffer; o.write(b"\x14\x19"); o.flush(); time.sleep(0.2); o.write(b"\x08"); o.flush(); time.sleep(0.2); o.write(b"\x1b"); o.flush(); time.sleep(0.1)' |
+  # Startup grace before the first byte, and a second Esc after a beat: on
+  # macOS the BSD script/pty startup can swallow the earliest bytes.
+  python3 -c 'import sys,time; o=sys.stdout.buffer; time.sleep(0.3); o.write(b"\x14\x19"); o.flush(); time.sleep(0.2); o.write(b"\x08"); o.flush(); time.sleep(0.2); o.write(b"\x1b"); o.flush(); time.sleep(0.2); o.write(b"\x1b"); o.flush(); time.sleep(0.1)' |
     pty_run "stty rows 24 cols 80; $HOLD_BIN logs $id --interactive" >"$TEST_ROOT/viewer-chrome.out" 2>"$TEST_ROOT/viewer-chrome.err"
   rc=$?
   set -e
@@ -3715,7 +3717,7 @@ test_purge_never_follows_stored_paths() {
   [ -f "$log" ] || return 1
   # Point the record's log_path at an innocent file; purge must derive its
   # unlink targets from the layout and warn, never follow the stored string.
-  sed -i "s|\"log_path\": \"[^\"]*\"|\"log_path\": \"$victim\"|" "$json"
+  sed -i.bak "s|\"log_path\": \"[^\"]*\"|\"log_path\": \"$victim\"|" "$json" && rm -f "$json.bak"
   "$HOLD_BIN" purge "$id" >/dev/null 2>"$TEST_ROOT/purge-derive.err" || { cat "$TEST_ROOT/purge-derive.err" >&2; return 1; }
   [ -f "$victim" ] || { echo "purge followed a stored path and deleted the victim" >&2; return 1; }
   [ ! -f "$log" ] || { echo "purge left the store-resident log behind" >&2; return 1; }
@@ -3802,7 +3804,7 @@ test_docker_foreground_propagates_exit_code() {
   rc=$?
   set -e
   [ "$rc" -eq 5 ] || { echo "--rm foreground rc=$rc, want 5" >&2; return 1; }
-  "$HOLD_BIN" -- /bin/true >/dev/null 2>&1 || { echo "clean foreground exit not 0" >&2; return 1; }
+  "$HOLD_BIN" -- true >/dev/null 2>&1 || { echo "clean foreground exit not 0" >&2; return 1; }
 }
 
 test_restart_final_status_recorded() {
@@ -3836,7 +3838,7 @@ test_unwitnessed_death_renders_exited_unknown() {
   record=$(record_path "$id") || return 1
   pid=$(sed -n 's/.*"pid": \([0-9]*\).*/\1/p' "$record" | head -n1)
   [ -n "$pid" ] || { cat "$record" >&2; return 1; }
-  ppid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)
+  ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
   [ -n "$ppid" ] || return 1
   # Kill the waiter first so no final frame is ever written, then the call.
   kill -9 "$ppid" 2>/dev/null || true
