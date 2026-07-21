@@ -55,6 +55,10 @@ d. WO-3 leftover: when a sparse filter puts the adjacent record beyond the
 
 ## Lessons (newest first, one line each)
 
+- GEN-3 (REJECTED, work reverted): selector placement (:189-190) changes
+  key-walk semantics that gen 2's edge test depends on — selection identity
+  must land WITH a deliberate update to that test, never an implicit break;
+  and a generation ends with a commit or a revert, never "in progress".
 - GEN-2: scroll = re-anchor + refill, never manual cache surgery — a
   capacity-1 backward probe finds the record above visible[0], and the
   existing refill/continuation machinery then owns every edge case; and
