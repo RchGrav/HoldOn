@@ -98,6 +98,8 @@ struct viewer_state {
     size_t cache_match_count;
     size_t scan_generation;
     size_t selected;
+    bool select_resolve;
+    off_t select_offset;
     size_t rows;
     size_t cols;
 };
@@ -371,11 +373,37 @@ static int cache_load_result(struct viewer_state *state, const struct hold_log_f
     state->scan_generation++;
     if (state->selected >= state->visible_count && state->visible_count > 0) state->selected = state->visible_count - 1;
     if (state->visible_count == 0) state->selected = 0;
+    /*
+     * WO-3 (spec:177-190): selection is record identity, not a row number.
+     * When an operation asked for a record by offset, resolve it against the
+     * fresh page: the record itself if still visible, else the record
+     * underneath it, else the nearest previous one.
+     */
+    if (state->select_resolve) {
+        state->select_resolve = false;
+        if (state->visible_count > 0) {
+            size_t pick = state->visible_count - 1;
+            for (size_t i = 0; i < state->visible_count; i++) {
+                if (state->visible[i].offset >= state->select_offset) {
+                    pick = i;
+                    break;
+                }
+            }
+            state->selected = pick;
+        }
+    }
     return 0;
 }
 
 static void cache_invalidate(struct viewer_state *state) {
     state->cache_valid = false;
+}
+
+/* Ask the next refill to keep the cursor on this record (see the resolution
+ * rules in cache_load_result). */
+static void select_record_after_refill(struct viewer_state *state, off_t offset) {
+    state->select_resolve = true;
+    state->select_offset = offset;
 }
 
 static void configure_filter_opts(const struct viewer_state *state, struct hold_log_filter_options *opts);
@@ -387,6 +415,10 @@ static bool refresh_terminal_size(struct viewer_state *state) {
     size_t old_rows = state->rows, old_cols = state->cols;
     terminal_size(&state->rows, &state->cols);
     if (old_rows && (old_rows != state->rows || old_cols != state->cols)) {
+        /* A relayout must not move the cursor off its record (spec:177). */
+        if (state->selected < state->visible_count) {
+            select_record_after_refill(state, state->visible[state->selected].offset);
+        }
         cache_invalidate(state);
         return true;
     }
@@ -437,6 +469,11 @@ static void reset_filter_navigation(struct viewer_state *state) {
         state->local_scan_limit_end = 0;
     }
     state->history_count = 0;
+    /* The page anchor survives the filter edit, so the selection does too:
+     * the same record stays selected, or resolves per spec:179-185. */
+    if (preserve_browsed_page && state->selected < state->visible_count) {
+        select_record_after_refill(state, state->visible[state->selected].offset);
+    }
     state->selected = 0;
     cache_invalidate(state);
 }
@@ -569,6 +606,11 @@ static int toggle_example(struct viewer_state *state, const char *line) {
      * re-anchor at EOF and look like it "looped" back to the bottom.
      */
     enter_browsing_mode(state, true);
+    /* spec:179-185 — after the exclusion lands, the selection resolves to
+     * this record, else the record underneath it, else nearest previous. */
+    off_t selected_record = state->selected < state->visible_count
+                                ? state->visible[state->selected].offset
+                                : (off_t)-1;
     for (size_t i = 0; i < state->example_count; i++) {
         if (same_line(state->examples[i], line)) {
             free(state->examples[i]);
@@ -576,6 +618,7 @@ static int toggle_example(struct viewer_state *state, const char *line) {
             state->example_count--;
             state->examples[state->example_count] = NULL;
             reset_filter_navigation(state);
+            if (selected_record >= 0) select_record_after_refill(state, selected_record);
             return 0;
         }
     }
@@ -584,6 +627,7 @@ static int toggle_example(struct viewer_state *state, const char *line) {
     if (!copy) return -1;
     state->examples[state->example_count++] = copy;
     reset_filter_navigation(state);
+    if (selected_record >= 0) select_record_after_refill(state, selected_record);
     return 0;
 }
 
@@ -1181,7 +1225,9 @@ static void page_down(struct viewer_state *state) {
         state->scan_mode = VIEWER_SCAN_FORWARD;
         state->start_offset = state->next_offset;
         state->at_live_edge = false;
-        state->selected = 0;
+        /* spec:190 — PageDown parks the selector on the bottom row; past any
+         * refill count, cache_load_result clamps to the last row. */
+        state->selected = viewer_body_rows(state);
         cache_invalidate(state);
         return;
     }
@@ -1212,7 +1258,8 @@ static void page_down(struct viewer_state *state) {
     }
     push_history(state, state->start_offset);
     state->start_offset = state->next_offset;
-    state->selected = 0;
+    /* spec:190 — PageDown parks the selector on the bottom row (clamped). */
+    state->selected = viewer_body_rows(state);
     cache_invalidate(state);
 }
 

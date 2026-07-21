@@ -1128,10 +1128,12 @@ for unwanted in ('edge-line-002', 'edge-line-007'):
     if unwanted in final:
         raise SystemExit(f'down-arrow at edge rendered {unwanted}: viewport page-jumped instead of scrolling one line')
 PY
-  # PageDown to page 005-008, then two Ups from the top edge: each must
-  # scroll one line up (page 004-007, then 003-006), not pop a whole page.
+  # PageDown to page 005-008 with the selector parked on the bottom row
+  # (spec:190), then five Ups: three walk the selection to the top edge, and
+  # each of the last two scrolls one line up (page 004-007, then 003-006),
+  # not a whole-page pop.
   set +e
-  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[6~"); out.flush(); time.sleep(0.2); out.write(b"\x1b[A\x1b[A"); out.flush(); time.sleep(0.3); out.write(b"\x1b"); out.flush(); time.sleep(0.1)' |
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[6~"); out.flush(); time.sleep(0.2); out.write(b"\x1b[A" * 5); out.flush(); time.sleep(0.3); out.write(b"\x1b"); out.flush(); time.sleep(0.1)' |
     pty_run "stty rows 6 cols 120; $HOLD_BIN __view $id --interactive --debug-stats" >"$TEST_ROOT/view-edge-up.out" 2>"$TEST_ROOT/view-edge-up.err"
   rc=$?
   set -e
@@ -1139,6 +1141,8 @@ PY
   python3 - "$TEST_ROOT/view-edge-up.out" <<'PY' || { cat "$TEST_ROOT/view-edge-up.out" >&2; return 1; }
 import re, sys
 raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+if '\x1b[7medge-line-008' not in raw:
+    raise SystemExit('PageDown did not park the selector on the bottom row (spec:190)')
 plain = re.sub(r'\x1b\[[0-9;?]*[A-Za-z~]', '', raw).replace('\r', '')
 frames = plain.split('hold logs ')
 if len(frames) < 2:
@@ -1150,6 +1154,60 @@ for wanted in ('edge-line-003', 'edge-line-004', 'edge-line-005', 'edge-line-006
 for unwanted in ('edge-line-002', 'edge-line-007'):
     if unwanted in final:
         raise SystemExit(f'up-arrow at edge rendered {unwanted}: viewport page-jumped instead of scrolling one line')
+if '\x1b[7medge-line-003' not in raw.split('hold logs ')[-1]:
+    raise SystemExit('up-arrow scroll did not leave the selector on the top row')
+PY
+}
+
+# WO-3 (spec:179-185): selection is record identity. When Space excludes the
+# selected record, the selection resolves to the record underneath it — and
+# when nothing is underneath, to the nearest previous record — never a snap
+# back to the top row.
+test_log_view_exclusion_resolves_selection_by_record_identity() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id rc
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo "alpha keep one"; echo "noisy duplicate 1"; echo "noisy duplicate 2"; echo "beta keep two"; echo "gamma keep three"; sleep 0.1' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.3
+  # Down to "noisy duplicate 1", Space: both noisy records vanish and the
+  # selection must land on the record underneath ("beta keep two").
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[B"); out.flush(); time.sleep(0.2); out.write(b" "); out.flush(); time.sleep(0.3); out.write(b"\x1b"); out.flush(); time.sleep(0.1)' |
+    pty_run "stty rows 8 cols 90; $HOLD_BIN __view $id --interactive --debug-stats" >"$TEST_ROOT/view-ident-under.out" 2>"$TEST_ROOT/view-ident-under.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-ident-under.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-ident-under.out" <<'PY' || { cat "$TEST_ROOT/view-ident-under.out" >&2; return 1; }
+import sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+final = raw.split('hold logs ')[-1]
+if 'noisy duplicate' in final.split('scan_gen=')[0]:
+    raise SystemExit('excluded records remained visible in the final frame')
+if '\x1b[7mbeta keep two' not in final:
+    raise SystemExit('selection did not resolve to the record underneath the excluded one')
+PY
+  # Excluding the records at the bottom of the log leaves nothing underneath:
+  # the selection must resolve to the nearest previous record.
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo "alpha keep one"; echo "beta keep two"; echo "noisy duplicate 1"; echo "noisy duplicate 2"; sleep 0.1' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  sleep 0.3
+  set +e
+  python3 -c 'import sys,time; out=sys.stdout.buffer; out.write(b"\x1b[B\x1b[B"); out.flush(); time.sleep(0.2); out.write(b" "); out.flush(); time.sleep(0.3); out.write(b"\x1b"); out.flush(); time.sleep(0.1)' |
+    pty_run "stty rows 8 cols 90; $HOLD_BIN __view $id --interactive --debug-stats" >"$TEST_ROOT/view-ident-prev.out" 2>"$TEST_ROOT/view-ident-prev.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-ident-prev.err" >&2; return 1; }
+  python3 - "$TEST_ROOT/view-ident-prev.out" <<'PY' || { cat "$TEST_ROOT/view-ident-prev.out" >&2; return 1; }
+import sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'ignore')
+final = raw.split('hold logs ')[-1]
+if 'noisy duplicate' in final.split('scan_gen=')[0]:
+    raise SystemExit('excluded records remained visible in the final frame')
+if '\x1b[7mbeta keep two' not in final:
+    raise SystemExit('selection did not resolve to the nearest previous record')
 PY
 }
 
@@ -4419,6 +4477,7 @@ run_test "log viewer space excludes similar lines and Ctrl-R resets filters" tes
 run_test "internal viewer selection movement uses cached filter rows" test_log_view_selection_uses_cached_rows
 run_test "internal viewer filter scan continues across ticks to a deep match" test_log_view_filter_scan_continues_across_ticks
 run_test "internal viewer arrow at screen edge scrolls one line not a page" test_log_view_arrow_at_edge_scrolls_one_line
+run_test "internal viewer exclusion resolves selection by record identity" test_log_view_exclusion_resolves_selection_by_record_identity
 run_test "internal viewer follow pages older and newer filtered windows" test_log_view_follow_pages_filtered_windows
 run_test "internal viewer follow page-up stays at the first log page" test_log_view_follow_page_up_stays_at_start
 run_test "internal viewer follow oldest page does not wrap back to tail" test_log_view_follow_oldest_page_does_not_wrap_to_tail

@@ -55,6 +55,11 @@ d. WO-3 leftover: when a sparse filter puts the adjacent record beyond the
 
 ## Lessons (newest first, one line each)
 
+- GEN-4 (code ACCEPTED at 149/0; process completed by the orchestrator):
+  the full suite runs ~6 minutes — invoke it with an explicit long timeout
+  and wait for the summary in the same command; a terminated command is a
+  failure to handle now, never a thing to "wait" on. Twice now a builder
+  ended in "waiting" — the contract's only endings are commit or revert.
 - GEN-3 (REJECTED, work reverted): selector placement (:189-190) changes
   key-walk semantics that gen 2's edge test depends on — selection identity
   must land WITH a deliberate update to that test, never an implicit break;

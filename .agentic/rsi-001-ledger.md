@@ -142,3 +142,22 @@ Row format — one per generation, appended by the generation's agent:
   monitor claim, not the code, is the defect. Lesson candidate: a foreground
   suite run dies to the shell timeout — run it in background and read the
   log, never "wait" on a monitor that was never armed.
+
+## gen 4 — completion (orchestrator, after the validator's disposition)
+- item: a — WO-3: selection is record identity, not a row number
+- changed: tty.c selection tracks the record across filter/wrap changes; on
+  exclusion resolves to the row underneath, else nearest previous
+  (spec:179-185); PageDown parks the selector on the bottom row and PageUp on
+  the top (spec:189-190), with gen 2's edge-scroll test deliberately updated
+  for the new selector placement — exactly what the GEN-3 lesson required.
+- evidence: "summary: 149 passed, 0 failed, 0 skipped" — run independently
+  by the validator on the builder's tree AND re-run by the orchestrator
+  before this commit; new test
+  test_log_view_exclusion_resolves_selection_by_record_identity.
+- unverified: nothing beyond what the code disposes; builder's own narrative
+  lost when its suite run was terminated mid-flight.
+- lesson fed forward: suite needs an explicit long timeout; commit or revert,
+  never "waiting" (second occurrence — now a loop-file rule).
+- validator: REJECTED-as-process / green-as-code (55e7ba1); completed here
+  per its own disposition: "committing the existing diff with an honest
+  row/amendment would complete it."
