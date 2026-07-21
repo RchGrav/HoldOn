@@ -741,9 +741,13 @@ static int refill_cache(struct viewer_state *state) {
  * stay as scanned: their truncation is intent, not a budget accident.
  */
 static bool continuation_pending(const struct viewer_state *state) {
-    return state->cache_valid && state->cache_scan_limited &&
-           !state->cache_local_limited &&
-           state->visible_count < viewer_body_rows(state);
+    /* A budget-limited page keeps scanning; an unfilled forward page that
+     * reached EOF keeps watching, because EOF is not a permanent fact on a
+     * live log (the re-probe is a zero-byte read until the file grows). */
+    return state->cache_valid && !state->cache_local_limited &&
+           state->visible_count < viewer_body_rows(state) &&
+           (state->cache_scan_limited ||
+            (state->scan_mode == VIEWER_SCAN_FORWARD && state->cache_reached_eof));
 }
 
 static int continue_scan_tick(struct viewer_state *state) {
@@ -792,10 +796,6 @@ static int continue_scan_tick(struct viewer_state *state) {
         state->cache_scan_limited = result.scan_limited;
         if (!result.scan_limited && result.match_count <= result.line_count) state->at_oldest_edge = true;
     } else {
-        if (state->cache_reached_eof) {
-            state->cache_scan_limited = false;
-            return 1;
-        }
         if (lseek(state->fd, state->next_offset, SEEK_SET) < 0) return -1;
         opts.scan_byte_budget = budget;
         if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
