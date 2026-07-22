@@ -15,7 +15,7 @@ VERSION ?= $(shell if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then 
 VERSION_CPPFLAG := -DHOLD_VERSION=\"$(VERSION)\"
 
 # Every translation unit. wildcard is portable in GNU make; one glob per layer
-# directory (GNU make has no portable recursive **). main.c + cli.c sit directly
+# directory (GNU make has no portable recursive **). main.c sits directly
 # under src/; the layers live in src/<layer>/.
 SRCS := $(wildcard src/*.c) \
         $(wildcard src/core/*.c) \
@@ -25,7 +25,8 @@ SRCS := $(wildcard src/*.c) \
         $(wildcard src/console/*.c) \
         $(wildcard src/access/*.c) \
         $(wildcard src/runtime/*.c) \
-        $(wildcard src/viewer/*.c)
+        $(wildcard src/viewer/*.c) \
+        $(wildcard src/cli/*.c)
 
 # Separate object trees per build "personality" so the test objects (built with
 # -DHOLD_TESTING and a different HOLD_BOOT_ID_PATH) can never be linked
