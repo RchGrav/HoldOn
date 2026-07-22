@@ -1,5 +1,27 @@
 # Work order — deep-dive findings and repair plan (2026-07-20)
 
+## PLAYBACK CAMPAIGN IN FLIGHT (2026-07-22) — resume here if cut off
+
+Phase 2 rewrite COMPLETE and sealed (11,771 lines; Linux 160/0/0, macOS
+141/2/17 WO-8-proofs-only; ten generations, all validator-confirmed —
+Phase 2 ledger in .agentic/reconstruction/contract-gaps.md). Now running:
+the WO-6 playback campaign (workflow run wf_17013ef9-3d7), 4 generations:
+sidecar-v2 → transport → time-travel → polish. BINDING SPEC =
+docs/future/playback.md, complete with ALL of Rich's rulings through
+2026-07-22 (double-tap Ctrl-P transparent jump from ANY attached surface,
+never-released broker session, content-kind control sets, chevron OSD
+1/2/3/4/8/16x, Space mode-scoped, self-healing sidecar ladder).
+
+If the session was cut mid-generation: (1) `git status` — a dirty tree is
+an unfinished builder; per the loop contract, `git checkout -- <code>` and
+keep any committed generations; (2) suite must be ≥160/0 before anything
+else; (3) resume the workflow from cache:
+Workflow({scriptPath: <session workflows dir>/playback-campaign-*.js,
+resumeFromRunId: "wf_17013ef9-3d7"}) or simply re-launch the remaining
+generations from the spec — the spec, not the workflow, is the source of
+truth. Time-travel gen's brief predates the final rulings; the SPEC
+governs (its prompts say deviations are defects).
+
 ## RECONSTRUCTION ACTIVE (2026-07-21 evening) — read first on resume
 
 The from-scratch reconstruction (Rich's directive: inventory, then rebuild;
