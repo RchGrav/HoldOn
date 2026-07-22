@@ -237,3 +237,7 @@ implemented — the wiring itself is still silently removable from the Makefile.
 Neither blocks acceptance. This verdict commit carries the builder's doc section
 in this file; the Makefile and test_hold.sh changes are left for the builder to
 commit.
+
+## Phase 2 ledger
+
+- 2026-07-21 core swap 1cbfe17 — CONFIRMED. Layer wc -l 1712 -> 1232 (fs 146, json 291, logidx 280, sha256 106, util 223, validate 76, core.h 110), all counts verified against parent. Fresh `make clean && make` + `make lint` (layer dependency direction: clean) + one synchronous `make test`: rc=0, summary: 160 passed, 0 failed, 0 skipped, incl. viewer filter engine and hold-on surface smoke. Diff is structural; behavior deltas are disclosed and BOM/blueprint-sanctioned (hold_rand_bytes cut with temp nonce -> clock+counter under O_EXCL, append-only HLOGIDX header with count from st_size superseding invariant 32's min() rule, stricter scan_string skip/match modes, empty argv now -1 in get_argv_display). Old v1 sidecar headers verified byte-compatible (magic/version/base offsets unchanged). Budget note: json 291 vs 250, logidx 280 vs 210, fs 146 vs 130, core.h 110 vs 90; layer total 1232 vs ~1140 rows-sum (~8% over the "~" budgets), util/sha256/validate under.
