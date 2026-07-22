@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - Play it back
+## 0.7.0 - Play it back — 2026-07-22
 
 ### Added
 
