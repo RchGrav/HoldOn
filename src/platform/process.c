@@ -257,7 +257,7 @@ static int scan_proc_net_file(const char *path, const char *proto, bool is_tcp, 
             if (rem_port && strtoul(rem_port + 1, NULL, 16) != 0) continue;
         }
         if (!inode_listed(inodes, count, strtoull(fields[9], NULL, 10))) continue;
-        char addr_hex[64] = {0}, port_hex[16] = {0}, host[48], entry[80];
+        char addr_hex[64] = {0}, port_hex[16] = {0}, host[48] = {0}, entry[80] = {0};
         if (sscanf(fields[1], "%63[^:]:%15s", addr_hex, port_hex) != 2) continue;
         unsigned long port = strtoul(port_hex, NULL, 16);
         if (port == 0) continue;
