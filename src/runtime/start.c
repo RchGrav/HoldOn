@@ -5,81 +5,19 @@
 #include "hold/core.h"
 #include "hold/platform.h"
 #include "hold/store.h"
+#include "hold/term.h"
 #include "hold/console.h"
 #include "hold/access.h"
-#if defined(__linux__)
-#include <sys/syscall.h>
-#endif
+
+/* runtime/start: launch orchestration — hashed-id reservation (via the store
+ * reserve API), name generation, recipe capture, transactional record+index
+ * write, redial reuse, restart supervision, docker-run exit parity. */
 
 static volatile sig_atomic_t g_restart_stop = 0;
-
-static const char *explicit_start_argv0(bool owned, const char *command, int argc, char **argv);
-static int apply_child_env(int envc, char **env, bool clean_base);
-static int perform_start_with_metadata_name_options_internal(const struct hold_invocation *inv,
-                                                             const struct hold_store *store,
-                                                             const struct hold_start_options *opts);
-
-static int reserve_hashed_run_id(const struct hold_store *store,
-                                 const char *resolved_exec_path,
-                                 int argc,
-                                 char **argv,
-                                 const char *cwd,
-                                 int64_t start_unix_ns,
-                                 char out[ID_STR_LEN]);
-static int spawn_log_capture(int stdout_fd,
-                             int stderr_fd,
-                             const char *log_path);
-static void close_stdio_to_devnull(void);
-static int enter_privileged_exec_cwd(void);
-static void spawn_auto_remove_watcher(const struct hold_store *store, const struct hold_run_record *record);
 
 static void free_launch_and_observed_argv(char **launch_argv, char **observed_argv, int argc) {
     hold_free_argv_alloc(launch_argv, argc);
     hold_free_argv_alloc(observed_argv, argc);
-}
-
-static void unlink_if_nonempty(const char *path) {
-    if (path && *path) {
-        unlink(path);
-    }
-}
-
-static int open_log_append_no_symlink(const char *path) {
-    if (!path || !*path) {
-        errno = EINVAL;
-        return -1;
-    }
-    const char *slash = strrchr(path, '/');
-    if (!slash || slash == path || !slash[1]) {
-        errno = EINVAL;
-        return -1;
-    }
-    size_t dir_len = (size_t)(slash - path);
-    if (dir_len >= HOLD_PATH_MAX) {
-        errno = ENAMETOOLONG;
-        return -1;
-    }
-    char dir[HOLD_PATH_MAX];
-    memcpy(dir, path, dir_len);
-    dir[dir_len] = '\0';
-
-    int dirfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-    if (dirfd < 0) return -1;
-    int fd = openat(dirfd, slash + 1, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
-    int saved = errno;
-    close(dirfd);
-    if (fd < 0) {
-        errno = saved;
-        return -1;
-    }
-    struct stat st;
-    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
-        saved = errno ? errno : EINVAL;
-        close(fd);
-        errno = saved;
-        return -1;
-    }
-    return fd;
 }
 
 static int enter_privileged_exec_cwd(void) {
@@ -102,6 +40,90 @@ static void kill_supervisor_if_distinct(pid_t supervisor_pid, pid_t target_pid) 
     }
 }
 
+static void close_stdio_to_devnull(void) {
+    int fd = open("/dev/null", O_RDWR);
+    if (fd < 0) {
+        return;
+    }
+    dup2(fd, STDIN_FILENO);
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    if (fd > STDERR_FILENO) {
+        close(fd);
+    }
+}
+
+/* ---- child environment ---- */
+
+extern char **environ;
+
+static int env_entry_key(const char *entry, char key[256]) {
+    const char *eq = entry ? strchr(entry, '=') : NULL;
+    if (!entry || !*entry || !eq || eq == entry || (size_t)(eq - entry) >= 256) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(key, entry, (size_t)(eq - entry));
+    key[eq - entry] = '\0';
+    return 0;
+}
+
+static int clear_process_environment(void) {
+#if defined(__GLIBC__)
+    return clearenv() == 0 ? 0 : -1;
+#else
+    char key[256];
+    while (environ && environ[0]) {
+        if (env_entry_key(environ[0], key) != 0) return -1;
+        if (unsetenv(key) != 0) return -1;
+    }
+    return 0;
+#endif
+}
+
+static int apply_child_env(int envc, char **env, bool clean_base) {
+    if (clean_base) {
+        if (clear_process_environment() != 0) return -1;
+        if (setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0) return -1;
+    }
+    for (int i = 0; i < envc; i++) {
+        const char *entry = env ? env[i] : NULL;
+        char key[256];
+        if (env_entry_key(entry, key) != 0) return -1;
+        if (setenv(key, strchr(entry, '=') + 1, 1) != 0) return -1;
+    }
+    return 0;
+}
+
+/* ---- the child-side handshake and session preamble ---- */
+
+/* THE errno-write handshake tail: any pre-exec failure rides the handshake
+ * pipe as an errno, then _exit(127) — never a return into the caller. */
+static _Noreturn void child_fail_errno(int handshake_fd) {
+    int e = errno;
+    (void)hold_write_all(handshake_fd, &e, sizeof(e));
+    _exit(127);
+}
+
+/* THE spawn preamble, shared by the direct target and the restart
+ * supervisor: new session, optionally pinned privileged cwd, child env,
+ * optionally /dev/null stdin. */
+static void child_session_setup(int handshake_fd,
+                                bool pin_privileged_cwd,
+                                int envc, char **env, bool clean_base,
+                                bool null_stdin) {
+    if (setsid() < 0) child_fail_errno(handshake_fd);
+    if (pin_privileged_cwd && enter_privileged_exec_cwd() != 0) child_fail_errno(handshake_fd);
+    if (apply_child_env(envc, env, clean_base) != 0) child_fail_errno(handshake_fd);
+    if (null_stdin) {
+        int nullfd = open("/dev/null", O_RDONLY);
+        if (nullfd < 0 || dup2(nullfd, STDIN_FILENO) < 0) child_fail_errno(handshake_fd);
+        if (nullfd > STDERR_FILENO) close(nullfd);
+    }
+}
+
+/* ---- restart policy ---- */
+
 static void handle_restart_signal(int signo) {
     (void)signo;
     g_restart_stop = 1;
@@ -116,22 +138,17 @@ static bool restart_status_failed(int status) {
     return WIFSIGNALED(status);
 }
 
-static int restart_policy_max_retries(const char *policy) {
-    const char *colon = policy ? strchr(policy, ':') : NULL;
-    if (!colon || !colon[1]) return -1;
-    char *end = NULL;
-    long n = strtol(colon + 1, &end, 10);
-    if (!end || *end || n < 0 || n > INT_MAX) return -2;
-    return (int)n;
-}
-
 static bool restart_should_run_again(const char *policy, int status, int failures) {
     if (!policy || !*policy || strcmp(policy, "no") == 0) return false;
     if (strcmp(policy, "always") == 0 || strcmp(policy, "unless-stopped") == 0) return true;
     if (!strncmp(policy, "on-failure", 10) && (policy[10] == '\0' || policy[10] == ':')) {
         if (!restart_status_failed(status)) return false;
-        int max_retries = restart_policy_max_retries(policy);
-        if (max_retries >= 0 && failures > max_retries) return false;
+        if (policy[10] == ':' && policy[11]) {
+            /* on-failure:N caps retries; an unparsable N means no cap. */
+            char *end = NULL;
+            long max_retries = strtol(policy + 11, &end, 10);
+            if (end && !*end && max_retries >= 0 && max_retries <= INT_MAX && failures > max_retries) return false;
+        }
         return true;
     }
     return false;
@@ -145,171 +162,13 @@ static void sleep_restart_delay(int seconds) {
     }
 }
 
-static bool run_id_material_exists(const struct hold_store *store, const char *id) {
-    char path[HOLD_PATH_MAX];
-    return (hold_checked_snprintf(path, sizeof(path), "%s/%s.json", store->record_dir, id) == 0 && hold_path_exists(path)) ||
-           (hold_checked_snprintf(path, sizeof(path), "%s/%s.log", store->log_dir, id) == 0 && hold_path_exists(path)) ||
-           (hold_checked_snprintf(path, sizeof(path), "%s/.%s.reserve", store->record_dir, id) == 0 && hold_path_exists(path)) ||
-           (store->console_dir[0] &&
-            hold_checked_snprintf(path, sizeof(path), "%s/%s.sock", store->console_dir, id) == 0 && hold_path_exists(path)) ||
-           (store->public_dir[0] &&
-            hold_checked_snprintf(path, sizeof(path), "%s/%s.json", store->public_dir, id) == 0 && hold_path_exists(path));
-}
-
-static void hash_field(struct sha256_ctx *ctx, const char *key, const char *value) {
-    hold_sha256_update_nul_field(ctx, key);
-    hold_sha256_update_nul_field(ctx, value ? value : "-");
-}
-
-static void compute_run_hash(const char *resolved_exec_path,
-                             int argc,
-                             char **argv,
-                             const char *cwd,
-                             int64_t start_unix_ns,
-                             unsigned long counter,
-                             char out[ID_STR_LEN]) {
-    struct sha256_ctx ctx;
-    unsigned char digest[32];
-    char buf[64];
-    hold_sha256_init(&ctx);
-    hash_field(&ctx, "version", "hold-run-v1");
-    hash_field(&ctx, "exe", resolved_exec_path);
-    hash_field(&ctx, "cwd", cwd && *cwd ? cwd : "-");
-    snprintf(buf, sizeof(buf), "%" PRId64, start_unix_ns);
-    hash_field(&ctx, "timestamp_ns", buf);
-    snprintf(buf, sizeof(buf), "%ld", (long)getpid());
-    hash_field(&ctx, "launcher_pid", buf);
-    snprintf(buf, sizeof(buf), "%d", argc);
-    hash_field(&ctx, "argc", buf);
-    for (int i = 0; i < argc; i++) {
-        snprintf(buf, sizeof(buf), "argv[%d]", i);
-        hash_field(&ctx, buf, argv && argv[i] ? argv[i] : "");
-    }
-    snprintf(buf, sizeof(buf), "%lu", counter);
-    hash_field(&ctx, "counter", buf);
-    hold_sha256_final(&ctx, digest);
-    hold_hex_encode(digest, sizeof(digest), out, ID_STR_LEN);
-}
-
-static int reserve_hashed_run_id(const struct hold_store *store,
-                                 const char *resolved_exec_path,
-                                 int argc,
-                                 char **argv,
-                                 const char *cwd,
-                                 int64_t start_unix_ns,
-                                 char out[ID_STR_LEN]) {
-    char reserve[HOLD_PATH_MAX];
-    for (unsigned long counter = 0; counter < 1024; counter++) {
-        compute_run_hash(resolved_exec_path, argc, argv, cwd, start_unix_ns, counter, out);
-        if (!hold_valid_id(out) || run_id_material_exists(store, out)) continue;
-        if (hold_checked_snprintf(reserve, sizeof(reserve), "%s/.%s.reserve", store->record_dir, out) != 0) return -1;
-        int fd = open(reserve, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-        if (fd >= 0) {
-            close(fd);
-            return 0;
-        }
-        if (errno != EEXIST) return -1;
-    }
-    errno = EEXIST;
-    return -1;
-}
-
-static void logger_write_bytes(int logfd,
-                               int idxfd,
-                               const char *stream,
-                               const char *buf,
-                               size_t n) {
-    (void)hold_write_indexed_log_bytes_fd(logfd, idxfd, stream, buf, n);
-}
-
-static int spawn_log_capture(int stdout_fd,
-                             int stderr_fd,
-                             const char *log_path) {
-    pid_t logger = fork();
-    if (logger < 0) {
-        if (stdout_fd >= 0) close(stdout_fd);
-        if (stderr_fd >= 0) close(stderr_fd);
-        return -1;
-    }
-    if (logger > 0) {
-        if (stdout_fd >= 0) close(stdout_fd);
-        if (stderr_fd >= 0) close(stderr_fd);
-        return 0;
-    }
-    close_stdio_to_devnull();
-    int logfd = open_log_append_no_symlink(log_path);
-    if (logfd < 0) _exit(0);
-    int idxfd = hold_open_log_index_fd(log_path, logfd);
-    while (stdout_fd >= 0 || stderr_fd >= 0) {
-        struct pollfd pfds[2];
-        int nfds = 0;
-        int stdout_slot = -1;
-        int stderr_slot = -1;
-        if (stdout_fd >= 0) {
-            stdout_slot = nfds;
-            pfds[nfds].fd = stdout_fd;
-            pfds[nfds].events = POLLIN;
-            pfds[nfds].revents = 0;
-            nfds++;
-        }
-        if (stderr_fd >= 0) {
-            stderr_slot = nfds;
-            pfds[nfds].fd = stderr_fd;
-            pfds[nfds].events = POLLIN;
-            pfds[nfds].revents = 0;
-            nfds++;
-        }
-        if (nfds == 0) break;
-        int sr = poll(pfds, (nfds_t)nfds, -1);
-        if (sr < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-        char buf[4096];
-        if (stdout_slot >= 0 && (pfds[stdout_slot].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
-            ssize_t n = read(stdout_fd, buf, sizeof(buf));
-            if (n > 0) logger_write_bytes(logfd, idxfd, "stdout", buf, (size_t)n);
-            else { close(stdout_fd); stdout_fd = -1; }
-        }
-        if (stderr_slot >= 0 && (pfds[stderr_slot].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
-            ssize_t n = read(stderr_fd, buf, sizeof(buf));
-            if (n > 0) logger_write_bytes(logfd, idxfd, "stderr", buf, (size_t)n);
-            else { close(stderr_fd); stderr_fd = -1; }
-        }
-    }
-    if (idxfd >= 0) close(idxfd);
-    close(logfd);
-    _exit(0);
-}
-
-/* docker run parity: a foreground launch exits with the held process's exit
- * status once it ends. An interrupted tail leaves the call held: exit 0. */
-static int foreground_exit_status(const struct hold_store *store, const char *id) {
-    char boot[128] = {0};
-    bool have_boot = hold_current_boot_id(boot, sizeof(boot));
-    for (int i = 0; i < 50; i++) {
-        struct hold_run_record r = {0};
-        char path[HOLD_PATH_MAX];
-        if (hold_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) break;
-        enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
-        bool marked = r.has_exit_code;
-        int code = r.exit_code;
-        hold_free_run_record(&r);
-        if (st == STATE_RUNNING) return 0;
-        if (marked) return code;
-        struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
-        while (nanosleep(&sl, &sl) != 0 && errno == EINTR) {
-            continue;
-        }
-    }
-    fprintf(stderr, "hold: exit status unknown for call %.12s\n", id);
-    return 1;
-}
-
+/* Exit persistence: rc 1 (record purged after load) is FINAL — never
+ * resurrect a call the user just removed. Only rc -1 retries (covers a
+ * fast exit before the parent has written the record). */
 static void mark_finished_with_retry(const struct hold_store *store, const char *id, int status) {
     for (int i = 0; i < 50; i++) {
         int rc = hold_mark_run_finished(store, id, status);
-        if (rc == 0 || rc == 1) break; /* 1: purged is final; only retry -1 */
+        if (rc == 0 || rc == 1) break;
         struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
         while (nanosleep(&sl, &sl) != 0 && errno == EINTR) {
             continue;
@@ -320,7 +179,6 @@ static void mark_finished_with_retry(const struct hold_store *store, const char 
 static void run_restart_supervisor(const struct hold_store *store,
                                    const char *id,
                                    int handshake_fd,
-                                   const char *log_path,
                                    bool interactive_stdin,
                                    int envc,
                                    char **env,
@@ -330,31 +188,7 @@ static void run_restart_supervisor(const struct hold_store *store,
                                    const char *restart_policy,
                                    int restart_delay_seconds,
                                    bool pin_privileged_cwd) {
-    (void)log_path;
-    if (setsid() < 0) {
-        int e = errno;
-        hold_write_all(handshake_fd, &e, sizeof(e));
-        _exit(127);
-    }
-    if (pin_privileged_cwd && enter_privileged_exec_cwd() != 0) {
-        int e = errno;
-        hold_write_all(handshake_fd, &e, sizeof(e));
-        _exit(127);
-    }
-    if (apply_child_env(envc, env, clean_child_env) != 0) {
-        int e = errno;
-        hold_write_all(handshake_fd, &e, sizeof(e));
-        _exit(127);
-    }
-    if (!interactive_stdin) {
-        int nullfd = open("/dev/null", O_RDONLY);
-        if (nullfd < 0 || dup2(nullfd, STDIN_FILENO) < 0) {
-            int e = errno;
-            hold_write_all(handshake_fd, &e, sizeof(e));
-            _exit(127);
-        }
-        if (nullfd > 2) close(nullfd);
-    }
+    child_session_setup(handshake_fd, pin_privileged_cwd, envc, env, clean_child_env, !interactive_stdin);
     struct sigaction sa = {0};
     sa.sa_handler = handle_restart_signal;
     sigemptyset(&sa.sa_mask);
@@ -401,84 +235,78 @@ static void run_restart_supervisor(const struct hold_store *store,
     _exit(0);
 }
 
-static const char *explicit_start_argv0(bool owned, const char *command, int argc, char **argv) {
-    if (argc <= 0 || !argv || !argv[0]) {
-        return NULL;
+/* Out-of-process pipe logger: drains the target's stdout/stderr pipes into
+ * the indexed log. Closes both read ends in the launcher either way. */
+static int spawn_log_capture(int stdout_fd, int stderr_fd, const char *log_path) {
+    pid_t logger = fork();
+    if (logger != 0) {
+        int saved = errno;
+        if (stdout_fd >= 0) close(stdout_fd);
+        if (stderr_fd >= 0) close(stderr_fd);
+        errno = saved;
+        return logger < 0 ? -1 : 0;
     }
-    if (!owned) {
-        return argv[0];
+    close_stdio_to_devnull();
+    int logfd = hold_open_append_no_symlink(log_path);
+    if (logfd < 0) _exit(0);
+    int idxfd = hold_open_log_index_fd(log_path, logfd);
+    int fds[2] = {stdout_fd, stderr_fd};
+    static const char *const streams[2] = {"stdout", "stderr"};
+    while (fds[0] >= 0 || fds[1] >= 0) {
+        struct pollfd pfds[2];
+        int slot[2] = {-1, -1};
+        int nfds = 0;
+        for (int i = 0; i < 2; i++) {
+            if (fds[i] < 0) continue;
+            slot[i] = nfds;
+            pfds[nfds].fd = fds[i];
+            pfds[nfds].events = POLLIN;
+            pfds[nfds].revents = 0;
+            nfds++;
+        }
+        if (poll(pfds, (nfds_t)nfds, -1) < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        char buf[4096];
+        for (int i = 0; i < 2; i++) {
+            if (slot[i] < 0 || !(pfds[slot[i]].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) continue;
+            ssize_t n = read(fds[i], buf, sizeof(buf));
+            if (n > 0) {
+                (void)hold_write_indexed_log_bytes_fd(logfd, idxfd, streams[i], buf, (size_t)n);
+            } else {
+                close(fds[i]);
+                fds[i] = -1;
+            }
+        }
     }
-    if (command && strcmp(command, "start") == 0) {
-        return argv[0];
-    }
-    return NULL;
+    if (idxfd >= 0) close(idxfd);
+    close(logfd);
+    _exit(0);
 }
 
-extern char **environ;
-
-static int clear_process_environment(void) {
-#if defined(__GLIBC__)
-    if (clearenv() != 0) return -1;
-    return 0;
-#else
-    while (environ && environ[0]) {
-        const char *entry = environ[0];
-        const char *eq = strchr(entry, '=');
-        if (!eq || eq == entry) {
-            errno = EINVAL;
-            return -1;
+/* docker run parity: a foreground launch exits with the held process's exit
+ * status once it ends. An interrupted tail leaves the call held: exit 0. */
+static int foreground_exit_status(const struct hold_store *store, const char *id) {
+    char boot[128] = {0};
+    bool have_boot = hold_current_boot_id(boot, sizeof(boot));
+    for (int i = 0; i < 50; i++) {
+        struct hold_run_record r = {0};
+        char path[HOLD_PATH_MAX];
+        if (hold_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) break;
+        enum run_state st = hold_eval_state(&r, have_boot ? boot : NULL);
+        bool marked = r.has_exit_code;
+        int code = r.exit_code;
+        hold_free_run_record(&r);
+        if (st == STATE_RUNNING) return 0;
+        if (marked) return code;
+        struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
+        while (nanosleep(&sl, &sl) != 0 && errno == EINTR) {
+            continue;
         }
-        size_t key_len = (size_t)(eq - entry);
-        char key[256];
-        if (key_len >= sizeof(key)) {
-            errno = EINVAL;
-            return -1;
-        }
-        memcpy(key, entry, key_len);
-        key[key_len] = '\0';
-        if (unsetenv(key) != 0) return -1;
     }
-    return 0;
-#endif
-}
-
-static int apply_child_env(int envc, char **env, bool clean_base) {
-    if (clean_base) {
-        if (clear_process_environment() != 0) return -1;
-        if (setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0) return -1;
-    }
-    for (int i = 0; i < envc; i++) {
-        const char *entry = env ? env[i] : NULL;
-        const char *eq = entry ? strchr(entry, '=') : NULL;
-        if (!entry || !*entry || !eq || eq == entry) {
-            errno = EINVAL;
-            return -1;
-        }
-        size_t key_len = (size_t)(eq - entry);
-        char key[256];
-        if (key_len >= sizeof(key)) {
-            errno = EINVAL;
-            return -1;
-        }
-        memcpy(key, entry, key_len);
-        key[key_len] = '\0';
-        if (setenv(key, eq + 1, 1) != 0) return -1;
-    }
-    return 0;
-}
-
-
-static void close_stdio_to_devnull(void) {
-    int fd = open("/dev/null", O_RDWR);
-    if (fd < 0) {
-        return;
-    }
-    dup2(fd, STDIN_FILENO);
-    dup2(fd, STDOUT_FILENO);
-    dup2(fd, STDERR_FILENO);
-    if (fd > STDERR_FILENO) {
-        close(fd);
-    }
+    fprintf(stderr, "hold: exit status unknown for call %.12s\n", id);
+    return 1;
 }
 
 static void spawn_auto_remove_watcher(const struct hold_store *store, const struct hold_run_record *record) {
@@ -508,16 +336,20 @@ static void spawn_auto_remove_watcher(const struct hold_store *store, const stru
     }
 }
 
+/* ---- sudo-home store routing ---- */
 
 bool hold_start_target_is_within_invoking_home(const struct hold_invocation *inv,
                                                  bool owned,
                                                  const char *command,
                                                  int argc,
                                                  char **argv) {
-    const char *target = explicit_start_argv0(owned, command, argc, argv);
-    if (!target || !*target) {
+    /* Only an explicit start target (bare `hold <cmd>` or `hold start <cmd>`)
+     * is inspected; other owned verbs never route stores by argv. */
+    if (argc <= 0 || !argv || !argv[0] || !*argv[0] ||
+        (owned && !(command && strcmp(command, "start") == 0))) {
         return false;
     }
+    const char *target = argv[0];
 
     const char *home = NULL;
     if (inv && inv->euid_root && inv->have_sudo_user && inv->invoking_home[0]) {
@@ -562,6 +394,62 @@ bool hold_start_target_is_within_invoking_home(const struct hold_invocation *inv
     return false;
 }
 
+/* ---- the one launch unwind ---- */
+
+/* Every launch failure rolls back through here: close what is open, kill and
+ * reap the spawned group, then remove creation material (record, reserve,
+ * owned log, console socket) and free the argv copies. Preserves errno. */
+struct launch_undo {
+    const struct hold_store *store;
+    const char *id;           /* reserve to abort once reserved */
+    bool reserved;
+    const char *log_path;
+    bool unlink_log;          /* owns_new_log, once launch material exists */
+    const char *console_sock; /* unlinked when nonempty */
+    const char *record_path;  /* unlinked when nonempty */
+    int *fds;                 /* fd slots to close; -1 = already closed */
+    int nfds;
+    pid_t reap_pid;           /* rollback: pid to waitpid */
+    pid_t group;              /* rollback: SIGKILL -group when > 0 */
+    pid_t supervisor;
+    char **launch_argv;
+    char **observed_argv;
+    int argc;
+};
+
+static void launch_undo(struct launch_undo *u) {
+    int saved = errno;
+    for (int i = 0; i < u->nfds; i++) {
+        if (u->fds[i] >= 0) {
+            close(u->fds[i]);
+            u->fds[i] = -1;
+        }
+    }
+    if (u->group > 0) {
+        hold_rollback_spawned_group(u->reap_pid, u->group);
+        kill_supervisor_if_distinct(u->supervisor, u->group);
+    }
+    if (u->record_path && u->record_path[0]) unlink(u->record_path);
+    if (u->reserved) hold_abort_run_reservation(u->store, u->id);
+    if (u->unlink_log && u->log_path[0]) unlink(u->log_path);
+    if (u->console_sock[0]) unlink(u->console_sock);
+    free_launch_and_observed_argv(u->launch_argv, u->observed_argv, u->argc);
+    u->launch_argv = NULL;
+    u->observed_argv = NULL;
+    errno = saved;
+}
+
+static _Noreturn void launch_die(struct launch_undo *u, const char *msg) {
+    launch_undo(u);
+    hold_die_errno(msg);
+}
+
+static void copy_field(struct launch_undo *u, char *dst, size_t n, const char *src, const char *msg) {
+    if (hold_checked_snprintf(dst, n, "%s", src) != 0) launch_die(u, msg);
+}
+
+/* ---- launch orchestration ---- */
+
 int hold_perform_start_options(const struct hold_invocation *inv,
                                  const struct hold_store *store,
                                  const struct hold_start_options *opts) {
@@ -569,32 +457,18 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         hold_usage();
         return 5;
     }
-    return perform_start_with_metadata_name_options_internal(inv, store, opts);
-}
-
-static int perform_start_with_metadata_name_options_internal(const struct hold_invocation *inv,
-                                                             const struct hold_store *store,
-                                                             const struct hold_start_options *opts) {
     bool tail = opts->tail;
     bool console_mode = opts->console_mode;
-    bool auto_remove = opts->auto_remove;
     bool interactive_stdin = opts->interactive_stdin;
     int argc = opts->argc;
     char **argv = opts->argv;
-    const char *exec_path = opts->exec_path;
-    const char *requested_run_name = opts->run_name;
     int envc = opts->envc;
     char **env = opts->env;
     const char *restart_policy = opts->restart_policy;
-    int restart_delay_seconds = opts->restart_delay_seconds;
     const char *existing_id = opts->existing_id;
-    const char *existing_log_path = opts->existing_log_path;
-    const char *existing_run_name = opts->existing_run_name;
-    int64_t existing_created_unix_ns = opts->existing_created_unix_ns;
-    const char *existing_created_at = opts->existing_created_at;
     if (argc <= 0 || !argv || !argv[0] ||
         envc < 0 || (envc > 0 && !env) ||
-        restart_delay_seconds < 0) {
+        opts->restart_delay_seconds < 0) {
         hold_usage();
         return 5;
     }
@@ -605,7 +479,7 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     }
 
     char resolved_exec_path[HOLD_PATH_MAX];
-    const char *path_to_resolve = (exec_path && *exec_path) ? exec_path : argv[0];
+    const char *path_to_resolve = (opts->exec_path && *opts->exec_path) ? opts->exec_path : argv[0];
     if (hold_resolve_binary_path(path_to_resolve, resolved_exec_path, sizeof(resolved_exec_path)) != 0) {
         if (errno == ENOENT) {
             fprintf(stderr, "hold: cannot start '%s': command not found\n", argv[0]);
@@ -615,98 +489,84 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         return 1;
     }
 
+    char id[ID_STR_LEN] = {0}, log_path[HOLD_PATH_MAX] = {0}, console_sock[HOLD_PATH_MAX] = {0};
+    char run_name[ALIAS_MAX_LEN + 1] = {0}, boot_id[128] = {0};
+    /* Handshake, stdout, stderr, and target-pid pipe slots; adjacent R/W
+     * pairs so hold_cloexec_pipe fills them in place and the unwind closes
+     * whatever is still open. */
+    enum { HS_R, HS_W, OUT_R, OUT_W, ERR_R, ERR_W, TP_R, TP_W, IO_N };
+    int io[IO_N] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    struct launch_undo u = {
+        .store = store,
+        .id = id,
+        .log_path = log_path,
+        .console_sock = console_sock,
+        .fds = io,
+        .nfds = IO_N,
+        .argc = argc,
+    };
+
     char observed_cwd[HOLD_PATH_MAX] = {0};
     if (!getcwd(observed_cwd, sizeof(observed_cwd))) {
         observed_cwd[0] = '\0';
     }
-    char **observed_argv = NULL;
-    if (hold_copy_argv(&observed_argv, argc, argv) != 0) {
+    if (hold_copy_argv(&u.observed_argv, argc, argv) != 0) {
         hold_die_errno("hold: failed to prepare observed argv");
     }
-
-    char **launch_argv = NULL;
-    if (hold_copy_argv(&launch_argv, argc, argv) != 0) {
-        hold_free_argv_alloc(observed_argv, argc);
-        hold_die_errno("hold: failed to prepare argv");
+    if (hold_copy_argv(&u.launch_argv, argc, argv) != 0) {
+        launch_die(&u, "hold: failed to prepare argv");
     }
+    char **observed_argv = u.observed_argv;
+    char **launch_argv = u.launch_argv;
     free(launch_argv[0]);
     launch_argv[0] = strdup(resolved_exec_path);
     if (!launch_argv[0]) {
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-        hold_die_errno("hold: failed to prepare argv");
+        launch_die(&u, "hold: failed to prepare argv");
     }
     if (hold_normalize_existing_argv_paths_from_cwd(launch_argv, argc, 1, observed_cwd[0] ? observed_cwd : NULL) != 0) {
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-        hold_die_errno("hold: failed to normalize argv paths");
+        launch_die(&u, "hold: failed to normalize argv paths");
     }
 
     struct timespec start_ts;
     clock_gettime(CLOCK_REALTIME, &start_ts);
     int64_t start_unix_ns = (int64_t)start_ts.tv_sec * 1000000000LL + start_ts.tv_nsec;
-
-    char id[ID_STR_LEN], log_path[HOLD_PATH_MAX], reserve_path[HOLD_PATH_MAX] = {0}, console_sock[HOLD_PATH_MAX], boot_id[128] = {0};
-    char run_name[ALIAS_MAX_LEN + 1] = {0};
-    console_sock[0] = '\0';
     bool has_boot = hold_current_boot_id(boot_id, sizeof(boot_id));
     bool restarting_existing = existing_id && *existing_id;
     bool owns_new_log = !restarting_existing;
 
     if (restarting_existing) {
-        if (!hold_valid_id(existing_id) || !existing_log_path || !*existing_log_path) {
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
+        if (!hold_valid_id(existing_id) || !opts->existing_log_path || !*opts->existing_log_path) {
             errno = EINVAL;
-            hold_die_errno("hold: invalid restart record");
+            launch_die(&u, "hold: invalid restart record");
         }
-        if (hold_checked_snprintf(id, sizeof(id), "%s", existing_id) != 0 ||
-            hold_checked_snprintf(log_path, sizeof(log_path), "%s", existing_log_path) != 0) {
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-            hold_die_errno("hold: restart metadata too long");
-        }
-        if (existing_run_name && *existing_run_name) {
-            if (hold_checked_snprintf(run_name, sizeof(run_name), "%s", existing_run_name) != 0) {
-                free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-                hold_die_errno("hold: call name too long");
-            }
+        copy_field(&u, id, sizeof(id), existing_id, "hold: restart metadata too long");
+        copy_field(&u, log_path, sizeof(log_path), opts->existing_log_path, "hold: restart metadata too long");
+        if (opts->existing_run_name && *opts->existing_run_name) {
+            copy_field(&u, run_name, sizeof(run_name), opts->existing_run_name, "hold: call name too long");
         }
     } else {
-        if (reserve_hashed_run_id(store,
-                                  resolved_exec_path,
-                                  argc,
-                                  launch_argv,
-                                  observed_cwd[0] ? observed_cwd : NULL,
-                                  start_unix_ns,
-                                  id) != 0) {
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-            hold_die_errno("hold: failed to generate id");
+        if (hold_reserve_run_id(store, resolved_exec_path, argc, launch_argv,
+                                observed_cwd[0] ? observed_cwd : NULL,
+                                start_unix_ns, id) != 0) {
+            launch_die(&u, "hold: failed to generate id");
         }
-        int name_rc = hold_generate_run_name_for_id(store, id, requested_run_name, run_name);
+        u.reserved = true;
+        int name_rc = hold_generate_run_name_for_id(store, id, opts->run_name, run_name);
         if (name_rc != 0) {
-            if (hold_checked_snprintf(reserve_path, sizeof(reserve_path), "%s/.%s.reserve", store->record_dir, id) == 0) {
-                unlink_if_nonempty(reserve_path);
-            }
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
+            launch_undo(&u);
             return name_rc;
         }
         if (hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) != 0) {
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-            hold_die_errno("hold: log path too long");
-        }
-        if (hold_checked_snprintf(reserve_path, sizeof(reserve_path), "%s/.%s.reserve", store->record_dir, id) != 0) {
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-            hold_die_errno("hold: reserve path too long");
+            launch_die(&u, "hold: log path too long");
         }
     }
     if (console_mode && hold_format_console_sock_path(store, id, console_sock, sizeof(console_sock)) != 0) {
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-        hold_die_errno("hold: console socket path too long");
+        console_sock[0] = '\0';
+        launch_die(&u, "hold: console socket path too long");
     }
-    int log_preflight_fd = open_log_append_no_symlink(log_path);
+    int log_preflight_fd = hold_open_append_no_symlink(log_path);
     if (log_preflight_fd < 0) {
-        int saved = errno;
-        unlink_if_nonempty(reserve_path);
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-        errno = saved;
-        hold_die_errno("hold: failed to open log");
+        launch_die(&u, "hold: failed to open log");
     }
     close(log_preflight_fd);
 
@@ -731,150 +591,55 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         }
     }
 
-    int pipefd[2];
-    int target_pid_pipe[2] = {-1, -1};
-    int stdout_pipe[2] = {-1, -1};
-    int stderr_pipe[2] = {-1, -1};
-#if defined(__linux__) && defined(O_CLOEXEC)
-    if (pipe2(pipefd, O_CLOEXEC) != 0)
-#endif
-    {
-        if (pipe(pipefd) != 0) {
-            int saved = errno;
-            unlink_if_nonempty(reserve_path);
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-            errno = saved;
-            hold_die_errno("hold: pipe failed");
-        }
-        if (fcntl(pipefd[0], F_SETFD, FD_CLOEXEC) != 0 ||
-            fcntl(pipefd[1], F_SETFD, FD_CLOEXEC) != 0) {
-            int saved = errno;
-            close(pipefd[0]);
-            close(pipefd[1]);
-            unlink_if_nonempty(reserve_path);
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-            errno = saved;
-            hold_die_errno("hold: pipe setup failed");
-        }
+    if (hold_cloexec_pipe(io + HS_R) != 0) {
+        launch_die(&u, "hold: pipe failed");
     }
-    if (!console_mode) {
-#if defined(__linux__) && defined(O_CLOEXEC)
-        if (pipe2(stdout_pipe, O_CLOEXEC) != 0)
-#endif
-        {
-            if (pipe(stdout_pipe) != 0) {
-                int saved = errno;
-                close(pipefd[0]);
-                close(pipefd[1]);
-                unlink_if_nonempty(reserve_path);
-                free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-                errno = saved;
-                hold_die_errno("hold: stdout pipe failed");
-            }
-            (void)fcntl(stdout_pipe[0], F_SETFD, FD_CLOEXEC);
-            (void)fcntl(stdout_pipe[1], F_SETFD, FD_CLOEXEC);
-        }
-#if defined(__linux__) && defined(O_CLOEXEC)
-        if (pipe2(stderr_pipe, O_CLOEXEC) != 0)
-#endif
-        {
-            if (pipe(stderr_pipe) != 0) {
-                int saved = errno;
-                close(pipefd[0]);
-                close(pipefd[1]);
-                close(stdout_pipe[0]);
-                close(stdout_pipe[1]);
-                unlink_if_nonempty(reserve_path);
-                free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-                errno = saved;
-                hold_die_errno("hold: stderr pipe failed");
-            }
-            (void)fcntl(stderr_pipe[0], F_SETFD, FD_CLOEXEC);
-            (void)fcntl(stderr_pipe[1], F_SETFD, FD_CLOEXEC);
-        }
+    if (!console_mode &&
+        (hold_cloexec_pipe(io + OUT_R) != 0 || hold_cloexec_pipe(io + ERR_R) != 0)) {
+        launch_die(&u, "hold: pipe failed");
     }
-    if (!restart_enabled) {
-#if defined(__linux__) && defined(O_CLOEXEC)
-        if (pipe2(target_pid_pipe, O_CLOEXEC) != 0)
-#endif
-        {
-            if (pipe(target_pid_pipe) != 0) {
-                int saved = errno;
-                close(pipefd[0]);
-                close(pipefd[1]);
-                if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
-                if (stdout_pipe[1] >= 0) close(stdout_pipe[1]);
-                if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
-                if (stderr_pipe[1] >= 0) close(stderr_pipe[1]);
-                unlink_if_nonempty(reserve_path);
-                free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-                errno = saved;
-                hold_die_errno("hold: target pid pipe failed");
-            }
-            (void)fcntl(target_pid_pipe[0], F_SETFD, FD_CLOEXEC);
-            (void)fcntl(target_pid_pipe[1], F_SETFD, FD_CLOEXEC);
-        }
+    if (!restart_enabled && hold_cloexec_pipe(io + TP_R) != 0) {
+        launch_die(&u, "hold: pipe failed");
     }
+
     pid_t pid = fork();
     if (pid < 0) {
-        int saved = errno;
-        close(pipefd[0]);
-        close(pipefd[1]);
-        if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
-        if (stdout_pipe[1] >= 0) close(stdout_pipe[1]);
-        if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
-        if (stderr_pipe[1] >= 0) close(stderr_pipe[1]);
-        if (target_pid_pipe[0] >= 0) close(target_pid_pipe[0]);
-        if (target_pid_pipe[1] >= 0) close(target_pid_pipe[1]);
-        unlink_if_nonempty(reserve_path);
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-        errno = saved;
-        hold_die_errno("hold: fork failed");
+        launch_die(&u, "hold: fork failed");
     }
     if (pid == 0) {
-        close(pipefd[0]);
-        if (target_pid_pipe[0] >= 0) close(target_pid_pipe[0]);
-        if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
-        if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
+        close(io[HS_R]);
+        if (io[OUT_R] >= 0) close(io[OUT_R]);
+        if (io[ERR_R] >= 0) close(io[ERR_R]);
+        if (io[TP_R] >= 0) close(io[TP_R]);
         if (restart_enabled) {
-            if (!console_mode) {
-                if (dup2(stdout_pipe[1], STDOUT_FILENO) < 0 || dup2(stderr_pipe[1], STDERR_FILENO) < 0) {
-                    int e = errno;
-                    hold_write_all(pipefd[1], &e, sizeof(e));
-                    _exit(127);
-                }
-                if (stdout_pipe[1] > STDERR_FILENO) close(stdout_pipe[1]);
-                if (stderr_pipe[1] > STDERR_FILENO) close(stderr_pipe[1]);
+            if (dup2(io[OUT_W], STDOUT_FILENO) < 0 || dup2(io[ERR_W], STDERR_FILENO) < 0) {
+                child_fail_errno(io[HS_W]);
             }
-            run_restart_supervisor(store,
-                                   id,
-                                   pipefd[1],
-                                   log_path,
-                                   interactive_stdin,
-                                   envc,
-                                   env,
-                                   clean_child_env,
-                                   resolved_exec_path,
-                                   launch_argv,
-                                   restart_policy,
-                                   restart_delay_seconds,
+            if (io[OUT_W] > STDERR_FILENO) close(io[OUT_W]);
+            if (io[ERR_W] > STDERR_FILENO) close(io[ERR_W]);
+            run_restart_supervisor(store, id, io[HS_W], interactive_stdin,
+                                   envc, env, clean_child_env,
+                                   resolved_exec_path, launch_argv,
+                                   restart_policy, opts->restart_delay_seconds,
                                    pin_privileged_cwd);
         }
         if (!console_mode) {
+            /* Double-fork: this middle process becomes the waiter; the record
+             * pid/pgid/sid are the TARGET's. */
             pid_t target = fork();
             if (target < 0) {
-                int e = errno;
-                hold_write_all(pipefd[1], &e, sizeof(e));
-                _exit(127);
+                child_fail_errno(io[HS_W]);
             }
             if (target != 0) {
-                if (target_pid_pipe[1] >= 0) {
-                    (void)hold_write_all(target_pid_pipe[1], &target, sizeof(target));
-                    close(target_pid_pipe[1]);
+                /* Write the target pid BEFORE closing the handshake pipe, so
+                 * the parent never sees exec-success without a pid to read. */
+                if (io[TP_W] >= 0) {
+                    (void)hold_write_all(io[TP_W], &target, sizeof(target));
+                    close(io[TP_W]);
                 }
-                if (stdout_pipe[1] >= 0) close(stdout_pipe[1]);
-                if (stderr_pipe[1] >= 0) close(stderr_pipe[1]);
-                close(pipefd[1]);
+                if (io[OUT_W] >= 0) close(io[OUT_W]);
+                if (io[ERR_W] >= 0) close(io[ERR_W]);
+                close(io[HS_W]);
                 close_stdio_to_devnull();
                 signal(SIGTERM, SIG_IGN);
                 signal(SIGINT, SIG_IGN);
@@ -885,116 +650,64 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
                     status = 127 << 8;
                     break;
                 }
-                for (int i = 0; i < 50; i++) {
-                    int mark_rc = hold_mark_run_finished(store, id, status);
-                    if (mark_rc == 0) break;
-                    /* rc 1: the record was purged after we loaded it — that
-                     * removal is final, do not resurrect it. rc -1 (e.g. the
-                     * parent has not written the record yet on a fast exit)
-                     * stays retryable. */
-                    if (mark_rc == 1) break;
-                    struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
-                    while (nanosleep(&sl, &sl) != 0 && errno == EINTR) {
-                        continue;
-                    }
-                }
+                mark_finished_with_retry(store, id, status);
                 if (WIFEXITED(status)) _exit(WEXITSTATUS(status));
                 if (WIFSIGNALED(status)) _exit(128 + WTERMSIG(status));
                 _exit(255);
             }
-            if (target_pid_pipe[1] >= 0) close(target_pid_pipe[1]);
+            if (io[TP_W] >= 0) close(io[TP_W]);
         }
-        if (setsid() < 0) {
-            int e = errno;
-            hold_write_all(pipefd[1], &e, sizeof(e));
-            _exit(127);
-        }
-        if (pin_privileged_cwd && enter_privileged_exec_cwd() != 0) {
-            int e = errno;
-            hold_write_all(pipefd[1], &e, sizeof(e));
-            _exit(127);
-        }
-        if (apply_child_env(envc, env, clean_child_env) != 0) {
-            int e = errno;
-            hold_write_all(pipefd[1], &e, sizeof(e));
-            _exit(127);
-        }
+        child_session_setup(io[HS_W], pin_privileged_cwd, envc, env, clean_child_env,
+                            !console_mode && !interactive_stdin);
         if (console_mode) {
             int nullfd = open("/dev/null", O_RDWR);
             if (nullfd < 0 ||
                 dup2(nullfd, STDIN_FILENO) < 0 ||
                 dup2(nullfd, STDOUT_FILENO) < 0 ||
                 dup2(nullfd, STDERR_FILENO) < 0) {
-                int e = errno;
-                hold_write_all(pipefd[1], &e, sizeof(e));
-                _exit(127);
+                child_fail_errno(io[HS_W]);
             }
             if (nullfd > STDERR_FILENO) {
                 close(nullfd);
             }
-            hold_run_console_broker(pipefd[1],
-                                      target_pid_pipe[1],
-                                      store,
-                                      id,
-                                      log_path,
-                                      console_sock,
-                                      console_owner_uid,
+            hold_run_console_broker(io[HS_W], io[TP_W], store, id, log_path,
+                                      console_sock, console_owner_uid,
                                       console_have_allowed_peer_uid,
                                       console_allowed_peer_uid,
-                                      argc,
-                                      launch_argv,
-                                      resolved_exec_path,
-                                      console_init_rows,
-                                      console_init_cols);
+                                      argc, launch_argv, resolved_exec_path,
+                                      console_init_rows, console_init_cols);
             _exit(127);
         }
-        if (!interactive_stdin) {
-            int nullfd = open("/dev/null", O_RDONLY);
-            if (nullfd < 0 || dup2(nullfd, STDIN_FILENO) < 0) {
-                int e = errno;
-                hold_write_all(pipefd[1], &e, sizeof(e));
-                _exit(127);
-            }
-            if (nullfd > 2) {
-                close(nullfd);
-            }
+        if (dup2(io[OUT_W], STDOUT_FILENO) < 0 || dup2(io[ERR_W], STDERR_FILENO) < 0) {
+            child_fail_errno(io[HS_W]);
         }
-
-        if (dup2(stdout_pipe[1], STDOUT_FILENO) < 0 || dup2(stderr_pipe[1], STDERR_FILENO) < 0) {
-            int e = errno;
-            hold_write_all(pipefd[1], &e, sizeof(e));
-            _exit(127);
-        }
-        if (stdout_pipe[1] > STDERR_FILENO) close(stdout_pipe[1]);
-        if (stderr_pipe[1] > STDERR_FILENO) close(stderr_pipe[1]);
+        if (io[OUT_W] > STDERR_FILENO) close(io[OUT_W]);
+        if (io[ERR_W] > STDERR_FILENO) close(io[ERR_W]);
         execv(resolved_exec_path, launch_argv);
-        int e = errno;
-        hold_write_all(pipefd[1], &e, sizeof(e));
-        _exit(127);
+        child_fail_errno(io[HS_W]);
     }
 
     pid_t supervisor_pid = pid;
-    close(pipefd[1]);
-    if (target_pid_pipe[1] >= 0) close(target_pid_pipe[1]);
-    if (stdout_pipe[1] >= 0) close(stdout_pipe[1]);
-    if (stderr_pipe[1] >= 0) close(stderr_pipe[1]);
-    int child_errno = 0;
-    int handshake = hold_read_exec_handshake(pipefd[0], &child_errno);
-    int handshake_errno = errno;
-    close(pipefd[0]);
-    if (handshake < 0) {
-        hold_rollback_spawned_group(pid, pid);
-        unlink_if_nonempty(reserve_path);
-        if (owns_new_log) unlink(log_path);
-        if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
-        if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
-        if (target_pid_pipe[0] >= 0) close(target_pid_pipe[0]);
-        if (console_sock[0]) {
-            unlink(console_sock);
+    u.reap_pid = pid;
+    u.group = pid;
+    u.supervisor = pid;
+    u.unlink_log = owns_new_log;
+    close(io[HS_W]);
+    io[HS_W] = -1;
+    for (int w = OUT_W; w < IO_N; w += 2) {
+        if (io[w] >= 0) {
+            close(io[w]);
+            io[w] = -1;
         }
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
+    }
+    int child_errno = 0;
+    int handshake = hold_read_exec_handshake(io[HS_R], &child_errno);
+    int handshake_errno = errno;
+    close(io[HS_R]);
+    io[HS_R] = -1;
+    if (handshake < 0) {
         errno = handshake_errno;
-        hold_die_errno("hold: exec handshake failed");
+        launch_die(&u, "hold: exec handshake failed");
     }
     if (handshake > 0) {
         int st;
@@ -1006,80 +719,47 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         } else {
             fprintf(stderr, "hold: cannot start '%s': %s\n", launch_argv[0], strerror(child_errno));
         }
-        unlink_if_nonempty(reserve_path);
-        if (owns_new_log) unlink(log_path);
-        if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
-        if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
-        if (target_pid_pipe[0] >= 0) close(target_pid_pipe[0]);
-        if (console_sock[0]) {
-            unlink(console_sock);
-        }
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
+        u.group = 0; /* the child exited and is reaped — nothing to roll back */
+        launch_undo(&u);
         return 1;
     }
-    if (target_pid_pipe[0] >= 0) {
+    if (io[TP_R] >= 0) {
         pid_t target_pid = -1;
-        ssize_t n = read(target_pid_pipe[0], &target_pid, sizeof(target_pid));
-        close(target_pid_pipe[0]);
-        target_pid_pipe[0] = -1;
+        ssize_t n = read(io[TP_R], &target_pid, sizeof(target_pid));
+        close(io[TP_R]);
+        io[TP_R] = -1;
         if (n != (ssize_t)sizeof(target_pid) || target_pid <= 1) {
-            hold_rollback_spawned_group(pid, pid);
-            kill_supervisor_if_distinct(supervisor_pid, pid);
-            unlink_if_nonempty(reserve_path);
-            if (owns_new_log) unlink(log_path);
-            if (stdout_pipe[0] >= 0) close(stdout_pipe[0]);
-            if (stderr_pipe[0] >= 0) close(stderr_pipe[0]);
-            if (console_sock[0]) {
-                unlink(console_sock);
-            }
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
             errno = EIO;
-            hold_die_errno("hold: failed to read target pid");
+            launch_die(&u, "hold: failed to read target pid");
         }
         pid = target_pid;
+        u.reap_pid = pid;
+        u.group = pid;
     }
 
     if (!console_mode) {
-        if (spawn_log_capture(stdout_pipe[0],
-                              stderr_pipe[0],
-                              log_path) != 0) {
-            int saved = errno;
-            stdout_pipe[0] = -1;
-            stderr_pipe[0] = -1;
-            hold_rollback_spawned_group(supervisor_pid, pid);
-            kill_supervisor_if_distinct(supervisor_pid, pid);
-            unlink_if_nonempty(reserve_path);
-            if (owns_new_log) unlink(log_path);
-            if (console_sock[0]) {
-                unlink(console_sock);
-            }
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-            errno = saved;
-            hold_die_errno("hold: logger fork failed");
+        int logger_rc = spawn_log_capture(io[OUT_R], io[ERR_R], log_path);
+        io[OUT_R] = -1;
+        io[ERR_R] = -1;
+        if (logger_rc != 0) {
+            u.reap_pid = supervisor_pid;
+            launch_die(&u, "hold: logger fork failed");
         }
-        stdout_pipe[0] = -1;
-        stderr_pipe[0] = -1;
     }
 
     struct hold_run_record r = {0};
     r.version = 1;
-    if (hold_checked_snprintf(r.id, sizeof(r.id), "%s", id) != 0) {
-        hold_die_errno("hold: id too long");
-    }
-    if (hold_checked_snprintf(r.run_id, sizeof(r.run_id), "%s", id) != 0) {
-        hold_die_errno("hold: id too long");
-    }
+    copy_field(&u, r.id, sizeof(r.id), id, "hold: id too long");
+    copy_field(&u, r.run_id, sizeof(r.run_id), id, "hold: id too long");
     r.pid = pid;
     r.pgid = pid;
     r.sid = pid;
     r.start_unix_ns = start_unix_ns;
-    r.created_unix_ns = existing_created_unix_ns > 0 ? existing_created_unix_ns : start_unix_ns;
+    r.created_unix_ns = opts->existing_created_unix_ns > 0 ? opts->existing_created_unix_ns : start_unix_ns;
     hold_format_rfc3339_utc_from_ns(r.start_unix_ns, r.started_at, sizeof(r.started_at));
     r.has_started_at = true;
-    if (existing_created_at && *existing_created_at) {
-        if (hold_checked_snprintf(r.created_at, sizeof(r.created_at), "%s", existing_created_at) != 0) {
-            hold_die_errno("hold: created timestamp too long");
-        }
+    if (opts->existing_created_at && *opts->existing_created_at) {
+        copy_field(&u, r.created_at, sizeof(r.created_at), opts->existing_created_at, "hold: created timestamp too long");
     } else {
         hold_format_rfc3339_utc_from_ns(r.created_unix_ns, r.created_at, sizeof(r.created_at));
     }
@@ -1090,54 +770,37 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
     r.gid = getegid();
     if (store->kind == STORE_SYSTEM_MANAGED) {
         r.has_invocation = true;
-        if (inv && inv->have_sudo_user) {
-            r.invoked_by_uid = inv->invoking_uid;
-            r.invoked_by_gid = inv->invoking_gid;
-            if (hold_checked_snprintf(r.invoked_by_user, sizeof(r.invoked_by_user), "%s", inv->invoking_user) != 0) {
-                hold_die_errno("hold: invoking user too long");
-            }
-            r.invoked_via_sudo = true;
-        } else {
-            r.invoked_by_uid = 0;
-            r.invoked_by_gid = 0;
-            if (hold_checked_snprintf(r.invoked_by_user, sizeof(r.invoked_by_user), "%s", "root") != 0) {
-                hold_die_errno("hold: invoking user too long");
-            }
-            r.invoked_via_sudo = false;
-        }
+        bool via_sudo = inv && inv->have_sudo_user;
+        r.invoked_by_uid = via_sudo ? inv->invoking_uid : 0;
+        r.invoked_by_gid = via_sudo ? inv->invoking_gid : 0;
+        r.invoked_via_sudo = via_sudo;
+        copy_field(&u, r.invoked_by_user, sizeof(r.invoked_by_user),
+                   via_sudo ? inv->invoking_user : "root", "hold: invoking user too long");
     }
     if (run_name[0]) {
         r.has_name = true;
-        if (hold_checked_snprintf(r.name, sizeof(r.name), "%s", run_name) != 0) {
-            hold_die_errno("hold: call name too long");
-        }
+        copy_field(&u, r.name, sizeof(r.name), run_name, "hold: call name too long");
     }
     if (console_sock[0]) {
         r.has_console = true;
-        if (hold_checked_snprintf(r.console_sock, sizeof(r.console_sock), "%s", console_sock) != 0) {
-            hold_die_errno("hold: console socket path too long");
-        }
+        copy_field(&u, r.console_sock, sizeof(r.console_sock), console_sock, "hold: console socket path too long");
     }
     r.recipe.mode_interactive = interactive_stdin;
     r.recipe.mode_tty = console_mode;
     r.recipe.mode_detach = !tail && !console_mode;
     r.recipe.allow_multi = false;
     if (envc > 0 && hold_copy_argv(&r.recipe.env, envc, env) != 0) {
-        hold_die_errno("hold: failed to copy env metadata");
+        launch_die(&u, "hold: failed to copy env metadata");
     }
     r.recipe.envc = envc;
     if (restart_enabled) {
-        if (hold_checked_snprintf(r.recipe.restart_policy, sizeof(r.recipe.restart_policy), "%s", restart_policy) != 0) {
-            hold_die_errno("hold: restart policy too long");
-        }
+        copy_field(&u, r.recipe.restart_policy, sizeof(r.recipe.restart_policy), restart_policy, "hold: restart policy too long");
         r.recipe.has_restart_policy = true;
     }
-    r.recipe.restart_delay_seconds = restart_delay_seconds;
-    r.recipe.has_restart_delay = restart_delay_seconds > 0;
+    r.recipe.restart_delay_seconds = opts->restart_delay_seconds;
+    r.recipe.has_restart_delay = opts->restart_delay_seconds > 0;
     r.has_log = true;
-    if (hold_checked_snprintf(r.log_path, sizeof(r.log_path), "%s", log_path) != 0) {
-        hold_die_errno("hold: log path too long");
-    }
+    copy_field(&u, r.log_path, sizeof(r.log_path), log_path, "hold: log path too long");
     r.has_boot = has_boot;
     if (r.has_boot) {
         snprintf(r.boot_id, sizeof(r.boot_id), "%s", boot_id);
@@ -1148,148 +811,112 @@ static int perform_start_with_metadata_name_options_internal(const struct hold_i
         snprintf(r.cmdline, sizeof(r.cmdline), "?");
     }
     r.has_observed = true;
-    if (hold_checked_snprintf(r.observed_exe, sizeof(r.observed_exe), "%s", resolved_exec_path) != 0) {
-        hold_die_errno("hold: observed executable path too long");
-    }
-    if (hold_checked_snprintf(r.observed_cwd, sizeof(r.observed_cwd), "%s", observed_cwd) != 0) {
-        hold_die_errno("hold: observed cwd too long");
-    }
+    copy_field(&u, r.observed_exe, sizeof(r.observed_exe), resolved_exec_path, "hold: observed executable path too long");
+    copy_field(&u, r.observed_cwd, sizeof(r.observed_cwd), observed_cwd, "hold: observed cwd too long");
     r.observed_argc = argc;
     r.observed_argv = observed_argv;
 
     char record_path[HOLD_PATH_MAX] = {0};
-    bool chown_user_local_artifacts = store->kind == STORE_USER_LOCAL && inv && inv->euid_root && inv->have_sudo_user;
     if (getenv("HOLD_TEST_FAIL_RECORD_WRITE")) {
         errno = EIO;
-    } else if (hold_write_record_atomic(store->record_dir, &r, argc, launch_argv, record_path, sizeof(record_path)) == 0) {
-        if (chown_user_local_artifacts) {
-            int chown_rc = 0;
-            if (record_path[0] &&
-                lchown(record_path, inv->invoking_uid, inv->invoking_gid) != 0) {
-                chown_rc = -1;
-            }
-            if (lchown(log_path, inv->invoking_uid, inv->invoking_gid) != 0) {
-                chown_rc = -1;
-            }
-            if (console_sock[0] && hold_path_exists(console_sock) &&
-                lchown(console_sock, inv->invoking_uid, inv->invoking_gid) != 0) {
-                chown_rc = -1;
-            }
-            if (chown_rc != 0) {
-                int saved = errno ? errno : EIO;
-                hold_rollback_spawned_group(pid, pid);
-                kill_supervisor_if_distinct(supervisor_pid, pid);
-                if (record_path[0] && !restarting_existing) {
-                    unlink(record_path);
-                }
-                if (owns_new_log) unlink(log_path);
-                if (console_sock[0]) {
-                    unlink(console_sock);
-                }
-                unlink_if_nonempty(reserve_path);
-                free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-                errno = saved;
-                hold_die_errno("hold: failed to set user-local ownership");
-            }
-        }
-        if (store->kind == STORE_SYSTEM_MANAGED) {
-            int public_rc = 0;
-            if (getenv("HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE")) {
-                errno = EIO;
-                public_rc = -1;
-            } else if (hold_write_public_index_atomic(store, &r, NULL) != 0) {
-                public_rc = -1;
-            }
-            if (public_rc != 0) {
-                int saved = errno;
-                if (saved == 0) {
-                    saved = EIO;
-                }
-                hold_rollback_spawned_group(pid, pid);
-                kill_supervisor_if_distinct(supervisor_pid, pid);
-                if (record_path[0] && !restarting_existing) {
-                    unlink(record_path);
-                }
-                if (owns_new_log) unlink(log_path);
-                if (console_sock[0]) {
-                    unlink(console_sock);
-                }
-                unlink_if_nonempty(reserve_path);
-                free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-                char public_path[HOLD_PATH_MAX];
-                if (hold_checked_snprintf(public_path, sizeof(public_path), "%s/%s.json", store->public_dir, r.id) == 0) {
-                    unlink(public_path);
-                }
-                errno = saved;
-                hold_die_errno("hold: failed to write public index");
-            }
-        }
-        char display_id[ID_DISPLAY_HEX_LEN + 1];
-        hold_run_id_display(r.id, display_id);
-        if (inv->docker_run) {
-            /* Docker parity: detach prints the full ID alone; foreground prints nothing. */
-            if (!tail) {
-                printf("%s\n", r.id);
-            }
-        } else {
-            printf("%s\n", display_id);
-            hold_sig_note(inv,
-                     "hold  started  %s   %s\n"
-                     "         log      %s\n"
-                     "         tail     hold tail %s\n"
-                     "%s%s%s"
-                     "         stop     hold stop %s\n",
-                     display_id,
-                     r.cmdline[0] ? r.cmdline : "?",
-                     r.log_path,
-                     display_id,
-                     r.has_console ? "         console  hold console " : "",
-                     r.has_console ? display_id : "",
-                     r.has_console ? "\n" : "",
-                     display_id);
-        }
-        fflush(stdout);
+        launch_die(&u, "hold: failed to write record");
+    }
+    if (hold_write_record_atomic(store->record_dir, &r, argc, launch_argv, record_path, sizeof(record_path)) != 0) {
+        launch_die(&u, "hold: failed to write record");
+    }
+    if (!restarting_existing) {
+        u.record_path = record_path;
+    }
 
-        if (tail) {
-            free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-            int tail_rc = 0;
-            if (console_mode) {
-                tail_rc = hold_run_native_console(r.console_sock);
-            } else {
-                tail_rc = hold_tail_log_until_exit(&r, false, true);
-                if (tail_rc == 0) tail_rc = foreground_exit_status(store, r.id);
-            }
-            if (auto_remove) {
-                char boot[128];
-                const char *boot_id = hold_boot_id_or_null(boot);
-                bool removed = false;
-                int prune_rc = hold_prune_one_run(store, r.id, boot_id, true, &removed);
-                if (tail_rc == 0 && prune_rc != 0) tail_rc = prune_rc;
-            }
-            hold_free_argv_alloc(r.recipe.env, r.recipe.envc);
-            return tail_rc;
+    if (store->kind == STORE_USER_LOCAL && inv && inv->euid_root && inv->have_sudo_user) {
+        /* sudo-routed user-local launch: hand the artifacts back. */
+        int chown_rc = 0;
+        if (record_path[0] &&
+            lchown(record_path, inv->invoking_uid, inv->invoking_gid) != 0) {
+            chown_rc = -1;
         }
-        if (auto_remove) {
-            spawn_auto_remove_watcher(store, &r);
+        if (lchown(log_path, inv->invoking_uid, inv->invoking_gid) != 0) {
+            chown_rc = -1;
+        }
+        if (console_sock[0] && hold_path_exists(console_sock) &&
+            lchown(console_sock, inv->invoking_uid, inv->invoking_gid) != 0) {
+            chown_rc = -1;
+        }
+        if (chown_rc != 0) {
+            if (errno == 0) errno = EIO;
+            launch_die(&u, "hold: failed to set user-local ownership");
+        }
+    }
+    if (store->kind == STORE_SYSTEM_MANAGED) {
+        int public_rc = 0;
+        if (getenv("HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE")) {
+            errno = EIO;
+            public_rc = -1;
+        } else if (hold_write_public_index_atomic(store, &r, NULL) != 0) {
+            public_rc = -1;
+        }
+        if (public_rc != 0) {
+            int saved = errno ? errno : EIO;
+            char public_path[HOLD_PATH_MAX];
+            if (hold_checked_snprintf(public_path, sizeof(public_path), "%s/%s.json", store->public_dir, r.id) == 0) {
+                unlink(public_path);
+            }
+            errno = saved;
+            launch_die(&u, "hold: failed to write public index");
+        }
+    }
+
+    char display_id[ID_DISPLAY_HEX_LEN + 1];
+    hold_run_id_display(r.id, display_id);
+    if (inv->docker_run) {
+        /* Docker parity: detach prints the full ID alone; foreground prints nothing. */
+        if (!tail) {
+            printf("%s\n", r.id);
+        }
+    } else {
+        printf("%s\n", display_id);
+        hold_sig_note(inv,
+                 "hold  started  %s   %s\n"
+                 "         log      %s\n"
+                 "         tail     hold tail %s\n"
+                 "%s%s%s"
+                 "         stop     hold stop %s\n",
+                 display_id,
+                 r.cmdline[0] ? r.cmdline : "?",
+                 r.log_path,
+                 display_id,
+                 r.has_console ? "         console  hold console " : "",
+                 r.has_console ? display_id : "",
+                 r.has_console ? "\n" : "",
+                 display_id);
+    }
+    fflush(stdout);
+
+    if (tail) {
+        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
+        int tail_rc = 0;
+        if (console_mode) {
+            tail_rc = hold_run_native_console(r.console_sock);
+        } else {
+            tail_rc = hold_tail_log_until_exit(&r, false, true);
+            if (tail_rc == 0) tail_rc = foreground_exit_status(store, r.id);
+        }
+        if (opts->auto_remove) {
+            char boot[128];
+            const char *watch_boot = hold_boot_id_or_null(boot);
+            bool removed = false;
+            int prune_rc = hold_prune_one_run(store, r.id, watch_boot, true, &removed);
+            if (tail_rc == 0 && prune_rc != 0) tail_rc = prune_rc;
         }
         hold_free_argv_alloc(r.recipe.env, r.recipe.envc);
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-        return 0;
+        return tail_rc;
     }
-    {
-        int saved = errno;
-        hold_rollback_spawned_group(pid, pid);
-        kill_supervisor_if_distinct(supervisor_pid, pid);
-        unlink_if_nonempty(reserve_path);
-        if (owns_new_log) unlink(log_path);
-        if (console_sock[0]) {
-            unlink(console_sock);
-        }
-        free_launch_and_observed_argv(launch_argv, observed_argv, argc);
-        errno = saved;
-        hold_die_errno("hold: failed to write record");
+    if (opts->auto_remove) {
+        spawn_auto_remove_watcher(store, &r);
     }
-    return 1;
+    hold_free_argv_alloc(r.recipe.env, r.recipe.envc);
+    free_launch_and_observed_argv(launch_argv, observed_argv, argc);
+    return 0;
 }
 
 int hold_ensure_start_store_for_command(const struct hold_invocation *inv,

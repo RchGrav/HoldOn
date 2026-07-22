@@ -14,6 +14,21 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
 int hold_write_public_index_atomic(const struct hold_store *store, const struct hold_run_record *r,
                                      const char *observed_ports_csv);
 int hold_mark_run_finished(const struct hold_store *store, const char *id, int status);
+
+/* Two-phase creation, step 1: derive a collision-free hashed run id
+ * (hold-run-v1 material: exe, cwd, timestamp_ns, launcher pid, argc, argv[],
+ * counter; <=1024 probes) and hold its .<id>.reserve marker (O_EXCL 0600).
+ * A candidate colliding with ANY existing store material (record, .log,
+ * .reserve, .sock, public projection) is skipped. Commit is
+ * hold_write_record_atomic, which unlinks the reserve after the record
+ * rename; abort with hold_abort_run_reservation. */
+int hold_reserve_run_id(const struct hold_store *store,
+                        const char *resolved_exec_path,
+                        int argc, char **argv,
+                        const char *cwd,
+                        int64_t start_unix_ns,
+                        char out_id[ID_STR_LEN]);
+void hold_abort_run_reservation(const struct hold_store *store, const char *id);
 int hold_load_record(const char *path, struct hold_run_record *r);
 void hold_free_run_record(struct hold_run_record *r);
 int hold_load_public_index(const char *path, struct hold_public_index *pi);

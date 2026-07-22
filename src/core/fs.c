@@ -144,3 +144,37 @@ int hold_open_unique_temp(const char *dir, const char *prefix, mode_t mode, char
     errno = EEXIST;
     return -1;
 }
+
+/* Append-open a log path refusing symlinks on the directory and the file,
+ * then verify the result is a regular file. Creates 0600 when absent. */
+int hold_open_append_no_symlink(const char *path) {
+    const char *slash = path && *path ? strrchr(path, '/') : NULL;
+    if (!slash || slash == path || !slash[1]) {
+        errno = EINVAL;
+        return -1;
+    }
+    if ((size_t)(slash - path) >= HOLD_PATH_MAX) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    char dir[HOLD_PATH_MAX];
+    memcpy(dir, path, (size_t)(slash - path));
+    dir[slash - path] = '\0';
+    int dirfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (dirfd < 0) return -1;
+    int fd = openat(dirfd, slash + 1, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
+    int saved = errno;
+    close(dirfd);
+    if (fd < 0) {
+        errno = saved;
+        return -1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        saved = errno ? errno : EINVAL;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    return fd;
+}

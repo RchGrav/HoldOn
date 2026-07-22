@@ -48,6 +48,7 @@ int hold_chmod_dir_no_symlink(const char *dir, mode_t mode);
 int hold_chown_dir_no_symlink_if_root(const char *dir, uid_t uid, gid_t gid);
 int hold_read_owned_file_no_symlink(const char *path, char **out);
 int hold_open_unique_temp(const char *dir, const char *prefix, mode_t mode, char *tmp, size_t tmp_n);
+int hold_open_append_no_symlink(const char *path);
 bool hold_path_exists(const char *path);
 
 /* json */

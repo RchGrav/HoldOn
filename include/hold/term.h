@@ -24,6 +24,11 @@ struct hold_term_spawn {
 int hold_term_pty_spawn(const struct hold_term_spawn *spec,
                         int *master_out, pid_t *pid_out);
 
+/* THE CLOEXEC pipe: pipe2(O_CLOEXEC) where available, else pipe() + FD_CLOEXEC
+ * (acceptable: hold is single-threaded at every spawn site). Returns 0 with
+ * fds[0]=read, fds[1]=write, or -1 with errno set and nothing left open. */
+int hold_cloexec_pipe(int fds[2]);
+
 /* One drain step of a PTY master: reads once into buf[n], appends the bytes
  * to the indexed log, and returns them for caller fan-out (client, replay
  * ring, tty). Returns >0 bytes pumped; 0 when the target side is gone (EOF,

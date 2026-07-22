@@ -51,7 +51,7 @@ static int term_open_pty(int *master_out, int *slave_out,
     return 0;
 }
 
-static int term_cloexec_pipe(int fds[2]) {
+int hold_cloexec_pipe(int fds[2]) {
 #if defined(__linux__) && defined(O_CLOEXEC)
     if (pipe2(fds, O_CLOEXEC) == 0) {
         return 0;
@@ -69,6 +69,7 @@ static int term_cloexec_pipe(int fds[2]) {
         int saved = errno;
         close(fds[0]);
         close(fds[1]);
+        fds[0] = fds[1] = -1;
         errno = saved;
         return -1;
     }
@@ -95,7 +96,7 @@ int hold_term_pty_spawn(const struct hold_term_spawn *spec,
         return -1;
     }
     int hs[2];
-    if (term_cloexec_pipe(hs) != 0) {
+    if (hold_cloexec_pipe(hs) != 0) {
         int saved = errno;
         close(master);
         close(slave);
