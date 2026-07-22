@@ -47,13 +47,13 @@ int hold_ensure_user_store_for_current_user(struct hold_store *store) {
     if (init_user_store_for_current_user(store) != 0) {
         return -1;
     }
-    if (hold_mkdir_p0700(store->base) != 0) {
+    if (hold_mkdir_p_mode(store->base, 0700) != 0) {
         return -1;
     }
     if (hold_chmod_dir_no_symlink(store->base, 0700) != 0) {
         return -1;
     }
-    if (hold_mkdir_p0700(store->console_dir) != 0 ||
+    if (hold_mkdir_p_mode(store->console_dir, 0700) != 0 ||
         hold_chmod_dir_no_symlink(store->console_dir, 0700) != 0) {
         return -1;
     }
@@ -69,7 +69,7 @@ static int ensure_user_store_from_home_owned(const char *home, uid_t uid, gid_t 
         hold_checked_snprintf(state_dir, sizeof(state_dir), "%s/.local/state", home) != 0) {
         return -1;
     }
-    if (hold_mkdir_p0700(store->base) != 0 ||
+    if (hold_mkdir_p_mode(store->base, 0700) != 0 ||
         hold_chmod_dir_no_symlink(local_dir, 0700) != 0 ||
         chown_if_root(local_dir, uid, gid) != 0 ||
         hold_chmod_dir_no_symlink(state_dir, 0700) != 0 ||
@@ -78,7 +78,7 @@ static int ensure_user_store_from_home_owned(const char *home, uid_t uid, gid_t 
         chown_if_root(store->base, uid, gid) != 0) {
         return -1;
     }
-    if (hold_mkdir_p0700(store->console_dir) != 0 ||
+    if (hold_mkdir_p_mode(store->console_dir, 0700) != 0 ||
         hold_chmod_dir_no_symlink(store->console_dir, 0700) != 0 ||
         chown_if_root(store->console_dir, uid, gid) != 0) {
         return -1;

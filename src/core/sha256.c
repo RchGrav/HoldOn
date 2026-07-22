@@ -2,10 +2,6 @@
 #include "hold/types.h"
 #include "hold/core.h"
 
-static uint32_t rotr32(uint32_t x, unsigned n);
-static void sha256_block(struct sha256_ctx *c, const unsigned char *p);
-static void sha256_update_cstr(struct sha256_ctx *ctx, const char *s);
-
 static uint32_t rotr32(uint32_t x, unsigned n) {
     return (x >> n) | (x << (32 - n));
 }
@@ -87,6 +83,15 @@ void hold_sha256_final(struct sha256_ctx *c, unsigned char out[32]) {
     }
 }
 
+/* Hashes s (NULL reads as "") plus a terminating NUL, so a sequence of fields
+ * hashes injectively: no concatenation of fields can collide with another. */
+void hold_sha256_update_nul_field(struct sha256_ctx *ctx, const char *s) {
+    static const unsigned char nul = 0;
+    if (!s) s = "";
+    hold_sha256_update(ctx, s, strlen(s));
+    hold_sha256_update(ctx, &nul, 1);
+}
+
 void hold_hex_encode(const unsigned char *bytes, size_t n, char *out, size_t out_n) {
     static const char hex[] = "0123456789abcdef";
     if (out_n < n * 2 + 1) {
@@ -98,58 +103,4 @@ void hold_hex_encode(const unsigned char *bytes, size_t n, char *out, size_t out
         out[i * 2 + 1] = hex[bytes[i] & 0x0f];
     }
     out[n * 2] = '\0';
-}
-
-int hold_rand_bytes(uint8_t *buf, size_t n) {
-    size_t off = 0;
-#if defined(__linux__)
-    bool fallback = false;
-    while (off < n && !fallback) {
-        ssize_t r = getrandom(buf + off, n - off, 0);
-        if (r > 0) {
-            off += (size_t)r;
-            continue;
-        }
-        if (r < 0 && errno == EINTR) {
-            continue;
-        }
-        if (r < 0 && (errno == ENOSYS || errno == EINVAL)) {
-            fallback = true;
-            break;
-        }
-        return -1;
-    }
-    if (!fallback) {
-        return 0;
-    }
-#endif
-
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd < 0) {
-        return -1;
-    }
-    while (off < n) {
-        ssize_t x = read(fd, buf + off, n - off);
-        if (x > 0) {
-            off += (size_t)x;
-            continue;
-        }
-        if (x < 0 && errno == EINTR) {
-            continue;
-        }
-        close(fd);
-        return -1;
-    }
-    close(fd);
-    return 0;
-}
-
-static void sha256_update_cstr(struct sha256_ctx *ctx, const char *s) {
-    hold_sha256_update(ctx, s, strlen(s));
-}
-
-void hold_sha256_update_nul_field(struct sha256_ctx *ctx, const char *s) {
-    static const unsigned char nul = 0;
-    sha256_update_cstr(ctx, s ? s : "");
-    hold_sha256_update(ctx, &nul, 1);
 }

@@ -2,79 +2,42 @@
 #include "hold/types.h"
 #include "hold/core.h"
 
-bool hold_valid_id(const char *id) {
-    if (!id) {
-        return false;
-    }
-    size_t len = strlen(id);
-    if (len != ID_HEX_LEN) {
-        return false;
-    }
+static bool all_lower_hex(const char *s, size_t len) {
     for (size_t i = 0; i < len; i++) {
-        if (!isdigit((unsigned char)id[i]) && !(id[i] >= 'a' && id[i] <= 'f')) {
-            return false;
-        }
+        if (!isdigit((unsigned char)s[i]) && !(s[i] >= 'a' && s[i] <= 'f')) return false;
     }
     return true;
 }
 
+bool hold_valid_id(const char *id) {
+    return id && strlen(id) == ID_HEX_LEN && all_lower_hex(id, ID_HEX_LEN);
+}
+
 bool hold_record_json_filename_id(const char *name, char *id, size_t n) {
-    if (!name || !hold_has_suffix(name, ".json")) {
-        return false;
-    }
-    size_t len = strlen(name);
-    size_t id_len = len - 5;
-    if (id_len + 1 > n) {
-        return false;
-    }
+    if (!name || !hold_has_suffix(name, ".json")) return false;
+    size_t id_len = strlen(name) - 5;
+    if (id_len + 1 > n) return false;
     memcpy(id, name, id_len);
     id[id_len] = '\0';
     return hold_valid_id(id);
 }
 
 bool hold_valid_id_prefix(const char *id) {
-    if (!id) {
-        return false;
-    }
+    if (!id) return false;
     size_t len = strlen(id);
-    if (len < 1 || len > ID_HEX_LEN) {
-        return false;
-    }
-    for (size_t i = 0; i < len; i++) {
-        if (!isdigit((unsigned char)id[i]) && !(id[i] >= 'a' && id[i] <= 'f')) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool hold_valid_profile_hash(const char *hash) {
-    if (!hash || strlen(hash) != PROFILE_HASH_HEX_LEN) {
-        return false;
-    }
-    for (size_t i = 0; i < PROFILE_HASH_HEX_LEN; i++) {
-        if (!isdigit((unsigned char)hash[i]) && !(hash[i] >= 'a' && hash[i] <= 'f')) {
-            return false;
-        }
-    }
-    return true;
+    return len >= 1 && len <= ID_HEX_LEN && all_lower_hex(id, len);
 }
 
 /* Validates a call name (the identifier kept for its own sake, not the deleted
- * profile-era alias). The function name predates the rename and is left as-is. */
+ * profile-era alias). A name that looks like a full run id is rejected so
+ * names can never shadow ids in resolution. */
 bool hold_valid_alias(const char *alias) {
-    if (!alias) {
-        return false;
-    }
+    if (!alias) return false;
     size_t len = strlen(alias);
-    if (len == 0 || len > ALIAS_MAX_LEN || hold_valid_profile_hash(alias)) {
-        return false;
-    }
+    if (len == 0 || len > ALIAS_MAX_LEN || hold_valid_id(alias)) return false;
     for (size_t i = 0; i < len; i++) {
         unsigned char c = (unsigned char)alias[i];
-        if (!(isalnum(c) || c == '_' || c == '-')) {
-            return false;
-        }
+        if (!(isalnum(c) || c == '_' || c == '-')) return false;
     }
     return true;
 }
@@ -85,15 +48,11 @@ bool hold_valid_record(const struct hold_run_record *r) {
 }
 
 static int parse_id_number_env(const char *s, unsigned long long *out) {
-    if (!s || !*s) {
-        return -1;
-    }
+    if (!s || !*s) return -1;
     char *end = NULL;
     errno = 0;
     unsigned long long v = strtoull(s, &end, 10);
-    if (end == s || *end != '\0' || errno != 0) {
-        return -1;
-    }
+    if (end == s || *end != '\0' || errno != 0) return -1;
     *out = v;
     return 0;
 }

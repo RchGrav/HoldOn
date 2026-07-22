@@ -61,7 +61,7 @@ test: $(TEST_OBJS)
 	@$(MAKE) test-040
 
 viewer-filter-test:
-	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logging.c src/core/json.c src/core/util.c src/platform/paths.c
+	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logidx.c src/core/json.c src/core/util.c src/platform/paths.c
 	@./viewer-filter-test
 
 test-040: hold-dynamic

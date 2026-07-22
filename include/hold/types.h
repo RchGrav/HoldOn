@@ -4,7 +4,7 @@
 
 /* Shared domain types crossing module boundaries. Definitions only, no code.
  * config.h supplies the fixed-width integer / POSIX types and the size macros
- * (HOLD_PATH_MAX, PROFILE_HASH_STR_LEN, ALIAS_MAX_LEN, ...) used below. */
+ * (HOLD_PATH_MAX, ID_STR_LEN, ALIAS_MAX_LEN, ...) used below. */
 #include "hold/config.h"
 
 struct hold_recipe {

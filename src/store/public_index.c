@@ -134,7 +134,7 @@ out:
 int hold_load_public_index(const char *path, struct hold_public_index *pi) {
     memset(pi, 0, sizeof(*pi));
     char *j = NULL;
-    if (hold_read_small_file(path, &j) != 0) {
+    if (hold_read_owned_file_no_symlink(path, &j) != 0) {
         return -1;
     }
     if (hold_json_get_str(j, "id", pi->id, sizeof(pi->id)) != 0 ||

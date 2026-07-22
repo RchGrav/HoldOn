@@ -649,7 +649,7 @@ static char *build_stdio_object(pid_t pid) {
  * object, so the last '}' in the file is its terminator. */
 static int write_inspect_with_stdio(const char *path, const char *stdio_obj) {
     char *buf = NULL;
-    if (hold_read_small_file(path, &buf) != 0 || !buf) {
+    if (hold_read_owned_file_no_symlink(path, &buf) != 0 || !buf) {
         return -1;
     }
     char *close = strrchr(buf, '}');

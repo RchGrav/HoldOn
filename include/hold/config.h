@@ -27,9 +27,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <termios.h>
-#if defined(__linux__)
-#include <sys/random.h>
-#endif
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <libproc.h>
@@ -45,8 +42,6 @@
 #define ID_DISPLAY_HEX_LEN 12
 #define ID_HEX_LEN 64
 #define ID_STR_LEN (ID_HEX_LEN + 1)
-#define PROFILE_HASH_HEX_LEN 64
-#define PROFILE_HASH_STR_LEN (PROFILE_HASH_HEX_LEN + 1)
 #define ALIAS_MAX_LEN 64
 #define STOP_TIMEOUT_MS 5000
 #define POLL_SLEEP_MS 25
