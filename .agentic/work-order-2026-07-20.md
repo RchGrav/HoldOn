@@ -318,6 +318,17 @@ Open design decisions for Rich (spec tension, do not implement unilaterally):
 
 ## 6. WO-6 — Sidecar v2 + playback (killer-feature backlog, post-repair)
 
+**ACTIVATED 2026-07-21 by Rich's /goal directive — binding spec now at
+`docs/future/playback.md`** (transport keys: Space pause/resume-1x, `.` FF
+multistep, `,` RW multistep [interpretation of his "(.)" pair — confirm],
+Ctrl-T/UTC-local/monotonic matching the viewer; sidecar self-healing:
+corrupt → CRC-anchor realignment, missing → synthetic rebuild @50 ms from
+file birth time, synthetic timing labeled in chrome). Second /goal (07-22)
+added: transport live during tail; time-travel attach via Ctrl-P Ctrl-W
+freeze with return-to-realtime by edge-scrub or repeat sequence; ANSI TUI
+detection + pty stream tagging. Ships as the "final touches" campaign
+immediately after the Phase 2 rewrite seals.
+
 v1 sidecar (16 B entries: offset:44, len−1:20, delta_µs:48, meta:16; header
 carries version/entry_size — cleanly upgradeable). Vision from 2026-07-20
 discussion:
