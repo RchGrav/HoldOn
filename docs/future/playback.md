@@ -13,22 +13,23 @@ places with one set of physics:
 2. **During tail/follow** — the transport keys are live while tailing: `.`
    `,` Space scrub the recorded history mid-tail; returning to the live
    edge resumes the tail.
-3. **Attached to a live console (time-travel)** — `Ctrl-P Ctrl-V` (V for
-   viewer; revision history: Ctrl-W rejected — it is the viewer's wrap
-   toggle; Ctrl-L rejected — it is the viewer's line-numbers toggle, and
-   landing in a surface where your entry key means something else is the
-   same dissonance; doubled Ctrl-P stays reserved for sending a literal
-   Ctrl-P, which emacs-bound shells need constantly; Ctrl-V is unclaimed
-   in the viewer's key map). The sequence does not bolt scrub controls
-   into attach — it **enters the log viewer** over the same indexed log,
-   paused at the live edge, input to the held process suspended. There is
-   ONE playback implementation and it lives in the viewer; attach merely
-   switches surfaces. Inside, every key is the viewer's own — no prefix
-   needed, exactly as in normal `hold logs`. **Return to real time by
-   scrubbing forward to the realtime edge or by leaving the viewer
-   surface** — the live edge is never more than one gesture away. The
-   detach FSM grows the one suffix: Q detaches, V freezes-into-viewer.
-   The lone-Ctrl-P 500 ms flush rule is unchanged.
+3. **Attached to a live console (time-travel)** — **tap `Ctrl-P` twice**
+   (Rich's final ruling, 2026-07-22, superseding the Ctrl-W/Ctrl-L/Ctrl-V
+   candidates). The jump is **transparent**: you are watching real time in
+   the shell; after the double-tap you are *still watching real time,
+   still tailing* — the only change is the viewer's toolbars appear.
+   Entry state is live-tail-with-chrome, NOT paused. From there rewind,
+   scrub, or freeze are one keystroke away, and input to the held process
+   is suspended only while you actually leave the live edge. Leaving the
+   viewer (Esc) returns to the bare attached console at real time.
+   - Misfire ergonomics (accepted trade): an emacs-bound user scrolling
+     shell history with rapid Ctrl-P taps may jump into the viewer; the
+     cost is one Esc, because the jump changes nothing about the live
+     stream. A single Ctrl-P still reaches the application via the
+     unchanged lone-Ctrl-P 500 ms flush. Ctrl-P Ctrl-Q detach unchanged.
+   - There is ONE playback implementation and it lives in the viewer;
+     attach merely switches surfaces. Inside, every key is the viewer's
+     own — no prefix needed, exactly as in normal `hold logs`.
 
 ### The viewer's canonical key map (Rich, 2026-07-22 — authority for collisions)
 
@@ -49,7 +50,20 @@ zap-exclude. Display toggles (Ctrl-T, Ctrl-U, Ctrl-W, Ctrl-Y, Ctrl-L) work
 identically in both modes — one set of physics. Filtering keys (type,
 Backspace, Space-zap, Ctrl-R) are browse-mode keys. Esc leaves the current
 mode: playback → browse; browse → quit (or back to attach realtime when
-the viewer was entered via Ctrl-P Ctrl-V).
+the viewer was entered via the Ctrl-P double-tap).
+
+### Two content kinds, two control sets (Rich, 2026-07-22)
+
+The stream tag decides what the viewer is looking at, and the controls
+follow the content — line physics on lines, screen physics on screens:
+
+- **Line log** (stdout/stderr-tagged): the full map — filter as you type,
+  zap, selection, line numbers, plus transport when playing back.
+- **Screen recording** (pty-tagged / ANSI-TUI detected): transport,
+  timestamps (Ctrl-T/Ctrl-U), and seek only. Searching, excluding,
+  type-to-filter, selection, and line numbers are **absent** — a screen is
+  not lines, and offering line controls there "doesn't match the mode."
+  The help overlay shows only the keys that exist in the current kind.
 
 ## ANSI TUI detection and recording
 
