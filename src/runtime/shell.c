@@ -275,6 +275,21 @@ static int relay_shell_pty(int master, pid_t child, bool *detached) {
     }
 }
 
+/* Tear down the guarded shell without ever blocking forever. A shell that
+ * traps SIGHUP or is slow to honor it (a job-control race at startup) must not
+ * wedge the proxy in waitpid, so escalate to the uncatchable SIGKILL after a
+ * bounded grace period, mirroring the TERM-then-KILL ladder `hold end` uses. */
+static void end_session_child(pid_t child) {
+    kill(child, SIGHUP);
+    for (int i = 0; i < 20; i++) { /* ~1s of grace, 50 ms per step */
+        if (waitpid(child, NULL, WNOHANG) == child) return;
+        poll(NULL, 0, 50);
+    }
+    kill(child, SIGKILL);
+    while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {
+    }
+}
+
 int hold_cmd_shell_action(const struct hold_invocation *inv, const struct hold_store *store) {
     const char *shell = resolve_user_shell();
 
@@ -334,8 +349,7 @@ int hold_cmd_shell_action(const struct hold_invocation *inv, const struct hold_s
     }
     if (g_hold_on_off_requested && !detached) {
         /* `hold off`: end the wrapper shell cleanly and return success. */
-        kill(child, SIGHUP);
-        waitpid(child, NULL, 0);
+        end_session_child(child);
         close(master);
         return 0;
     }

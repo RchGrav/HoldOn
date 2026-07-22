@@ -202,6 +202,20 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
         hold_free_run_record(&r);
         return 1;
     }
+    /* A concurrent `hold save`/rename may have set the saved flag or renamed
+     * the call after our load above. The exit stamp owns only state/exit code;
+     * re-read the user-owned fields from the current record so this write does
+     * not clobber that update (lost update). Best-effort: on a transient read
+     * failure keep our loaded values. The residual window is the same
+     * re-read-to-rename gap the stat check above already tolerates. */
+    struct hold_run_record cur;
+    char cur_path[HOLD_PATH_MAX];
+    if (hold_load_record_by_id(store->record_dir, id, &cur, cur_path, sizeof(cur_path)) == 0) {
+        r.saved = cur.saved;
+        r.has_name = cur.has_name;
+        if (cur.has_name) snprintf(r.name, sizeof(r.name), "%s", cur.name);
+        hold_free_run_record(&cur);
+    }
     char rewritten_path[HOLD_PATH_MAX] = {0};
     int rc = hold_write_record_atomic(store->record_dir, &r, argc, argv, rewritten_path, sizeof(rewritten_path));
     if (rc == 0 && have_old_st && geteuid() == 0 && rewritten_path[0]) {

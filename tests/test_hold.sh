@@ -590,6 +590,7 @@ test_lifecycle() {
   printf '%s\n' "$id" | grep -Eq '^[0-9a-f]{12}$' || return 1
   "$HOLD_BIN" list | grep -Eq "^$id[[:space:]].*Up "
   "$HOLD_BIN" end "$id" >/dev/null
+  record_ended_soon "$id" || return 1
   "$HOLD_BIN" list -a | grep -Eq "^$id[[:space:]].*Exited"
   "$HOLD_BIN" purge >/dev/null
   lines=$("$HOLD_BIN" list -a | wc -l)
@@ -3101,8 +3102,10 @@ test_purge_targeted_refuses_saved_exact_wording() {
   id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
   [ -n "$id" ] || return 1
   name=$(record_name "$id") || return 1
-  "$HOLD_BIN" save "$id" >/dev/null 2>&1 || return 1
+  # Let the reaper's exit stamp land before saving, so save is the last writer
+  # and the saved flag cannot be lost to the finish-write.
   record_ended_soon "$id" || return 1
+  "$HOLD_BIN" save "$id" >/dev/null 2>&1 || return 1
   # Refusal by name: line 1 identifies by name, line 2 echoes the typed token.
   set +e; "$HOLD_BIN" purge "$name" >"$TEST_ROOT/refuse.out" 2>"$TEST_ROOT/refuse.err"; rc=$?; set -e
   [ "$rc" -eq 2 ] || { echo "targeted refusal rc=$rc (want 2)" >&2; cat "$TEST_ROOT/refuse.err" >&2; return 1; }
