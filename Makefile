@@ -21,6 +21,7 @@ SRCS := $(wildcard src/*.c) \
         $(wildcard src/core/*.c) \
         $(wildcard src/platform/*.c) \
         $(wildcard src/store/*.c) \
+        $(wildcard src/term/*.c) \
         $(wildcard src/console/*.c) \
         $(wildcard src/access/*.c) \
         $(wildcard src/runtime/*.c) \

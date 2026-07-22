@@ -4,6 +4,7 @@
 #include "hold/core.h"
 #include "hold/store.h"
 #include "hold/platform.h"
+#include "hold/term.h"
 #include "hold/console_internal.h"
 
 #include <poll.h>
@@ -30,7 +31,6 @@ static void broker_cleanup_and_exit(int parent_pipe,
                                     const char *sock_path,
                                     int listener,
                                     int master,
-                                    int slave,
                                     int logfd,
                                     int logidxfd,
                                     pid_t target,
@@ -39,7 +39,6 @@ static void broker_fail_errno(int parent_pipe,
                               const char *sock_path,
                               int listener,
                               int master,
-                              int slave,
                               int logfd,
                               int logidxfd,
                               pid_t target,
@@ -77,7 +76,6 @@ static void broker_cleanup_and_exit(int parent_pipe,
                                     const char *sock_path,
                                     int listener,
                                     int master,
-                                    int slave,
                                     int logfd,
                                     int logidxfd,
                                     pid_t target,
@@ -92,7 +90,6 @@ static void broker_cleanup_and_exit(int parent_pipe,
     if (parent_pipe >= 0) close(parent_pipe);
     if (listener >= 0) close(listener);
     if (master >= 0) close(master);
-    if (slave >= 0) close(slave);
     if (logidxfd >= 0) close(logidxfd);
     if (logfd >= 0) close(logfd);
     if (sock_path && *sock_path) unlink(sock_path);
@@ -103,7 +100,6 @@ static void broker_fail_errno(int parent_pipe,
                               const char *sock_path,
                               int listener,
                               int master,
-                              int slave,
                               int logfd,
                               int logidxfd,
                               pid_t target,
@@ -112,7 +108,7 @@ static void broker_fail_errno(int parent_pipe,
         err = EIO;
     }
     (void)hold_write_all(parent_pipe, &err, sizeof(err));
-    broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, 127);
+    broker_cleanup_and_exit(parent_pipe, sock_path, listener, master, logfd, logidxfd, target, 127);
 }
 
 static int set_fd_nonblocking(int fd) {
@@ -159,116 +155,45 @@ void hold_run_console_broker(int parent_pipe,
                                unsigned short init_cols) {
     int listener = -1;
     int master = -1;
-    int slave = -1;
     int logfd = -1;
     int logidxfd = -1;
     pid_t target = -1;
 
     if (argc <= 0 || !argv || !argv[0]) {
-        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, EINVAL);
+        broker_fail_errno(parent_pipe, sock_path, listener, master, logfd, logidxfd, target, EINVAL);
     }
 
     listener = hold_make_console_listener(sock_path);
     if (listener < 0) {
-        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
+        broker_fail_errno(parent_pipe, sock_path, listener, master, logfd, logidxfd, target, errno);
     }
     logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
     logidxfd = logfd >= 0 ? hold_open_log_index_fd(log_path, logfd) : -1;
     if (logfd < 0) {
-        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
-    }
-    if (hold_open_console_pty(&master, &slave, init_rows, init_cols) != 0) {
-        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
+        broker_fail_errno(parent_pipe, sock_path, listener, master, logfd, logidxfd, target, errno);
     }
 
-    int exec_pipe[2];
-#if defined(__linux__) && defined(O_CLOEXEC)
-    if (pipe2(exec_pipe, O_CLOEXEC) != 0)
-#endif
-    {
-        /* Non-Linux builds set FD_CLOEXEC after pipe(); unlike pipe2(O_CLOEXEC),
-         * that is not atomic with respect to concurrent fork/exec in a
-         * multi-threaded process. The broker reaches this path before it starts
-         * any broker-owned threads, so this fallback is acceptable here. */
-        if (pipe(exec_pipe) != 0) {
-            broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
-        }
-        if (fcntl(exec_pipe[0], F_SETFD, FD_CLOEXEC) != 0 ||
-            fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC) != 0) {
-            int saved = errno;
-            close(exec_pipe[0]);
-            close(exec_pipe[1]);
-            broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, saved);
-        }
-    }
-
-    target = fork();
-    if (target < 0) {
-        int saved = errno;
-        close(exec_pipe[0]);
-        close(exec_pipe[1]);
-        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, saved);
-    }
-    if (target == 0) {
-        close(exec_pipe[0]);
-        close(listener);
-        close(master);
-        close(logfd);
-        /* Become a session leader and claim the PTY slave as our controlling
-         * terminal. This scopes terminal-generated signals and the foreground
-         * process group to the target (so Ctrl-C interrupts the child instead of
-         * killing the broker) and lets interactive shells run job control. */
-        if (setsid() < 0) {
-            int e = errno;
-            (void)hold_write_all(exec_pipe[1], &e, sizeof(e));
-            _exit(127);
-        }
-#ifdef TIOCSCTTY
-        if (ioctl(slave, TIOCSCTTY, 0) != 0) {
-            int e = errno;
-            (void)hold_write_all(exec_pipe[1], &e, sizeof(e));
-            _exit(127);
-        }
-#endif
-        if (dup2(slave, STDIN_FILENO) < 0 ||
-            dup2(slave, STDOUT_FILENO) < 0 ||
-            dup2(slave, STDERR_FILENO) < 0) {
-            int e = errno;
-            (void)hold_write_all(exec_pipe[1], &e, sizeof(e));
-            _exit(127);
-        }
-        if (slave > STDERR_FILENO) {
-            close(slave);
-        }
-        if (exec_path && *exec_path) {
-            execv(exec_path, argv);
-        } else {
-            execvp(argv[0], argv);
-        }
-        int e = errno;
-        (void)hold_write_all(exec_pipe[1], &e, sizeof(e));
-        _exit(127);
-    }
-
-    close(exec_pipe[1]);
-    int child_errno = 0;
-    int handshake = hold_read_exec_handshake(exec_pipe[0], &child_errno);
-    int handshake_errno = errno;
-    close(exec_pipe[0]);
-    close(slave);
-    slave = -1;
-    if (handshake < 0) {
-        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, handshake_errno);
-    }
-    if (handshake > 0) {
-        broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, child_errno);
+    /* The one spawn engine puts the target on a fresh PTY (setsid + TIOCSCTTY
+     * + dup2 x3 + exec behind the errno handshake). On failure nothing is
+     * left open or unreaped, and the errno rides our own handshake pipe up to
+     * the launching parent. The broker's listener/log fds are all CLOEXEC, so
+     * the target never inherits them past exec. */
+    struct hold_term_spawn spawn = {
+        .argv = argv,
+        .exec_path = exec_path,
+        .cwd = NULL,
+        .rows = init_rows,
+        .cols = init_cols,
+    };
+    if (hold_term_pty_spawn(&spawn, &master, &target) != 0) {
+        broker_fail_errno(parent_pipe, sock_path, listener, master, logfd, logidxfd, target, errno);
     }
     /* Report the real held group to the parent before releasing the handshake:
      * a failed write must still ride the handshake pipe as an errno, and the
      * write-before-close ordering keeps the parent's pid read deadlock-free. */
     if (target_pid_fd >= 0) {
         if (hold_write_all(target_pid_fd, &target, sizeof(target)) != 0) {
-            broker_fail_errno(parent_pipe, sock_path, listener, master, slave, logfd, logidxfd, target, errno);
+            broker_fail_errno(parent_pipe, sock_path, listener, master, logfd, logidxfd, target, errno);
         }
         close(target_pid_fd);
     }
@@ -443,16 +368,15 @@ static void broker_serve(const struct hold_store *store,
         }
         if (master_events & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) {
             char buf[4096];
-            ssize_t n = read(master, buf, sizeof(buf));
+            ssize_t n = hold_term_pump_master(master, logfd, logidxfd, buf, sizeof(buf));
             if (n > 0) {
-                (void)hold_write_indexed_log_bytes_fd(logfd, logidxfd, "stdout", buf, (size_t)n);
                 hold_console_replay_append(&replay, buf, (size_t)n);
                 if (client >= 0 && hold_write_all(client, buf, (size_t)n) != 0) {
                     close(client);
                     client = -1;
                     client_input_closed = false;
                 }
-            } else if (n == 0 || errno == EIO) {
+            } else if (n == 0) {
                 break;
             }
         }
@@ -496,5 +420,5 @@ static void broker_serve(const struct hold_store *store,
     if (have_old_pipe) {
         sigaction(SIGPIPE, &old_pipe, NULL);
     }
-    broker_cleanup_and_exit(-1, sock_path, listener, master, -1, logfd, logidxfd, adopted ? -1 : target, 0);
+    broker_cleanup_and_exit(-1, sock_path, listener, master, logfd, logidxfd, adopted ? -1 : target, 0);
 }

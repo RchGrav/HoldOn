@@ -12,9 +12,10 @@ viol() {
     fail=1
   fi
 }
-viol "src/core include/hold/core.h"                                          'platform|store|console|access|runtime|cli'
-viol "src/platform include/hold/platform.h"                                  'store|console|access|runtime|cli'
-viol "src/store include/hold/store.h"                                        'console|access|runtime|cli'
+viol "src/core include/hold/core.h"                                          'platform|store|term|console|access|runtime|cli'
+viol "src/platform include/hold/platform.h"                                  'store|term|console|access|runtime|cli'
+viol "src/store include/hold/store.h"                                        'term|console|access|runtime|cli'
+viol "src/term include/hold/term.h"                                          'console|access|runtime|cli'
 viol "src/console include/hold/console.h include/hold/console_internal.h" 'access|runtime|cli'
 viol "src/access include/hold/access.h"                                      'runtime|cli'
 viol "src/runtime include/hold/runtime.h include/hold/runtime_internal.h" 'cli'
