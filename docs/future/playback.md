@@ -15,7 +15,12 @@ places with one set of physics:
    edge resumes the tail.
 3. **Attached to a live console (time-travel)** — **tap `Ctrl-P` twice**
    (Rich's final ruling, 2026-07-22, superseding the Ctrl-W/Ctrl-L/Ctrl-V
-   candidates). The jump is **transparent**: you are watching real time in
+   candidates). This works in **every attached-PTY surface identically**:
+   the launch-time foreground console, an adopted `hold on` session, and a
+   later `hold attach` — reattach reaches the mode just the same. For
+   reattach this quietly retires a documented limitation: the bare rejoin
+   still replays the 64 KiB ring, but the full indexed history is now one
+   double-tap away, because the viewer walks the whole log, not the ring. The jump is **transparent**: you are watching real time in
    the shell; after the double-tap you are *still watching real time,
    still tailing* — the only change is the viewer's toolbars appear.
    Entry state is live-tail-with-chrome, NOT paused. From there rewind,
