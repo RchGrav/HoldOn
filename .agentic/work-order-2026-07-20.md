@@ -1,5 +1,24 @@
 # Work order — deep-dive findings and repair plan (2026-07-20)
 
+## RECONSTRUCTION ACTIVE (2026-07-21 evening) — read first on resume
+
+The from-scratch reconstruction (Rich's directive: inventory, then rebuild;
+same featureset, smaller tool) is underway. Phase 1+1.5 COMPLETE, all in
+`.agentic/reconstruction/`: bill-of-materials.md (mechanism-verified all
+layers, intrinsic total ~8,850, band 8,600–9,100 — target survives at band
+top, sub-8.5k off the table), blueprint.md (five duplication-erasing ideas
++ layer DAG + reconciled budgets ~8,940), contract-gaps.md (43 gaps; 11 P1
+pinned green, G42 wired test-040 into make test, D-G18 divergence recorded:
+docs promise `logs -p -t/--date`, code rejects — recommend implement, not
+de-document). Contract now 160 tests: Linux 160/0/0, macOS 141/2/17 (only
+the two deliberate WO-8 observe.c proofs fail). Phase 2 = strangler swaps
+per blueprint order, generation discipline (fresh builder + adversarial
+validator per module, ledger, both platforms gate). Known agent failure
+mode, thrice observed: builders piping the suite and "waiting on a
+monitor" — Phase 2 prompts mandate synchronous suite-to-file with explicit
+timeout. Open: D-6 (term keys+screen must net out vs absorbed tty.c code;
+recommend build keys+screen, defer term/vt) and D-G18 above.
+
 ## RECONCILIATION PENDING (2026-07-21) — read first on resume
 
 Two independent improvement lineages exist and must be reconciled:
