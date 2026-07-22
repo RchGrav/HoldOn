@@ -58,6 +58,7 @@ test: $(TEST_OBJS)
 	@$(MAKE) viewer-filter-test
 	@bash tests/test_version_makefile.sh
 	@bash tests/test_release_installer.sh
+	@$(MAKE) test-040
 
 viewer-filter-test:
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logging.c src/core/json.c src/core/util.c src/platform/paths.c
