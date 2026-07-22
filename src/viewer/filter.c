@@ -33,9 +33,7 @@ void hold_log_filter_options_init(struct hold_log_filter_options *opts) {
 
 void hold_log_filter_result_free(struct hold_log_filter_result *result) {
     if (!result) return;
-    if (result->lines) {
-        for (size_t i = 0; i < result->line_count; i++) free(result->lines[i]);
-    }
+    if (result->lines) for (size_t i = 0; i < result->line_count; i++) free(result->lines[i]);
     free(result->lines);
     free(result->line_offsets);
     free(result->match_offsets);
@@ -52,9 +50,7 @@ static uint32_t fnv1a_lower_token(const char *s, size_t n) {
 }
 
 static bool profile_has(const struct term_profile *profile, uint32_t h) {
-    for (size_t i = 0; i < profile->count; i++) {
-        if (profile->terms[i] == h) return true;
-    }
+    for (size_t i = 0; i < profile->count; i++) if (profile->terms[i] == h) return true;
     return false;
 }
 
@@ -79,9 +75,7 @@ static void build_profile(const char *line, struct term_profile *profile) {
 static double dice_similarity(const struct term_profile *a, const struct term_profile *b) {
     if (a->count == 0 || b->count == 0) return 0.0;
     size_t common = 0;
-    for (size_t i = 0; i < a->count; i++) {
-        if (profile_has(b, a->terms[i])) common++;
-    }
+    for (size_t i = 0; i < a->count; i++) if (profile_has(b, a->terms[i])) common++;
     return (2.0 * (double)common) / (double)(a->count + b->count);
 }
 
@@ -89,9 +83,7 @@ static bool line_matches_profiles(const struct term_profile *examples, size_t co
     if (count == 0) return false;
     struct term_profile line_profile;
     build_profile(line, &line_profile);
-    for (size_t i = 0; i < count; i++) {
-        if (dice_similarity(&line_profile, &examples[i]) >= threshold) return true;
-    }
+    for (size_t i = 0; i < count; i++) if (dice_similarity(&line_profile, &examples[i]) >= threshold) return true;
     return false;
 }
 
@@ -131,27 +123,10 @@ static char *dup_line(const char *line, size_t n) {
     return copy;
 }
 
-static int push_visible(struct hold_log_filter_result *result,
-                        const struct hold_log_filter_options *opts,
-                        const char *line,
-                        size_t n,
-                        off_t line_offset) {
-    if (result->line_count >= opts->visible_capacity || result->line_count >= opts->max_results) return 0;
-    char *copy = dup_line(line, n);
-    if (!copy) return -1;
-    result->lines[result->line_count] = copy;
-    result->line_offsets[result->line_count] = line_offset;
-    result->line_count++;
-    return 0;
-}
-
-static void push_match_offset(struct hold_log_filter_result *result,
-                              const struct hold_log_filter_options *opts,
-                              off_t off) {
+static void push_match_offset(struct hold_log_filter_result *result, const struct hold_log_filter_options *opts, off_t off) {
     if (opts->match_ring_capacity == 0) return;
-    size_t pos;
+    size_t pos = (result->match_ring_start + result->match_ring_count) % opts->match_ring_capacity;
     if (result->match_ring_count < opts->match_ring_capacity) {
-        pos = (result->match_ring_start + result->match_ring_count) % opts->match_ring_capacity;
         result->match_ring_count++;
     } else {
         pos = result->match_ring_start;
@@ -160,30 +135,31 @@ static void push_match_offset(struct hold_log_filter_result *result,
     result->match_offsets[pos] = off;
 }
 
-static int ensure_result_storage(const struct hold_log_filter_options *opts,
-                                 struct hold_log_filter_result *result) {
-    result->lines = calloc(opts->visible_capacity ? opts->visible_capacity : 1, sizeof(char *));
-    if (!result->lines) return -1;
-    result->line_offsets = calloc(opts->visible_capacity ? opts->visible_capacity : 1, sizeof(off_t));
-    if (!result->line_offsets) return -1;
-    if (opts->match_ring_capacity > 0) {
-        result->match_offsets = calloc(opts->match_ring_capacity, sizeof(off_t));
-        if (!result->match_offsets) return -1;
+/* Normalize option defaults, allocate result storage, and build the example
+ * profiles: the setup shared by the forward and backward scanners. */
+static int scan_setup(const struct hold_log_filter_options *in,
+                      struct hold_log_filter_options *opts,
+                      struct hold_log_filter_result *result,
+                      struct filter_state *state) {
+    *opts = *in;
+    if (opts->visible_capacity == 0) opts->visible_capacity = VIEWER_DEFAULT_VISIBLE;
+    if (opts->max_results == 0 || opts->max_results > opts->visible_capacity) opts->max_results = opts->visible_capacity;
+    if (opts->similar_threshold <= 0.0) opts->similar_threshold = 0.45;
+    memset(result, 0, sizeof(*result));
+    result->lines = calloc(opts->visible_capacity, sizeof(char *));
+    result->line_offsets = calloc(opts->visible_capacity, sizeof(off_t));
+    if (opts->match_ring_capacity > 0) result->match_offsets = calloc(opts->match_ring_capacity, sizeof(off_t));
+    bool oom = !result->lines || !result->line_offsets ||
+               (opts->match_ring_capacity > 0 && !result->match_offsets);
+    bool invalid = opts->similar_example_count > HOLD_LOG_VIEWER_MAX_EXAMPLES ||
+                   opts->exclude_example_count > HOLD_LOG_VIEWER_MAX_EXAMPLES;
+    if (oom || invalid) {
+        hold_log_filter_result_free(result);
+        errno = oom ? ENOMEM : EINVAL;
+        return -1;
     }
-    return 0;
-}
-
-static int prepare_state(const struct hold_log_filter_options *opts, struct filter_state *state) {
     memset(state, 0, sizeof(*state));
     state->opts = opts;
-    if (opts->similar_example_count > HOLD_LOG_VIEWER_MAX_EXAMPLES) {
-        errno = EINVAL;
-        return -1;
-    }
-    if (opts->exclude_example_count > HOLD_LOG_VIEWER_MAX_EXAMPLES) {
-        errno = EINVAL;
-        return -1;
-    }
     state->example_count = opts->similar_example_count;
     for (size_t i = 0; i < state->example_count; i++) build_profile(opts->similar_examples[i], &state->examples[i]);
     state->exclude_example_count = opts->exclude_example_count;
@@ -191,53 +167,42 @@ static int prepare_state(const struct hold_log_filter_options *opts, struct filt
     return 0;
 }
 
-static int consume_line(struct hold_log_filter_result *result,
-                        const struct hold_log_filter_options *opts,
-                        const struct filter_state *state,
-                        const char *line,
-                        size_t n,
-                        off_t line_offset,
-                        bool *done) {
+/* Grow the pending-record buffer to at least `need` bytes. */
+static int line_reserve(char **line, size_t *cap, size_t need) {
+    if (need <= *cap) return 0;
+    size_t new_cap = *cap ? *cap * 2 : 256;
+    while (new_cap < need) new_cap *= 2;
+    char *grown = realloc(*line, new_cap);
+    if (!grown) return -1;
+    *line = grown;
+    *cap = new_cap;
+    return 0;
+}
+
+static int consume_line(struct hold_log_filter_result *result, const struct hold_log_filter_options *opts,
+                        const struct filter_state *state, const char *line, size_t n,
+                        off_t line_offset, bool *done) {
     result->lines_scanned++;
-    if (!source_visible(opts, line_offset)) {
-        return 0;
-    }
-    if (!line_matches(state, line)) {
-        return 0;
-    }
+    if (!source_visible(opts, line_offset) || !line_matches(state, line)) return 0;
     result->match_count++;
     push_match_offset(result, opts, line_offset);
-    if (push_visible(result, opts, line, n, line_offset) != 0) {
-        return -1;
+    if (result->line_count < opts->visible_capacity && result->line_count < opts->max_results) {
+        char *copy = dup_line(line, n);
+        if (!copy) return -1;
+        result->lines[result->line_count] = copy;
+        result->line_offsets[result->line_count] = line_offset;
+        result->line_count++;
     }
     if (result->line_count >= opts->max_results || result->line_count >= opts->visible_capacity) *done = true;
     return 0;
 }
 
-int hold_log_filter_fd(int fd,
-                         const struct hold_log_filter_options *in_opts,
+int hold_log_filter_fd(int fd, const struct hold_log_filter_options *in_opts,
                          struct hold_log_filter_result *result) {
-    if (fd < 0 || !in_opts || !result) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    struct hold_log_filter_options opts = *in_opts;
-    if (opts.visible_capacity == 0) opts.visible_capacity = VIEWER_DEFAULT_VISIBLE;
-    if (opts.max_results == 0 || opts.max_results > opts.visible_capacity) opts.max_results = opts.visible_capacity;
-    if (opts.similar_threshold <= 0.0) opts.similar_threshold = 0.45;
-
-    memset(result, 0, sizeof(*result));
-    if (ensure_result_storage(&opts, result) != 0) {
-        hold_log_filter_result_free(result);
-        return -1;
-    }
-
+    if (fd < 0 || !in_opts || !result) { errno = EINVAL; return -1; }
+    struct hold_log_filter_options opts;
     struct filter_state state;
-    if (prepare_state(&opts, &state) != 0) {
-        hold_log_filter_result_free(result);
-        return -1;
-    }
+    if (scan_setup(in_opts, &opts, result, &state) != 0) return -1;
 
     char read_buf[VIEWER_READ_CHUNK];
     char *line = NULL;
@@ -268,12 +233,7 @@ int hold_log_filter_fd(int fd,
         if (nr == 0) {
             result->reached_eof = true;
             if (line_len > 0) {
-                if (line_len + 1 > line_cap) {
-                    char *grown = realloc(line, line_len + 1);
-                    if (!grown) goto oom;
-                    line = grown;
-                    line_cap = line_len + 1;
-                }
+                if (line_reserve(&line, &line_cap, line_len + 1) != 0) goto oom;
                 line[line_len] = '\0';
                 if (consume_line(result, &opts, &state, line, line_len, line_offset, &done) != 0) goto oom;
                 result->next_offset = next_offset;
@@ -290,14 +250,7 @@ int hold_log_filter_fd(int fd,
         size_t chunk_base = result->bytes_read - (size_t)nr;
         for (ssize_t i = 0; i < nr; i++) {
             char c = read_buf[i];
-            if (line_len + 2 > line_cap) {
-                size_t new_cap = line_cap ? line_cap * 2 : 256;
-                while (new_cap < line_len + 2) new_cap *= 2;
-                char *grown = realloc(line, new_cap);
-                if (!grown) goto oom;
-                line = grown;
-                line_cap = new_cap;
-            }
+            if (line_reserve(&line, &line_cap, line_len + 2) != 0) goto oom;
             line[line_len++] = c;
             next_offset++;
             if (c == '\n') {
@@ -329,39 +282,23 @@ oom:
     return -1;
 }
 
-int hold_log_filter_backward_fd(int fd,
-                                  const struct hold_log_filter_options *in_opts,
-                                  off_t anchor_offset,
-                                  size_t byte_budget,
+int hold_log_filter_backward_fd(int fd, const struct hold_log_filter_options *in_opts,
+                                  off_t anchor_offset, size_t byte_budget,
                                   struct hold_log_filter_result *result) {
-    if (fd < 0 || !in_opts || !result) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    struct hold_log_filter_options opts = *in_opts;
-    if (opts.visible_capacity == 0) opts.visible_capacity = VIEWER_DEFAULT_VISIBLE;
-    if (opts.max_results == 0 || opts.max_results > opts.visible_capacity) opts.max_results = opts.visible_capacity;
-    if (opts.similar_threshold <= 0.0) opts.similar_threshold = 0.45;
+    if (fd < 0 || !in_opts || !result) { errno = EINVAL; return -1; }
+    struct hold_log_filter_options opts;
+    struct filter_state state;
+    if (scan_setup(in_opts, &opts, result, &state) != 0) return -1;
     if (byte_budget == 0) byte_budget = VIEWER_DEFAULT_SCAN_BUDGET;
 
-    memset(result, 0, sizeof(*result));
-    if (ensure_result_storage(&opts, result) != 0) {
-        hold_log_filter_result_free(result);
-        return -1;
-    }
-
-    struct filter_state state;
-    if (prepare_state(&opts, &state) != 0) {
-        hold_log_filter_result_free(result);
-        return -1;
-    }
+    /* Last-N matches before the anchor, kept in one ring of owned lines. */
+    struct back_row { char *line; off_t off; off_t next; } *ring = NULL;
+    char *buf = NULL;
+    size_t cap = opts.visible_capacity;
+    size_t ring_start = 0, ring_count = 0;
 
     off_t file_end = lseek(fd, 0, SEEK_END);
-    if (file_end < 0) {
-        hold_log_filter_result_free(result);
-        return -1;
-    }
+    if (file_end < 0) goto fail;
     if (anchor_offset < 0 || anchor_offset > file_end) anchor_offset = file_end;
     result->reached_eof = anchor_offset >= file_end;
     result->next_offset = anchor_offset;
@@ -374,25 +311,16 @@ int hold_log_filter_backward_fd(int fd,
         result->scan_limited = true;
     }
     size_t span = (size_t)(anchor_offset - start);
-    char *buf = malloc(span + 1);
-    if (!buf) {
-        hold_log_filter_result_free(result);
-        errno = ENOMEM;
-        return -1;
-    }
-    if (lseek(fd, start, SEEK_SET) < 0) {
-        free(buf);
-        hold_log_filter_result_free(result);
-        return -1;
-    }
+    buf = malloc(span + 1);
+    ring = calloc(cap, sizeof(*ring));
+    if (!buf || !ring) { errno = ENOMEM; goto fail; }
+    if (lseek(fd, start, SEEK_SET) < 0) goto fail;
     size_t got = 0;
     while (got < span) {
         ssize_t nr = read(fd, buf + got, span - got);
         if (nr < 0) {
             if (errno == EINTR) continue;
-            free(buf);
-            hold_log_filter_result_free(result);
-            return -1;
+            goto fail;
         }
         if (nr == 0) break;
         got += (size_t)nr;
@@ -402,100 +330,73 @@ int hold_log_filter_backward_fd(int fd,
 
     size_t parse = 0;
     if (start > 0) {
+        /* Align past the first (possibly torn) newline — never a torn line. */
         while (parse < got && buf[parse] != '\n') parse++;
         if (parse < got) parse++;
     }
 
-    char **ring_lines = calloc(opts.visible_capacity ? opts.visible_capacity : 1, sizeof(char *));
-    off_t *ring_offsets = calloc(opts.visible_capacity ? opts.visible_capacity : 1, sizeof(off_t));
-    off_t *ring_next_offsets = calloc(opts.visible_capacity ? opts.visible_capacity : 1, sizeof(off_t));
-    if (!ring_lines || !ring_offsets || !ring_next_offsets) {
-        free(ring_lines);
-        free(ring_offsets);
-        free(ring_next_offsets);
-        free(buf);
-        hold_log_filter_result_free(result);
-        errno = ENOMEM;
-        return -1;
-    }
-    size_t ring_start = 0, ring_count = 0;
     size_t line_start = parse;
     for (size_t i = parse; i <= got; i++) {
         if (i < got && buf[i] != '\n') continue;
-        size_t line_len = i < got ? i + 1 - line_start : i - line_start;
+        size_t line_len = (i < got ? i + 1 : i) - line_start;
         off_t line_off = start + (off_t)line_start;
-        off_t line_next_off = start + (off_t)(i < got ? i + 1 : i);
         if (line_off >= anchor_offset) break;
         if (line_len > 0) {
             result->lines_scanned++;
             char saved = buf[line_start + line_len];
             buf[line_start + line_len] = '\0';
             const char *visible = buf + line_start;
-            size_t visible_len = line_len;
             bool matches = source_visible(&opts, line_off) && line_matches(&state, visible);
-            buf[line_start + line_len] = saved;
             if (matches) {
                 result->match_count++;
                 push_match_offset(result, &opts, line_off);
-                char *copy = dup_line(visible, visible_len);
-                if (!copy) {
-                    free(buf);
-                    for (size_t j = 0; j < ring_count; j++) {
-                        size_t pos = (ring_start + j) % opts.visible_capacity;
-                        free(ring_lines[pos]);
-                    }
-                    free(ring_lines);
-                    free(ring_offsets);
-                    free(ring_next_offsets);
-                    hold_log_filter_result_free(result);
-                    errno = ENOMEM;
-                    return -1;
-                }
-                size_t cap = opts.visible_capacity ? opts.visible_capacity : 1;
+                char *copy = dup_line(visible, line_len);
+                if (!copy) { errno = ENOMEM; goto fail; }
+                size_t pos = (ring_start + ring_count) % cap;
                 if (ring_count < cap) {
-                    size_t pos = (ring_start + ring_count) % cap;
-                    ring_lines[pos] = copy;
-                    ring_offsets[pos] = line_off;
-                    ring_next_offsets[pos] = line_next_off;
                     ring_count++;
                 } else {
-                    free(ring_lines[ring_start]);
-                    ring_lines[ring_start] = copy;
-                    ring_offsets[ring_start] = line_off;
-                    ring_next_offsets[ring_start] = line_next_off;
+                    pos = ring_start;
+                    free(ring[pos].line);
                     ring_start = (ring_start + 1) % cap;
                 }
+                ring[pos].line = copy;
+                ring[pos].off = line_off;
+                ring[pos].next = start + (off_t)(i < got ? i + 1 : i);
             }
+            buf[line_start + line_len] = saved;
         }
         line_start = i + 1;
     }
 
-    size_t out_count = ring_count;
-    if (out_count > opts.max_results) out_count = opts.max_results;
+    size_t out_count = ring_count > opts.max_results ? opts.max_results : ring_count;
     size_t skip = ring_count - out_count;
     for (size_t j = 0; j < out_count; j++) {
-        size_t pos = (ring_start + skip + j) % (opts.visible_capacity ? opts.visible_capacity : 1);
-        result->lines[j] = ring_lines[pos];
-        result->line_offsets[j] = ring_offsets[pos];
-        ring_lines[pos] = NULL;
+        size_t pos = (ring_start + skip + j) % cap;
+        result->lines[j] = ring[pos].line;
+        result->line_offsets[j] = ring[pos].off;
+        ring[pos].line = NULL;
         result->line_count++;
     }
     if (result->line_count > 0) {
         result->prev_offset = result->line_offsets[0];
-        size_t last = result->line_count - 1;
-        size_t last_pos = (ring_start + skip + last) % (opts.visible_capacity ? opts.visible_capacity : 1);
-        result->next_offset = ring_next_offsets[last_pos];
+        result->next_offset = ring[(ring_start + skip + result->line_count - 1) % cap].next;
     } else {
         result->prev_offset = start;
     }
-
-    for (size_t j = 0; j < ring_count; j++) {
-        size_t pos = (ring_start + j) % (opts.visible_capacity ? opts.visible_capacity : 1);
-        free(ring_lines[pos]);
-    }
-    free(ring_lines);
-    free(ring_offsets);
-    free(ring_next_offsets);
+    for (size_t j = 0; j < cap; j++) free(ring[j].line);
+    free(ring);
     free(buf);
     return 0;
+
+fail:
+    {
+        int saved_errno = errno;
+        for (size_t j = 0; ring && j < cap; j++) free(ring[j].line);
+        free(ring);
+        free(buf);
+        hold_log_filter_result_free(result);
+        errno = saved_errno;
+        return -1;
+    }
 }

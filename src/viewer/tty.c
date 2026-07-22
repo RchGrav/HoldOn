@@ -5,49 +5,25 @@
 #define VIEWER_FILTER_MAX 255
 #define VIEWER_OFFSET_HISTORY_MAX 1024
 #define VIEWER_SCAN_BYTES_PER_ROW (64u * 1024u)
+#define VIEWER_SCAN_BUDGET_FLOOR (1024u * 1024u)
 
-enum viewer_scan_mode {
-    VIEWER_SCAN_FORWARD = 0,
-    VIEWER_SCAN_BACKWARD
-};
+enum viewer_scan_mode { VIEWER_SCAN_FORWARD = 0, VIEWER_SCAN_BACKWARD };
 
 enum viewer_key {
-    VIEWER_KEY_NONE = 0,
-    VIEWER_KEY_QUIT,
-    VIEWER_KEY_SUSPEND,
-    VIEWER_KEY_UP,
-    VIEWER_KEY_DOWN,
-    VIEWER_KEY_PAGE_UP,
-    VIEWER_KEY_PAGE_DOWN,
-    VIEWER_KEY_TOP,
-    VIEWER_KEY_BOTTOM,
-    VIEWER_KEY_BACKSPACE,
-    VIEWER_KEY_TOGGLE,
-    VIEWER_KEY_HELP,
-    VIEWER_KEY_RESET,
-    VIEWER_KEY_TS_CYCLE,
-    VIEWER_KEY_TZ_TOGGLE,
-    VIEWER_KEY_WRAP_TOGGLE,
-    VIEWER_KEY_SOURCE_COL,
-    VIEWER_KEY_LINE_NUMBERS,
-    VIEWER_KEY_JUMP,
-    VIEWER_KEY_WHEEL_UP,
-    VIEWER_KEY_WHEEL_DOWN,
-    VIEWER_KEY_PRINTABLE
+    VIEWER_KEY_NONE = 0, VIEWER_KEY_QUIT, VIEWER_KEY_SUSPEND,
+    VIEWER_KEY_UP, VIEWER_KEY_DOWN, VIEWER_KEY_PAGE_UP, VIEWER_KEY_PAGE_DOWN,
+    VIEWER_KEY_TOP, VIEWER_KEY_BOTTOM, VIEWER_KEY_BACKSPACE, VIEWER_KEY_TOGGLE,
+    VIEWER_KEY_HELP, VIEWER_KEY_RESET, VIEWER_KEY_TS_CYCLE, VIEWER_KEY_TZ_TOGGLE,
+    VIEWER_KEY_WRAP_TOGGLE, VIEWER_KEY_SOURCE_COL, VIEWER_KEY_LINE_NUMBERS,
+    VIEWER_KEY_JUMP, VIEWER_KEY_WHEEL_UP, VIEWER_KEY_WHEEL_DOWN, VIEWER_KEY_PRINTABLE
 };
 
-struct viewer_row {
-    char *line;
-    off_t offset;
-};
+struct viewer_row { char *line; off_t offset; };
 
 struct viewer_state {
     int fd;
     const char *title;
-    bool debug_stats;
-    bool colors;
-    bool follow;
-    bool follow_exited;
+    bool debug_stats, colors, follow, follow_exited;
     hold_log_viewer_running_fn is_running;
     hold_log_viewer_exit_code_fn get_exit_code;
     void *running_userdata;
@@ -56,52 +32,34 @@ struct viewer_state {
     char filter[VIEWER_FILTER_MAX + 1];
     char *examples[HOLD_LOG_VIEWER_MAX_EXAMPLES];
     size_t example_count;
-    bool help_open;
-    bool line_numbers;
-    bool jump_active;
+    bool help_open, line_numbers, jump_active;
     char jump_buf[12];
     /* Presentation-only view controls (never change stored records or filtering). */
     enum hold_ts_mode ts_mode;
-    bool ts_utc;
-    bool wrap;
-    bool source_column;
+    bool ts_utc, wrap, source_column;
     unsigned source_mask; /* 0 == all sources visible */
     struct hold_logidx_map idx_map;
     bool idx_loaded;
     off_t idx_loaded_raw_size;
-    bool proc_active;
-    bool has_exit_code;
+    bool proc_active, has_exit_code;
     int exit_code;
     off_t start_offset;
     off_t history[VIEWER_OFFSET_HISTORY_MAX];
     size_t history_count;
     enum viewer_scan_mode scan_mode;
-    bool cache_valid;
-    bool cache_scan_limited;
-    bool cache_reached_eof;
-    bool at_live_edge;
-    bool at_oldest_edge;
-    bool newer_available;
+    bool cache_valid, cache_scan_limited, cache_reached_eof;
+    bool at_live_edge, at_oldest_edge, newer_available;
     struct viewer_row *visible;
-    size_t visible_count;
-    size_t visible_capacity;
-    off_t prev_offset;
-    off_t next_offset;
-    off_t tail_anchor;
-    off_t newer_scan_offset;
-    off_t newer_floor_offset;
-    bool local_scan_limit_active;
+    size_t visible_count, visible_capacity;
+    off_t prev_offset, next_offset, tail_anchor;
+    off_t newer_scan_offset, newer_floor_offset;
+    bool local_scan_limit_active, cache_local_limited;
     off_t local_scan_limit_end;
-    bool cache_local_limited;
-    size_t cache_bytes_read;
-    size_t cache_lines_scanned;
-    size_t cache_match_count;
-    size_t scan_generation;
-    size_t selected;
+    size_t cache_bytes_read, cache_lines_scanned, cache_match_count;
+    size_t scan_generation, selected;
     bool select_resolve;
     off_t select_offset;
-    size_t rows;
-    size_t cols;
+    size_t rows, cols;
 };
 
 /*
@@ -129,18 +87,12 @@ struct viewer_state {
  * latency, never total coverage.
  */
 
-struct raw_terminal {
-    struct termios original;
-    bool active;
-};
+struct raw_terminal { struct termios original; bool active; };
 
 static int viewer_write_all(int fd, const char *buf, size_t n) {
     while (n > 0) {
         ssize_t w = write(fd, buf, n);
-        if (w < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
+        if (w < 0) { if (errno == EINTR) continue; return -1; }
         buf += w;
         n -= (size_t)w;
     }
@@ -149,18 +101,6 @@ static int viewer_write_all(int fd, const char *buf, size_t n) {
 
 static int viewer_puts(const char *s) {
     return viewer_write_all(STDOUT_FILENO, s, strlen(s));
-}
-
-static int terminal_size(size_t *rows, size_t *cols) {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0) {
-        *rows = ws.ws_row;
-        *cols = ws.ws_col;
-        return 0;
-    }
-    *rows = 24;
-    *cols = 80;
-    return 0;
 }
 
 static int raw_terminal_enter(struct raw_terminal *raw) {
@@ -201,11 +141,7 @@ static int read_byte(unsigned char *out) {
 }
 
 static bool byte_ready(int timeout_ms) {
-    struct pollfd pfd = {
-        .fd = STDIN_FILENO,
-        .events = POLLIN,
-        .revents = 0,
-    };
+    struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
     int ready;
     do {
         ready = poll(&pfd, 1, timeout_ms);
@@ -213,29 +149,37 @@ static bool byte_ready(int timeout_ms) {
     return ready > 0;
 }
 
+/* Every printable byte belongs to the filter, so the only quit keys are ones
+ * nobody can type into a filter term: lone Esc, Ctrl-C, and Ctrl-D — the pty
+ * EOF byte, which is also what `script` and friends send when input ends. */
+static const struct { unsigned char byte; enum viewer_key key; } viewer_ctrl_keys[] = {
+    {3, VIEWER_KEY_QUIT},        {4, VIEWER_KEY_QUIT},           /* Ctrl-C, Ctrl-D */
+    {26, VIEWER_KEY_SUSPEND},    {7, VIEWER_KEY_JUMP},           /* Ctrl-Z, Ctrl-G */
+    {8, VIEWER_KEY_HELP},        {12, VIEWER_KEY_LINE_NUMBERS},  /* Ctrl-H, Ctrl-L */
+    {18, VIEWER_KEY_RESET},      {20, VIEWER_KEY_TS_CYCLE},      /* Ctrl-R, Ctrl-T */
+    {21, VIEWER_KEY_TZ_TOGGLE},  {23, VIEWER_KEY_WRAP_TOGGLE},   /* Ctrl-U, Ctrl-W */
+    {25, VIEWER_KEY_SOURCE_COL}, {127, VIEWER_KEY_BACKSPACE},
+    {6, VIEWER_KEY_PAGE_DOWN},   {2, VIEWER_KEY_PAGE_UP},        /* Ctrl-F, Ctrl-B */
+};
+
+/* Arrow/Home/End final bytes shared by the SS3 (ESC O) and CSI (ESC [) forms. */
+static enum viewer_key arrow_final_key(unsigned char f) {
+    if (f == 'A') return VIEWER_KEY_UP;
+    if (f == 'B') return VIEWER_KEY_DOWN;
+    if (f == 'H') return VIEWER_KEY_TOP;
+    if (f == 'F') return VIEWER_KEY_BOTTOM;
+    return VIEWER_KEY_NONE;
+}
+
 static enum viewer_key read_key(unsigned char *printable, int timeout_ms) {
     unsigned char c = 0;
     *printable = 0;
     if (timeout_ms >= 0 && !byte_ready(timeout_ms)) return VIEWER_KEY_NONE;
     if (read_byte(&c) != 0) return VIEWER_KEY_QUIT;
-    /* Every printable byte belongs to the filter, so the only quit keys are
-     * ones nobody can type into a filter term: Esc (below), Ctrl-C, and
-     * Ctrl-D — the pty EOF byte, which is also what `script` and friends
-     * send when their input ends. */
-    if (c == 3 || c == 4) return VIEWER_KEY_QUIT;
-    if (c == 26) return VIEWER_KEY_SUSPEND;     /* Ctrl-Z */
-    if (c == 7) return VIEWER_KEY_JUMP;         /* Ctrl-G: go to line */
-    if (c == 8) return VIEWER_KEY_HELP;
-    if (c == 12) return VIEWER_KEY_LINE_NUMBERS; /* Ctrl-L */
-    if (c == 18) return VIEWER_KEY_RESET;
-    if (c == 20) return VIEWER_KEY_TS_CYCLE;    /* Ctrl-T */
-    if (c == 21) return VIEWER_KEY_TZ_TOGGLE;   /* Ctrl-U */
-    if (c == 23) return VIEWER_KEY_WRAP_TOGGLE; /* Ctrl-W */
-    if (c == 25) return VIEWER_KEY_SOURCE_COL;  /* Ctrl-Y */
     if (c == ' ' || c == '\r' || c == '\n') return c == ' ' ? VIEWER_KEY_TOGGLE : VIEWER_KEY_DOWN;
-    if (c == 127) return VIEWER_KEY_BACKSPACE;
-    if (c == 6) return VIEWER_KEY_PAGE_DOWN;
-    if (c == 2) return VIEWER_KEY_PAGE_UP;
+    for (size_t i = 0; i < sizeof(viewer_ctrl_keys) / sizeof(viewer_ctrl_keys[0]); i++) {
+        if (viewer_ctrl_keys[i].byte == c) return viewer_ctrl_keys[i].key;
+    }
     if (c == 27) {
         /* A lone Esc is the quit key; an Esc with bytes right behind it is
          * the start of an arrow/page/home/end sequence. */
@@ -245,11 +189,7 @@ static enum viewer_key read_key(unsigned char *printable, int timeout_ms) {
         if (a == 'O') {
             unsigned char b = 0;
             if (read_byte(&b) != 0) return VIEWER_KEY_QUIT;
-            if (b == 'A') return VIEWER_KEY_UP;
-            if (b == 'B') return VIEWER_KEY_DOWN;
-            if (b == 'H') return VIEWER_KEY_TOP;
-            if (b == 'F') return VIEWER_KEY_BOTTOM;
-            return VIEWER_KEY_NONE;
+            return arrow_final_key(b);
         }
         /* Esc followed by anything that is not a recognized sequence keeps
          * Esc's meaning: quit. (This also covers Esc immediately chased by
@@ -273,27 +213,14 @@ static enum viewer_key read_key(unsigned char *printable, int timeout_ms) {
             if (btn & 64) return (btn & 1) ? VIEWER_KEY_WHEEL_DOWN : VIEWER_KEY_WHEEL_UP;
             return VIEWER_KEY_NONE;
         }
-        if (final == 'A') return VIEWER_KEY_UP;
-        if (final == 'B') return VIEWER_KEY_DOWN;
-        if (final == 'H') return VIEWER_KEY_TOP;
-        if (final == 'F') return VIEWER_KEY_BOTTOM;
-        if (final == '~') {
+        if (final != '~') return arrow_final_key(final);
+        {
             long param = 0;
-            bool have_param = false;
-            for (size_t i = 0; i + 1 < n; i++) {
-                if (isdigit(seq[i])) {
-                    have_param = true;
-                    param = param * 10 + (long)(seq[i] - '0');
-                    continue;
-                }
-                break;
-            }
-            if (have_param) {
-                if (param == 5) return VIEWER_KEY_PAGE_UP;
-                if (param == 6) return VIEWER_KEY_PAGE_DOWN;
-                if (param == 1 || param == 7) return VIEWER_KEY_TOP;
-                if (param == 4 || param == 8) return VIEWER_KEY_BOTTOM;
-            }
+            for (size_t i = 0; i + 1 < n && isdigit(seq[i]); i++) param = param * 10 + (long)(seq[i] - '0');
+            if (param == 5) return VIEWER_KEY_PAGE_UP;
+            if (param == 6) return VIEWER_KEY_PAGE_DOWN;
+            if (param == 1 || param == 7) return VIEWER_KEY_TOP;
+            if (param == 4 || param == 8) return VIEWER_KEY_BOTTOM;
         }
         return VIEWER_KEY_NONE;
     }
@@ -311,18 +238,11 @@ static void free_examples(struct viewer_state *state) {
 }
 
 static void cache_clear(struct viewer_state *state) {
-    if (state->visible) {
-        for (size_t i = 0; i < state->visible_count; i++) free(state->visible[i].line);
-    }
+    if (state->visible) for (size_t i = 0; i < state->visible_count; i++) free(state->visible[i].line);
     state->visible_count = 0;
-    state->prev_offset = state->start_offset;
-    state->next_offset = state->start_offset;
-    state->cache_scan_limited = false;
-    state->cache_reached_eof = false;
-    state->cache_local_limited = false;
-    state->cache_bytes_read = 0;
-    state->cache_lines_scanned = 0;
-    state->cache_match_count = 0;
+    state->prev_offset = state->next_offset = state->start_offset;
+    state->cache_scan_limited = state->cache_reached_eof = state->cache_local_limited = false;
+    state->cache_bytes_read = state->cache_lines_scanned = state->cache_match_count = 0;
     state->at_oldest_edge = false;
 }
 
@@ -344,18 +264,36 @@ static int cache_ensure_capacity(struct viewer_state *state, size_t cap) {
     return 0;
 }
 
+/* Copy scanner rows into the page cache. prepend inserts them above row 0
+ * (backward continuation: older rows arrive above) and unwinds fully on a
+ * copy failure; appended rows are owned as they land. */
+static int cache_append_rows(struct viewer_state *state, const struct hold_log_filter_result *r, bool prepend) {
+    size_t add = r->line_count;
+    if (add == 0) return 0;
+    if (cache_ensure_capacity(state, state->visible_count + add) != 0) return -1;
+    if (prepend) memmove(state->visible + add, state->visible, state->visible_count * sizeof(*state->visible));
+    for (size_t i = 0; i < add; i++) {
+        char *copy = strdup(r->lines[i]);
+        if (!copy) {
+            if (!prepend) return -1;
+            for (size_t j = 0; j < i; j++) free(state->visible[j].line);
+            memmove(state->visible, state->visible + add, state->visible_count * sizeof(*state->visible));
+            return -1;
+        }
+        size_t at = prepend ? i : state->visible_count++;
+        state->visible[at].line = copy;
+        state->visible[at].offset = r->line_offsets[i];
+    }
+    if (prepend) state->visible_count += add;
+    return 0;
+}
+
 static int cache_load_result(struct viewer_state *state, const struct hold_log_filter_result *result, size_t cap) {
     if (cache_ensure_capacity(state, cap ? cap : 1) != 0) return -1;
     cache_clear(state);
-    for (size_t i = 0; i < result->line_count; i++) {
-        char *copy = strdup(result->lines[i]);
-        if (!copy) {
-            cache_clear(state);
-            return -1;
-        }
-        state->visible[state->visible_count].line = copy;
-        state->visible[state->visible_count].offset = result->line_offsets[i];
-        state->visible_count++;
+    if (cache_append_rows(state, result, false) != 0) {
+        cache_clear(state);
+        return -1;
     }
     state->prev_offset = result->prev_offset;
     state->next_offset = result->next_offset;
@@ -364,11 +302,9 @@ static int cache_load_result(struct viewer_state *state, const struct hold_log_f
     state->cache_bytes_read = result->bytes_read;
     state->cache_lines_scanned = result->lines_scanned;
     state->cache_match_count = result->match_count;
-    if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
-        state->at_oldest_edge = !result->scan_limited && result->match_count <= result->line_count;
-    } else {
-        state->at_oldest_edge = state->start_offset == 0;
-    }
+    state->at_oldest_edge = state->scan_mode == VIEWER_SCAN_BACKWARD
+        ? (!result->scan_limited && result->match_count <= result->line_count)
+        : state->start_offset == 0;
     state->cache_valid = true;
     state->scan_generation++;
     if (state->selected >= state->visible_count && state->visible_count > 0) state->selected = state->visible_count - 1;
@@ -384,10 +320,7 @@ static int cache_load_result(struct viewer_state *state, const struct hold_log_f
         if (state->visible_count > 0) {
             size_t pick = state->visible_count - 1;
             for (size_t i = 0; i < state->visible_count; i++) {
-                if (state->visible[i].offset >= state->select_offset) {
-                    pick = i;
-                    break;
-                }
+                if (state->visible[i].offset >= state->select_offset) { pick = i; break; }
             }
             state->selected = pick;
         }
@@ -413,7 +346,11 @@ static void jump_to_newest_page(struct viewer_state *state);
 
 static bool refresh_terminal_size(struct viewer_state *state) {
     size_t old_rows = state->rows, old_cols = state->cols;
-    terminal_size(&state->rows, &state->cols);
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0) {
+        state->rows = ws.ws_row;
+        state->cols = ws.ws_col;
+    } else { state->rows = 24; state->cols = 80; }
     if (old_rows && (old_rows != state->rows || old_cols != state->cols)) {
         /* A relayout must not move the cursor off its record (spec:177). */
         if (state->selected < state->visible_count) {
@@ -433,40 +370,28 @@ static off_t current_page_anchor(const struct viewer_state *state) {
 static void reset_filter_navigation(struct viewer_state *state) {
     bool preserve_browsed_page = state->follow && !state->at_live_edge;
     off_t browsed_anchor = preserve_browsed_page ? current_page_anchor(state) : 0;
+    state->scan_mode = VIEWER_SCAN_FORWARD;
+    state->at_live_edge = false;
+    state->newer_available = false;
+    clear_local_scan_limit(state);
     if (state->follow) {
         off_t end = lseek(state->fd, 0, SEEK_END);
         if (end >= 0) state->tail_anchor = end;
+        state->newer_scan_offset = state->newer_floor_offset = state->tail_anchor;
         if (preserve_browsed_page) {
-            if (browsed_anchor < 0) browsed_anchor = 0;
-            state->start_offset = browsed_anchor;
-            state->newer_scan_offset = state->tail_anchor;
-            state->newer_floor_offset = state->tail_anchor;
-            state->scan_mode = VIEWER_SCAN_FORWARD;
-            state->at_live_edge = false;
-            if (state->next_offset > browsed_anchor) {
+            state->start_offset = browsed_anchor < 0 ? 0 : browsed_anchor;
+            if (state->next_offset > state->start_offset) {
                 state->local_scan_limit_active = true;
                 state->local_scan_limit_end = state->next_offset;
             }
         } else {
             if (end >= 0) state->start_offset = end;
-            state->newer_scan_offset = state->tail_anchor;
-            state->newer_floor_offset = state->tail_anchor;
             state->scan_mode = VIEWER_SCAN_BACKWARD;
             state->at_live_edge = true;
-            state->local_scan_limit_active = false;
-            state->local_scan_limit_end = 0;
         }
-        state->newer_available = false;
     } else {
-        state->start_offset = 0;
-        state->tail_anchor = 0;
-        state->newer_scan_offset = 0;
-        state->newer_floor_offset = 0;
-        state->scan_mode = VIEWER_SCAN_FORWARD;
-        state->at_live_edge = false;
-        state->newer_available = false;
-        state->local_scan_limit_active = false;
-        state->local_scan_limit_end = 0;
+        state->start_offset = state->tail_anchor = 0;
+        state->newer_scan_offset = state->newer_floor_offset = 0;
     }
     state->history_count = 0;
     /* The page anchor survives the filter edit, so the selection does too:
@@ -489,6 +414,19 @@ static size_t viewer_body_rows(const struct viewer_state *state) {
     return state->rows > chrome ? state->rows - chrome : 1;
 }
 
+/* Single-hit probe options: find one match, keep the ring honest. */
+static void configure_probe_opts(const struct viewer_state *state, struct hold_log_filter_options *opts) {
+    configure_filter_opts(state, opts);
+    opts->visible_capacity = 1;
+    opts->max_results = 1;
+    opts->match_ring_capacity = 1;
+}
+
+static size_t scan_budget_floor(const struct viewer_state *state) {
+    size_t budget = viewer_body_rows(state) * VIEWER_SCAN_BYTES_PER_ROW;
+    return budget < VIEWER_SCAN_BUDGET_FLOOR ? VIEWER_SCAN_BUDGET_FLOOR : budget;
+}
+
 static int appended_range_has_match(struct viewer_state *state, off_t start, off_t end, bool *has_match, off_t *scanned_to) {
     *has_match = false;
     *scanned_to = start;
@@ -496,18 +434,10 @@ static int appended_range_has_match(struct viewer_state *state, off_t start, off
     if (lseek(state->fd, start, SEEK_SET) < 0) return -1;
 
     struct hold_log_filter_options opts;
-    configure_filter_opts(state, &opts);
-    opts.visible_capacity = 1;
-    opts.max_results = 1;
-    opts.match_ring_capacity = 1;
-
-    size_t visible_rows = viewer_body_rows(state);
-    opts.scan_byte_budget = visible_rows * VIEWER_SCAN_BYTES_PER_ROW;
-    if (opts.scan_byte_budget < 1024u * 1024u) opts.scan_byte_budget = 1024u * 1024u;
+    configure_probe_opts(state, &opts);
+    opts.scan_byte_budget = scan_budget_floor(state);
     off_t appended_bytes = end - start;
-    if (appended_bytes > 0 && (uintmax_t)appended_bytes < (uintmax_t)opts.scan_byte_budget) {
-        opts.scan_byte_budget = (size_t)appended_bytes;
-    }
+    if (appended_bytes > 0 && (uintmax_t)appended_bytes < (uintmax_t)opts.scan_byte_budget) opts.scan_byte_budget = (size_t)appended_bytes;
 
     struct hold_log_filter_result result;
     if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
@@ -524,9 +454,7 @@ static int handle_follow_tick(struct viewer_state *state) {
     if (end >= 0 && end > state->tail_anchor) {
         state->tail_anchor = end;
         if (state->at_live_edge) {
-            state->start_offset = end;
-            state->newer_scan_offset = end;
-            state->newer_floor_offset = end;
+            state->start_offset = state->newer_scan_offset = state->newer_floor_offset = end;
             state->newer_available = false;
             cache_invalidate(state);
             changed = true;
@@ -548,12 +476,10 @@ static int handle_follow_tick(struct viewer_state *state) {
         state->follow = false;
         state->follow_exited = true;
         state->proc_active = false;
-        if (state->get_exit_code) {
-            int code = 0;
-            if (state->get_exit_code(state->running_userdata, &code)) {
-                state->exit_code = code;
-                state->has_exit_code = true;
-            }
+        int code = 0;
+        if (state->get_exit_code && state->get_exit_code(state->running_userdata, &code)) {
+            state->exit_code = code;
+            state->has_exit_code = true;
         }
         cache_invalidate(state);
         changed = true;
@@ -561,6 +487,8 @@ static int handle_follow_tick(struct viewer_state *state) {
     return changed ? 1 : 0;
 }
 
+/* The exit message must never lie: before quitting, do one final check for
+ * matches that appeared below while the operator was browsed away. */
 static int mark_newer_before_quit(struct viewer_state *state) {
     if (!state->follow || state->at_live_edge || state->newer_available) return 0;
     off_t end = lseek(state->fd, 0, SEEK_END);
@@ -568,43 +496,28 @@ static int mark_newer_before_quit(struct viewer_state *state) {
     if (end > state->tail_anchor) state->tail_anchor = end;
     if (state->newer_scan_offset >= state->tail_anchor) {
         struct hold_log_filter_options opts;
-        configure_filter_opts(state, &opts);
-        opts.visible_capacity = 1;
-        opts.max_results = 1;
-        opts.match_ring_capacity = 1;
+        configure_probe_opts(state, &opts);
         struct hold_log_filter_result tail_result;
-        if (hold_log_filter_backward_fd(state->fd, &opts, state->tail_anchor, 1024u * 1024u, &tail_result) != 0) return -1;
+        if (hold_log_filter_backward_fd(state->fd, &opts, state->tail_anchor, VIEWER_SCAN_BUDGET_FLOOR, &tail_result) != 0) return -1;
         bool has_tail_match = tail_result.line_count > 0 && tail_result.line_offsets[0] >= state->newer_floor_offset;
         hold_log_filter_result_free(&tail_result);
-        if (has_tail_match) {
-            state->newer_available = true;
-            return 1;
-        }
-        return 0;
+        if (!has_tail_match) return 0;
+        state->newer_available = true;
+        return 1;
     }
     off_t scanned_to = state->newer_scan_offset;
     bool has_match = false;
     if (appended_range_has_match(state, state->newer_scan_offset, state->tail_anchor, &has_match, &scanned_to) != 0) return -1;
     if (scanned_to > state->newer_scan_offset) state->newer_scan_offset = scanned_to;
-    if (has_match) {
-        state->newer_available = true;
-        return 1;
-    }
-    return 0;
-}
-
-static bool same_line(const char *a, const char *b) {
-    return a && b && strcmp(a, b) == 0;
+    if (!has_match) return 0;
+    state->newer_available = true;
+    return 1;
 }
 
 static int toggle_example(struct viewer_state *state, const char *line) {
     if (!line) return 0;
-    /*
-     * Space is an editing operation on the line the operator is currently
-     * looking at.  If the viewer is still technically at the live edge, first
-     * pin the rendered page so applying the exclusion does not immediately
-     * re-anchor at EOF and look like it "looped" back to the bottom.
-     */
+    /* Space edits the line the operator is looking at: pin the rendered page
+     * first so the exclusion does not re-anchor at EOF ("looping" back down). */
     enter_browsing_mode(state, true);
     /* spec:179-185 — after the exclusion lands, the selection resolves to
      * this record, else the record underneath it, else nearest previous. */
@@ -612,11 +525,10 @@ static int toggle_example(struct viewer_state *state, const char *line) {
                                 ? state->visible[state->selected].offset
                                 : (off_t)-1;
     for (size_t i = 0; i < state->example_count; i++) {
-        if (same_line(state->examples[i], line)) {
+        if (state->examples[i] && strcmp(state->examples[i], line) == 0) {
             free(state->examples[i]);
             for (size_t j = i + 1; j < state->example_count; j++) state->examples[j - 1] = state->examples[j];
-            state->example_count--;
-            state->examples[state->example_count] = NULL;
+            state->examples[--state->example_count] = NULL;
             reset_filter_navigation(state);
             if (selected_record >= 0) select_record_after_refill(state, selected_record);
             return 0;
@@ -662,14 +574,18 @@ static void viewer_reload_idx(struct viewer_state *state) {
     state->idx_loaded_raw_size = size;
 }
 
-static void write_sanitized_line(const char *line, size_t width) {
-    size_t used = 0;
-    for (const unsigned char *p = (const unsigned char *)line; *p && *p != '\n' && used < width; p++) {
-        char out = (isprint(*p) || *p == '\t') ? (char)*p : ' ';
-        viewer_write_all(STDOUT_FILENO, &out, 1);
-        used++;
-    }
-    viewer_puts("\033[K");
+/* Re-anchor forward at `off` and rescan; the shared tail of both backward
+ * refill restarts (empty backward page, oldest backward page). */
+static int refill_forward_from(struct viewer_state *state, struct hold_log_filter_options *opts,
+                               size_t scan_budget, off_t off, struct hold_log_filter_result *result) {
+    state->start_offset = off;
+    state->scan_mode = VIEWER_SCAN_FORWARD;
+    state->history_count = 0;
+    state->at_live_edge = false;
+    hold_log_filter_result_free(result);
+    opts->scan_byte_budget = scan_budget;
+    if (lseek(state->fd, off, SEEK_SET) < 0) return -1;
+    return hold_log_filter_fd(state->fd, opts, result);
 }
 
 static int refill_cache(struct viewer_state *state) {
@@ -684,35 +600,19 @@ static int refill_cache(struct viewer_state *state) {
         if (state->follow && state->at_live_edge) {
             off_t end = lseek(state->fd, 0, SEEK_END);
             if (end >= 0) {
-                state->start_offset = end;
-                state->tail_anchor = end;
-                state->newer_scan_offset = end;
-                state->newer_floor_offset = end;
+                state->start_offset = state->tail_anchor = end;
+                state->newer_scan_offset = state->newer_floor_offset = end;
             }
         }
         if (hold_log_filter_backward_fd(state->fd, &opts, state->start_offset, scan_budget, &result) != 0) return -1;
         bool oldest_backward_page = !result.scan_limited && result.match_count <= result.line_count;
         if (state->start_offset > 0 && !result.scan_limited && result.line_count == 0) {
-            state->start_offset = 0;
-            state->scan_mode = VIEWER_SCAN_FORWARD;
-            state->history_count = 0;
-            state->at_live_edge = false;
-            hold_log_filter_result_free(&result);
-            memset(&result, 0, sizeof(result));
-            opts.scan_byte_budget = scan_budget;
-            if (lseek(state->fd, 0, SEEK_SET) < 0) return -1;
-            if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
+            /* Nothing above the anchor matched: the page lives at the top. */
+            if (refill_forward_from(state, &opts, scan_budget, 0, &result) != 0) return -1;
         } else if (!state->at_live_edge && oldest_backward_page && result.line_count > 0) {
-            off_t oldest_visible = result.line_offsets[0];
-            state->start_offset = oldest_visible;
-            state->scan_mode = VIEWER_SCAN_FORWARD;
-            state->history_count = 0;
-            state->at_live_edge = false;
-            hold_log_filter_result_free(&result);
-            memset(&result, 0, sizeof(result));
-            opts.scan_byte_budget = scan_budget;
-            if (lseek(state->fd, state->start_offset, SEEK_SET) < 0) return -1;
-            if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
+            /* The backward window hit the oldest match: pin the page under it
+             * so repeated PageUp is idempotent. */
+            if (refill_forward_from(state, &opts, scan_budget, result.line_offsets[0], &result) != 0) return -1;
         }
     } else {
         opts.scan_byte_budget = scan_budget;
@@ -751,43 +651,22 @@ static bool continuation_pending(const struct viewer_state *state) {
 }
 
 static int continue_scan_tick(struct viewer_state *state) {
-    size_t body_rows = viewer_body_rows(state);
-    size_t room = body_rows - state->visible_count;
+    size_t room = viewer_body_rows(state) - state->visible_count;
     struct hold_log_filter_options opts;
     configure_filter_opts(state, &opts);
     opts.visible_capacity = room;
     opts.max_results = room;
-    size_t budget = body_rows * VIEWER_SCAN_BYTES_PER_ROW;
-    if (budget < 1024u * 1024u) budget = 1024u * 1024u;
+    size_t budget = scan_budget_floor(state);
     bool was_limited = state->cache_scan_limited;
     bool changed = false;
     struct hold_log_filter_result result;
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         off_t anchor = state->prev_offset;
-        if (anchor <= 0) {
-            state->cache_scan_limited = false;
-            return 1;
-        }
+        if (anchor <= 0) { state->cache_scan_limited = false; return 1; }
         if (hold_log_filter_backward_fd(state->fd, &opts, anchor, budget, &result) != 0) return -1;
         size_t add = result.line_count;
+        if (cache_append_rows(state, &result, true) != 0) { hold_log_filter_result_free(&result); return -1; }
         if (add > 0) {
-            if (cache_ensure_capacity(state, state->visible_count + add) != 0) {
-                hold_log_filter_result_free(&result);
-                return -1;
-            }
-            memmove(state->visible + add, state->visible, state->visible_count * sizeof(*state->visible));
-            for (size_t i = 0; i < add; i++) {
-                char *copy = strdup(result.lines[i]);
-                if (!copy) {
-                    for (size_t j = 0; j < i; j++) free(state->visible[j].line);
-                    memmove(state->visible, state->visible + add, state->visible_count * sizeof(*state->visible));
-                    hold_log_filter_result_free(&result);
-                    return -1;
-                }
-                state->visible[i].line = copy;
-                state->visible[i].offset = result.line_offsets[i];
-            }
-            state->visible_count += add;
             /* Older rows arrive above: the cursor stays on the same record. */
             if (state->visible_count > add && !(state->follow && state->at_live_edge)) state->selected += add;
             changed = true;
@@ -799,24 +678,8 @@ static int continue_scan_tick(struct viewer_state *state) {
         if (lseek(state->fd, state->next_offset, SEEK_SET) < 0) return -1;
         opts.scan_byte_budget = budget;
         if (hold_log_filter_fd(state->fd, &opts, &result) != 0) return -1;
-        size_t add = result.line_count;
-        if (add > 0) {
-            if (cache_ensure_capacity(state, state->visible_count + add) != 0) {
-                hold_log_filter_result_free(&result);
-                return -1;
-            }
-            for (size_t i = 0; i < add; i++) {
-                char *copy = strdup(result.lines[i]);
-                if (!copy) {
-                    hold_log_filter_result_free(&result);
-                    return -1;
-                }
-                state->visible[state->visible_count].line = copy;
-                state->visible[state->visible_count].offset = result.line_offsets[i];
-                state->visible_count++;
-            }
-            changed = true;
-        }
+        if (cache_append_rows(state, &result, false) != 0) { hold_log_filter_result_free(&result); return -1; }
+        if (result.line_count > 0) changed = true;
         if (result.next_offset > state->next_offset) state->next_offset = result.next_offset;
         state->cache_scan_limited = result.scan_limited;
         state->cache_reached_eof = result.reached_eof;
@@ -838,10 +701,7 @@ static void put_bar_text(char *bar, size_t width, size_t pos, const char *text) 
     if (!bar || !text || pos >= width) return;
     size_t room = width - pos;
     size_t n = strlen(text);
-    if (n <= room) {
-        memcpy(bar + pos, text, n);
-        return;
-    }
+    if (n <= room) { memcpy(bar + pos, text, n); return; }
     if (room >= 4) {
         memcpy(bar + pos, text, room - 3);
         memcpy(bar + pos + room - 3, "...", 3);
@@ -850,9 +710,23 @@ static void put_bar_text(char *bar, size_t width, size_t pos, const char *text) 
     }
 }
 
+/* A chrome bar: left text at column 0, right text flush to the edge. */
+static char *make_bar(size_t width, const char *left, const char *right) {
+    char *bar = malloc(width + 1);
+    if (!bar) return NULL;
+    memset(bar, ' ', width);
+    bar[width] = '\0';
+    put_bar_text(bar, width, 0, left);
+    size_t rlen = strlen(right);
+    if (rlen < width) put_bar_text(bar, width, width - rlen, right);
+    return bar;
+}
+
+/* Sanitized bounded emit: printable bytes and tabs pass, the rest blank;
+ * stops at the record's newline. */
 static int viewer_put_capped(const char *s, size_t max) {
     size_t n = 0;
-    for (const unsigned char *p = (const unsigned char *)s; *p && n < max; p++, n++) {
+    for (const unsigned char *p = (const unsigned char *)s; *p && *p != '\n' && n < max; p++, n++) {
         char out = (isprint(*p) || *p == '\t') ? (char)*p : ' ';
         if (viewer_write_all(STDOUT_FILENO, &out, 1) != 0) return -1;
     }
@@ -963,10 +837,7 @@ static int render_help_overlay(const struct viewer_state *state, size_t body_row
     size_t n = sizeof(lines) / sizeof(lines[0]);
     size_t width = state->cols ? state->cols : 80;
     size_t blockw = 0;
-    for (size_t i = 0; i < n; i++) {
-        size_t len = strlen(lines[i]);
-        if (len > blockw) blockw = len;
-    }
+    for (size_t i = 0; i < n; i++) if (strlen(lines[i]) > blockw) blockw = strlen(lines[i]);
     size_t left = width > blockw ? (width - blockw) / 2 : 0;
     size_t top = body_rows > n ? (body_rows - n) / 2 : 0;
     char pad[256];
@@ -974,17 +845,13 @@ static int render_help_overlay(const struct viewer_state *state, size_t body_row
     memset(pad, ' ', left);
     pad[left] = '\0';
     size_t used = 0;
-    for (; used < top; used++) {
-        if (viewer_puts("\033[K\r\n") != 0) return -1;
-    }
+    for (; used < top; used++) if (viewer_puts("\033[K\r\n") != 0) return -1;
     for (size_t i = 0; i < n && used < body_rows; i++, used++) {
         if (viewer_puts(pad) != 0) return -1;
         if (viewer_put_capped(lines[i], width > left ? width - left : 0) != 0) return -1;
         if (viewer_puts("\033[K\r\n") != 0) return -1;
     }
-    for (; used < body_rows; used++) {
-        if (viewer_puts("\033[K\r\n") != 0) return -1;
-    }
+    for (; used < body_rows; used++) if (viewer_puts("\033[K\r\n") != 0) return -1;
     return 0;
 }
 
@@ -1007,14 +874,10 @@ static int render_body_polished(struct viewer_state *state, size_t body_rows) {
             rc = emit_display_row(disp, dlen, width, sel, sgr);
             used++;
         } else {
-            size_t off = 0;
-            while (off < dlen && used < body_rows) {
-                size_t seg = dlen - off;
-                if (seg > width) seg = width;
+            for (size_t off = 0; off < dlen && used < body_rows && rc == 0; used++) {
+                size_t seg = dlen - off > width ? width : dlen - off;
                 rc = emit_display_row(disp + off, seg, width, sel, sgr);
-                if (rc != 0) break;
                 off += seg;
-                used++;
             }
         }
         free(disp);
@@ -1027,24 +890,14 @@ static int render_body_polished(struct viewer_state *state, size_t body_rows) {
 }
 
 static void viewer_status_text(const struct viewer_state *state, char *out, size_t n) {
-    bool following = state->follow && state->at_live_edge && state->proc_active;
-    if (following) {
-        snprintf(out, n, "FOLLOWING ACTIVE");
-    } else if (state->proc_active) {
-        snprintf(out, n, "VIEWING ACTIVE");
-    } else if (state->has_exit_code) {
-        snprintf(out, n, "VIEWING EXITED (%d)", state->exit_code);
-    } else {
-        snprintf(out, n, "VIEWING EXITED");
-    }
+    if (state->follow && state->at_live_edge && state->proc_active) snprintf(out, n, "FOLLOWING ACTIVE");
+    else if (state->proc_active) snprintf(out, n, "VIEWING ACTIVE");
+    else if (state->has_exit_code) snprintf(out, n, "VIEWING EXITED (%d)", state->exit_code);
+    else snprintf(out, n, "VIEWING EXITED");
 }
 
 static int render_header_polished(const struct viewer_state *state) {
     size_t width = state->cols ? state->cols : 80;
-    char *bar = malloc(width + 1);
-    if (!bar) return -1;
-    memset(bar, ' ', width);
-    bar[width] = '\0';
     char idbuf[ID_DISPLAY_HEX_LEN + 1];
     /* Names are the human handle; the short id already lives in the footer. */
     const char *name = state->context.name && *state->context.name
@@ -1054,11 +907,11 @@ static int render_header_polished(const struct viewer_state *state) {
                                   : viewer_run_label(state));
     char left[128];
     snprintf(left, sizeof(left), "hold logs: %s", name);
-    put_bar_text(bar, width, 0, left);
     char status[48];
     viewer_status_text(state, status, sizeof(status));
     size_t slen = strlen(status);
-    if (slen < width) put_bar_text(bar, width, width - slen, status);
+    char *bar = make_bar(width, left, status);
+    if (!bar) return -1;
     int rc = viewer_puts("\033[?25l\033[H");
     if (rc == 0 && state->colors) rc = viewer_puts("\033[1m");
     if (rc == 0) rc = viewer_write_all(STDOUT_FILENO, bar, width);
@@ -1074,10 +927,8 @@ static int render_header_polished(const struct viewer_state *state) {
         if (sgr) {
             char move[32];
             snprintf(move, sizeof(move), "\033[1;%zuH", width - slen + 1);
-            if (viewer_puts(move) != 0) return -1;
-            if (viewer_puts(sgr) != 0) return -1;
-            if (viewer_puts(status) != 0) return -1;
-            if (viewer_puts("\033[0m") != 0) return -1;
+            if (viewer_puts(move) != 0 || viewer_puts(sgr) != 0) return -1;
+            if (viewer_puts(status) != 0 || viewer_puts("\033[0m") != 0) return -1;
         }
     }
     if (viewer_puts("\033[K\r\n") != 0) return -1;
@@ -1085,13 +936,11 @@ static int render_header_polished(const struct viewer_state *state) {
      * line teaches nothing and costs a row of log. */
     if (state->jump_active) {
         if (viewer_puts("\033[7mgo to line: ") != 0) return -1;
-        size_t room = width > 13 ? width - 13 : 0;
-        if (viewer_put_capped(state->jump_buf, room) != 0) return -1;
+        if (viewer_put_capped(state->jump_buf, width > 13 ? width - 13 : 0) != 0) return -1;
         if (viewer_puts("\033[0m\033[K\r\n") != 0) return -1;
     } else if (state->filter[0]) {
         if (viewer_puts("\033[7mfilter: ") != 0) return -1;
-        size_t room = width > 8 ? width - 8 : 0;
-        if (viewer_put_capped(state->filter, room) != 0) return -1;
+        if (viewer_put_capped(state->filter, width > 8 ? width - 8 : 0) != 0) return -1;
         if (viewer_puts("\033[0m\033[K\r\n") != 0) return -1;
     }
     return 0;
@@ -1099,10 +948,6 @@ static int render_header_polished(const struct viewer_state *state) {
 
 static int render_footer_polished(const struct viewer_state *state) {
     size_t width = state->cols ? state->cols : 80;
-    char *bar = malloc(width + 1);
-    if (!bar) return -1;
-    memset(bar, ' ', width);
-    bar[width] = '\0';
     /* Left: the short id. Right: the one discoverability hint. The screen
      * already shows whether timestamps, wrap, or the source column are on;
      * the footer does not narrate the visible. */
@@ -1112,10 +957,8 @@ static int render_footer_polished(const struct viewer_state *state) {
                              : viewer_run_label(state);
     char leftbuf[ID_DISPLAY_HEX_LEN + 4];
     snprintf(leftbuf, sizeof(leftbuf), " %s", idtext);
-    put_bar_text(bar, width, 0, leftbuf);
-    const char *right = state->help_open ? "any key returns " : "Ctrl-H Help   Esc Quit ";
-    size_t rlen = strlen(right);
-    if (rlen < width) put_bar_text(bar, width, width - rlen, right);
+    char *bar = make_bar(width, leftbuf, state->help_open ? "any key returns " : "Ctrl-H Help   Esc Quit ");
+    if (!bar) return -1;
     int rc = viewer_puts("\033[7m");
     if (rc == 0) rc = viewer_write_all(STDOUT_FILENO, bar, width);
     if (rc == 0) rc = viewer_puts("\033[0m");
@@ -1138,34 +981,25 @@ static int render_polished(struct viewer_state *state) {
 static int render_legacy(struct viewer_state *state) {
     char header[512];
     bool has_filters = state->filter[0] || state->example_count > 0;
+    const char *partial = state->cache_scan_limited ? " | partial" : (state->cache_reached_eof ? " | EOF" : "");
+    const char *newer = state->newer_available ? " | newer below" : "";
+    const char *reset = has_filters ? " | Ctrl-R reset" : "";
     if (state->filter[0]) {
-        snprintf(header,
-                 sizeof(header),
-                 "\033[?25l\033[Hfilter: %s%s%s%s%s\033[K\r\n",
-                 state->filter,
-                 state->example_count ? " | excluding similar" : "",
-                 state->cache_scan_limited ? " | partial" : (state->cache_reached_eof ? " | EOF" : ""),
-                 state->newer_available ? " | newer below" : "",
-                 has_filters ? " | Ctrl-R reset" : "");
+        snprintf(header, sizeof(header), "\033[?25l\033[Hfilter: %s%s%s%s%s\033[K\r\n", state->filter,
+                 state->example_count ? " | excluding similar" : "", partial, newer, reset);
     } else {
-        snprintf(header,
-                 sizeof(header),
-                 "\033[?25l\033[Hhold logs %s%s%s%s%s%s\033[K\r\n",
-                 viewer_run_label(state),
+        snprintf(header, sizeof(header), "\033[?25l\033[Hhold logs %s%s%s%s%s%s\033[K\r\n", viewer_run_label(state),
                  state->follow ? (state->at_live_edge ? "  ● live" : "  browsing") : (state->follow_exited ? "  exited" : ""),
-                 state->example_count ? "  excluding similar" : "",
-                 state->cache_scan_limited ? " | partial" : (state->cache_reached_eof ? " | EOF" : ""),
-                 state->newer_available ? " | newer below" : "",
-                 has_filters ? " | Ctrl-R reset" : "");
+                 state->example_count ? "  excluding similar" : "", partial, newer, reset);
     }
     if (viewer_puts(header) != 0) return -1;
 
     size_t body_rows = viewer_body_rows(state);
-    size_t line_width = state->cols;
     for (size_t i = 0; i < body_rows; i++) {
         if (i < state->visible_count) {
             if (i == state->selected) viewer_puts("\033[7m");
-            write_sanitized_line(state->visible[i].line, line_width);
+            viewer_put_capped(state->visible[i].line, state->cols);
+            viewer_puts("\033[K");
             if (i == state->selected) viewer_puts("\033[0m");
         } else {
             viewer_puts("~\033[K");
@@ -1174,17 +1008,11 @@ static int render_legacy(struct viewer_state *state) {
     }
 
     char footer[512];
-    snprintf(footer,
-             sizeof(footer),
+    snprintf(footer, sizeof(footer),
              "scan_gen=%zu offset=%lld prev=%lld next=%lld scanned=%zu bytes=%zu matches=%zu excludes=%zu%s%s | Ctrl-H help Ctrl-R reset\033[K",
-             state->scan_generation,
-             (long long)state->start_offset,
-             (long long)state->prev_offset,
-             (long long)state->next_offset,
-             state->cache_lines_scanned,
-             state->cache_bytes_read,
-             state->cache_match_count,
-             state->example_count,
+             state->scan_generation, (long long)state->start_offset, (long long)state->prev_offset,
+             (long long)state->next_offset, state->cache_lines_scanned, state->cache_bytes_read,
+             state->cache_match_count, state->example_count,
              state->follow ? (state->at_live_edge ? " follow=tail" : " follow=browsing") : (state->follow_exited ? " follow=exited" : ""),
              state->newer_available ? " newer=yes" : "");
     if (viewer_puts(footer) != 0) return -1;
@@ -1199,10 +1027,7 @@ static int render(struct viewer_state *state) {
 }
 
 static void push_history(struct viewer_state *state, off_t off) {
-    if (state->history_count < VIEWER_OFFSET_HISTORY_MAX) {
-        state->history[state->history_count++] = off;
-        return;
-    }
+    if (state->history_count < VIEWER_OFFSET_HISTORY_MAX) { state->history[state->history_count++] = off; return; }
     memmove(state->history, state->history + 1, sizeof(state->history[0]) * (VIEWER_OFFSET_HISTORY_MAX - 1));
     state->history[VIEWER_OFFSET_HISTORY_MAX - 1] = off;
 }
@@ -1210,9 +1035,7 @@ static void push_history(struct viewer_state *state, off_t off) {
 static void page_down(struct viewer_state *state) {
     clear_local_scan_limit(state);
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
-        if (state->at_live_edge) {
-            return;
-        }
+        if (state->at_live_edge) return;
         if (state->visible_count == 0 || state->next_offset <= state->start_offset) return;
         /*
          * A manual PageDown after browsing older log content should advance to
@@ -1290,8 +1113,7 @@ static void pin_to_oldest_visible_page(struct viewer_state *state) {
 static void enter_browsing_mode(struct viewer_state *state, bool stabilize_visible_page) {
     if (!state->follow || !state->at_live_edge) return;
     state->at_live_edge = false;
-    state->newer_scan_offset = state->tail_anchor;
-    state->newer_floor_offset = state->tail_anchor;
+    state->newer_scan_offset = state->newer_floor_offset = state->tail_anchor;
     if (stabilize_visible_page && state->cache_valid && state->visible_count > 0) {
         state->start_offset = state->visible[0].offset;
         state->scan_mode = VIEWER_SCAN_FORWARD;
@@ -1309,10 +1131,8 @@ static void jump_to_newest_page(struct viewer_state *state) {
     off_t end = lseek(state->fd, 0, SEEK_END);
     if (end < 0) end = state->tail_anchor;
     if (end < 0) end = 0;
-    state->start_offset = end;
-    state->tail_anchor = end;
-    state->newer_scan_offset = end;
-    state->newer_floor_offset = end;
+    state->start_offset = state->tail_anchor = end;
+    state->newer_scan_offset = state->newer_floor_offset = end;
     state->at_live_edge = state->follow;
     state->at_oldest_edge = false;
     cache_invalidate(state);
@@ -1322,10 +1142,7 @@ static void jump_to_newest_page(struct viewer_state *state) {
  * active: the page starts at the first visible match at or after that line. */
 static void perform_jump(struct viewer_state *state) {
     state->jump_active = false;
-    if (!state->jump_buf[0] || !state->idx_loaded || state->idx_map.count == 0) {
-        state->jump_buf[0] = '\0';
-        return;
-    }
+    if (!state->jump_buf[0] || !state->idx_loaded || state->idx_map.count == 0) { state->jump_buf[0] = '\0'; return; }
     unsigned long n = strtoul(state->jump_buf, NULL, 10);
     state->jump_buf[0] = '\0';
     if (n < 1) n = 1;
@@ -1333,8 +1150,7 @@ static void perform_jump(struct viewer_state *state) {
     if (state->follow && state->at_live_edge) enter_browsing_mode(state, false);
     state->scan_mode = VIEWER_SCAN_FORWARD;
     state->start_offset = state->idx_map.records[n - 1].offset;
-    state->at_live_edge = false;
-    state->at_oldest_edge = false;
+    state->at_live_edge = state->at_oldest_edge = false;
     state->history_count = 0;
     state->selected = 0;
     clear_local_scan_limit(state);
@@ -1346,10 +1162,8 @@ static void page_up(struct viewer_state *state) {
     enter_browsing_mode(state, false);
     if (state->scan_mode == VIEWER_SCAN_BACKWARD) {
         state->at_live_edge = false;
-        if (state->at_oldest_edge ||
-            state->visible_count == 0 ||
-            state->prev_offset <= 0 ||
-            state->prev_offset >= state->start_offset) {
+        if (state->at_oldest_edge || state->visible_count == 0 ||
+            state->prev_offset <= 0 || state->prev_offset >= state->start_offset) {
             pin_to_oldest_visible_page(state);
             return;
         }
@@ -1361,11 +1175,7 @@ static void page_up(struct viewer_state *state) {
         return;
     }
     if (state->history_count == 0) {
-        if (state->start_offset != 0) {
-            state->start_offset = 0;
-            state->selected = 0;
-            cache_invalidate(state);
-        }
+        if (state->start_offset != 0) { state->start_offset = 0; state->selected = 0; cache_invalidate(state); }
         return;
     }
     state->start_offset = state->history[--state->history_count];
@@ -1383,10 +1193,7 @@ static void page_up(struct viewer_state *state) {
  * continuation.
  */
 static void scroll_line_down(struct viewer_state *state) {
-    if (state->visible_count < 2) {
-        page_down(state);
-        return;
-    }
+    if (state->visible_count < 2) { page_down(state); return; }
     /* Rows below this page are still being discovered; let the ticks land. */
     if (continuation_pending(state)) return;
     if (state->cache_reached_eof) return; /* EOF is not a line */
@@ -1402,24 +1209,15 @@ static void scroll_line_down(struct viewer_state *state) {
 }
 
 static void scroll_line_up(struct viewer_state *state) {
-    if (state->visible_count == 0) {
-        page_up(state);
-        return;
-    }
+    if (state->visible_count == 0) { page_up(state); return; }
     clear_local_scan_limit(state);
     enter_browsing_mode(state, false);
     if (state->at_oldest_edge || state->visible[0].offset <= 0) return;
     struct hold_log_filter_options opts;
-    configure_filter_opts(state, &opts);
-    opts.visible_capacity = 1;
-    opts.max_results = 1;
-    opts.match_ring_capacity = 1;
-    size_t budget = viewer_body_rows(state) * VIEWER_SCAN_BYTES_PER_ROW;
-    if (budget < 1024u * 1024u) budget = 1024u * 1024u;
+    configure_probe_opts(state, &opts);
     struct hold_log_filter_result probe;
-    if (hold_log_filter_backward_fd(state->fd, &opts, state->visible[0].offset, budget, &probe) != 0) return;
-    bool found = probe.line_count > 0;
-    bool limited = probe.scan_limited;
+    if (hold_log_filter_backward_fd(state->fd, &opts, state->visible[0].offset, scan_budget_floor(state), &probe) != 0) return;
+    bool found = probe.line_count > 0, limited = probe.scan_limited;
     off_t prev_record = found ? probe.line_offsets[0] : 0;
     hold_log_filter_result_free(&probe);
     if (!found) {
@@ -1461,16 +1259,10 @@ static void handle_key_up(struct viewer_state *state) {
     }
 }
 
-int hold_log_viewer_tty_fd(int fd,
-                             const char *title,
-                             const struct hold_log_filter_options *opts,
+int hold_log_viewer_tty_fd(int fd, const char *title, const struct hold_log_filter_options *opts,
                              const struct hold_log_viewer_follow *follow,
-                             const struct hold_log_viewer_context *context,
-                             bool debug_stats) {
-    if (fd < 0 || !opts || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
-        errno = ENOTTY;
-        return -1;
-    }
+                             const struct hold_log_viewer_context *context, bool debug_stats) {
+    if (fd < 0 || !opts || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) { errno = ENOTTY; return -1; }
     struct viewer_state state;
     memset(&state, 0, sizeof(state));
     state.fd = fd;
@@ -1494,16 +1286,12 @@ int hold_log_viewer_tty_fd(int fd,
     if (state.follow) {
         off_t end = lseek(fd, 0, SEEK_END);
         if (end >= 0) {
-            state.start_offset = end;
-            state.tail_anchor = end;
-            state.newer_scan_offset = end;
-            state.newer_floor_offset = end;
+            state.start_offset = state.tail_anchor = end;
+            state.newer_scan_offset = state.newer_floor_offset = end;
         }
         state.scan_mode = VIEWER_SCAN_BACKWARD;
     }
-    if (opts->literal) {
-        snprintf(state.filter, sizeof(state.filter), "%s", opts->literal);
-    }
+    if (opts->literal) snprintf(state.filter, sizeof(state.filter), "%s", opts->literal);
     const char *term = getenv("TERM");
     state.colors = !state.debug_stats && !getenv("NO_COLOR") && term && strcmp(term, "dumb") != 0;
 
@@ -1514,10 +1302,7 @@ int hold_log_viewer_tty_fd(int fd,
     enum viewer_key pending = VIEWER_KEY_NONE;
     unsigned char pending_printable = 0;
     while (1) {
-        if (need_render && render(&state) != 0) {
-            rc = -1;
-            break;
-        }
+        if (need_render && render(&state) != 0) { rc = -1; break; }
         need_render = false;
         unsigned char printable = 0;
         enum viewer_key key;
@@ -1534,77 +1319,46 @@ int hold_log_viewer_tty_fd(int fd,
             if (refresh_terminal_size(&state)) need_render = true;
             if (state.follow) {
                 int tick = handle_follow_tick(&state);
-                if (tick < 0) {
-                    rc = -1;
-                    break;
-                }
+                if (tick < 0) { rc = -1; break; }
                 if (tick > 0) need_render = true;
             }
             if (continuation_pending(&state)) {
                 int cont = continue_scan_tick(&state);
-                if (cont < 0) {
-                    rc = -1;
-                    break;
-                }
+                if (cont < 0) { rc = -1; break; }
                 if (cont > 0) need_render = true;
             }
             continue;
         }
-        if (state.help_open) {
-            state.help_open = false;
-            need_render = true;
-            continue;
-        }
+        if (state.help_open) { state.help_open = false; need_render = true; continue; }
         if (state.jump_active) {
             /* Modal line-number entry: digits build the target, Enter jumps,
              * Esc or Ctrl-G cancels. Anything else cancels and falls through. */
+            bool consumed = true;
+            size_t n = strlen(state.jump_buf);
             if (key == VIEWER_KEY_PRINTABLE && printable >= '0' && printable <= '9') {
-                size_t n = strlen(state.jump_buf);
-                if (n + 1 < sizeof(state.jump_buf)) {
-                    state.jump_buf[n] = (char)printable;
-                    state.jump_buf[n + 1] = '\0';
-                }
-                need_render = true;
-                continue;
-            }
-            if (key == VIEWER_KEY_BACKSPACE) {
-                size_t n = strlen(state.jump_buf);
+                if (n + 1 < sizeof(state.jump_buf)) { state.jump_buf[n] = (char)printable; state.jump_buf[n + 1] = '\0'; }
+            } else if (key == VIEWER_KEY_BACKSPACE) {
                 if (n > 0) state.jump_buf[n - 1] = '\0';
-                need_render = true;
-                continue;
-            }
-            if (key == VIEWER_KEY_DOWN) { /* Enter */
+            } else if (key == VIEWER_KEY_DOWN) { /* Enter */
                 perform_jump(&state);
-                need_render = true;
-                continue;
-            }
-            if (key == VIEWER_KEY_QUIT || key == VIEWER_KEY_JUMP) {
+            } else {
                 state.jump_active = false;
                 state.jump_buf[0] = '\0';
-                need_render = true;
-                continue;
+                consumed = key == VIEWER_KEY_QUIT || key == VIEWER_KEY_JUMP;
             }
-            state.jump_active = false;
-            state.jump_buf[0] = '\0';
+            if (consumed) { need_render = true; continue; }
         }
         if (key == VIEWER_KEY_QUIT) {
             int quit_tick = mark_newer_before_quit(&state);
-            if (quit_tick < 0) {
-                rc = -1;
-                break;
-            }
-            if (quit_tick > 0 && render(&state) != 0) {
-                rc = -1;
-            }
+            if (quit_tick < 0) { rc = -1; break; }
+            if (quit_tick > 0 && render(&state) != 0) rc = -1;
             break;
         }
-        if (key == VIEWER_KEY_DOWN) {
-            handle_key_down(&state);
-            need_render = true;
-        } else if (key == VIEWER_KEY_UP) {
-            handle_key_up(&state);
-            need_render = true;
-        } else if (key == VIEWER_KEY_WHEEL_UP || key == VIEWER_KEY_WHEEL_DOWN) {
+        switch (key) {
+        case VIEWER_KEY_DOWN: handle_key_down(&state); need_render = true; break;
+        case VIEWER_KEY_UP: handle_key_up(&state); need_render = true; break;
+        case VIEWER_KEY_WHEEL_UP:
+        case VIEWER_KEY_WHEEL_DOWN: {
             /* Wheel scrolling is naturally speed-sensitive: a fast spin
              * queues many notches, so drain the identical ones and apply
              * them in one repaint (three rows per notch). */
@@ -1612,14 +1366,8 @@ int hold_log_viewer_tty_fd(int fd,
             while (byte_ready(0)) {
                 unsigned char p2 = 0;
                 enum viewer_key k2 = read_key(&p2, 0);
-                if (k2 == key) {
-                    steps += 3;
-                    continue;
-                }
-                if (k2 != VIEWER_KEY_NONE) {
-                    pending = k2;
-                    pending_printable = p2;
-                }
+                if (k2 == key) { steps += 3; continue; }
+                if (k2 != VIEWER_KEY_NONE) { pending = k2; pending_printable = p2; }
                 break;
             }
             for (int s = 0; s < steps; s++) {
@@ -1627,26 +1375,18 @@ int hold_log_viewer_tty_fd(int fd,
                 else handle_key_down(&state);
             }
             need_render = true;
-        } else if (key == VIEWER_KEY_PAGE_DOWN) {
-            page_down(&state);
-            need_render = true;
-        } else if (key == VIEWER_KEY_PAGE_UP) {
-            page_up(&state);
-            need_render = true;
-        } else if (key == VIEWER_KEY_TOP) {
-            pin_to_oldest_visible_page(&state);
-            need_render = true;
-        } else if (key == VIEWER_KEY_BOTTOM) {
-            jump_to_newest_page(&state);
-            need_render = true;
-        } else if (key == VIEWER_KEY_BACKSPACE) {
+            break;
+        }
+        case VIEWER_KEY_PAGE_DOWN: page_down(&state); need_render = true; break;
+        case VIEWER_KEY_PAGE_UP: page_up(&state); need_render = true; break;
+        case VIEWER_KEY_TOP: pin_to_oldest_visible_page(&state); need_render = true; break;
+        case VIEWER_KEY_BOTTOM: jump_to_newest_page(&state); need_render = true; break;
+        case VIEWER_KEY_BACKSPACE: {
             size_t n = strlen(state.filter);
-            if (n > 0) {
-                state.filter[n - 1] = '\0';
-                reset_filter_navigation(&state);
-                need_render = true;
-            }
-        } else if (key == VIEWER_KEY_PRINTABLE) {
+            if (n > 0) { state.filter[n - 1] = '\0'; reset_filter_navigation(&state); need_render = true; }
+            break;
+        }
+        case VIEWER_KEY_PRINTABLE: {
             size_t n = strlen(state.filter);
             if (n < VIEWER_FILTER_MAX) {
                 state.filter[n] = (char)printable;
@@ -1654,7 +1394,9 @@ int hold_log_viewer_tty_fd(int fd,
                 reset_filter_navigation(&state);
                 need_render = true;
             }
-        } else if (key == VIEWER_KEY_TOGGLE) {
+            break;
+        }
+        case VIEWER_KEY_TOGGLE:
             if (state.follow && state.at_live_edge && state.visible_count > 0) {
                 /* No cursor is visible at the live edge, so the first Space
                  * only summons it (bottom row); the next Space excludes. */
@@ -1665,60 +1407,47 @@ int hold_log_viewer_tty_fd(int fd,
                 if (toggle_example(&state, line) != 0) rc = -1;
             }
             need_render = true;
-        } else if (key == VIEWER_KEY_SUSPEND) {
+            break;
+        case VIEWER_KEY_SUSPEND:
             /* Honest Ctrl-Z: restore the terminal, stop like any job, and
              * repaint when the shell resumes us. */
             raw_terminal_leave(&raw);
             kill(0, SIGTSTP);
-            if (raw_terminal_enter(&raw) != 0) {
-                rc = -1;
-                break;
-            }
+            if (raw_terminal_enter(&raw) != 0) { rc = -1; break; }
             cache_invalidate(&state);
             need_render = true;
-        } else if (key == VIEWER_KEY_HELP) {
-            state.help_open = true;
-            need_render = true;
-        } else if (key == VIEWER_KEY_TS_CYCLE) {
+            break;
+        case VIEWER_KEY_HELP: state.help_open = true; need_render = true; break;
+        case VIEWER_KEY_TS_CYCLE:
             state.ts_mode = state.ts_mode == HOLD_TS_NONE ? HOLD_TS_TIME
                           : state.ts_mode == HOLD_TS_TIME ? HOLD_TS_DATE
                           : HOLD_TS_NONE;
             need_render = true;
-        } else if (key == VIEWER_KEY_TZ_TOGGLE) {
-            state.ts_utc = !state.ts_utc;
-            need_render = true;
-        } else if (key == VIEWER_KEY_WRAP_TOGGLE) {
-            state.wrap = !state.wrap;
-            need_render = true;
-        } else if (key == VIEWER_KEY_SOURCE_COL) {
-            state.source_column = !state.source_column;
-            need_render = true;
-        } else if (key == VIEWER_KEY_LINE_NUMBERS) {
-            state.line_numbers = !state.line_numbers;
-            need_render = true;
-        } else if (key == VIEWER_KEY_JUMP) {
-            if (state.idx_loaded && state.idx_map.count > 0) {
-                state.jump_active = true;
-                state.jump_buf[0] = '\0';
-                need_render = true;
-            }
-        } else if (key == VIEWER_KEY_RESET) {
+            break;
+        case VIEWER_KEY_TZ_TOGGLE: state.ts_utc = !state.ts_utc; need_render = true; break;
+        case VIEWER_KEY_WRAP_TOGGLE: state.wrap = !state.wrap; need_render = true; break;
+        case VIEWER_KEY_SOURCE_COL: state.source_column = !state.source_column; need_render = true; break;
+        case VIEWER_KEY_LINE_NUMBERS: state.line_numbers = !state.line_numbers; need_render = true; break;
+        case VIEWER_KEY_JUMP:
+            if (state.idx_loaded && state.idx_map.count > 0) { state.jump_active = true; state.jump_buf[0] = '\0'; need_render = true; }
+            break;
+        case VIEWER_KEY_RESET:
             if (state.filter[0] || state.example_count > 0) {
                 state.filter[0] = '\0';
                 free_examples(&state);
                 reset_filter_navigation(&state);
                 need_render = true;
             }
+            break;
+        default:
+            break;
         }
         if (rc != 0) break;
     }
     if (rc == 0) {
         int final_tick = mark_newer_before_quit(&state);
-        if (final_tick < 0) {
-            rc = -1;
-        } else if (final_tick > 0 && render(&state) != 0) {
-            rc = -1;
-        }
+        if (final_tick < 0) rc = -1;
+        else if (final_tick > 0 && render(&state) != 0) rc = -1;
     }
     raw_terminal_leave(&raw);
     free_examples(&state);
