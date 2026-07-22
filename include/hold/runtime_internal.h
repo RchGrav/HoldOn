@@ -11,7 +11,6 @@ enum run_state hold_eval_state(const struct hold_run_record *r, const char *curr
 int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, bool follow_until_exit);
 void hold_rollback_spawned_group(pid_t pid, pid_t pgid);
 bool hold_wait_target_group_gone(const struct hold_run_record *r, int timeout_ms);
-int hold_do_signal_action(const struct hold_store *store, const char *id, int sig, bool graceful, bool *already_done);
 const char *hold_state_str(enum run_state s);
 int hold_prune_one_run(const struct hold_store *store, const char *id, const char *boot, bool allow_stale, bool *removed);
 bool hold_record_matches_alias_intent(const char *command, const struct hold_run_record *r, enum run_state st);
