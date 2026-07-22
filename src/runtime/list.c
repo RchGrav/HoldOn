@@ -176,81 +176,67 @@ static void resolve_user_label(const struct hold_run_record *r, bool system_scop
 /* Records from a private store (the caller's own, a peer's, or root's global
  * store). running_only narrows to live calls; otherwise the full ledger, live
  * and past. system_scope selects how the USER column is attributed. */
+struct private_walk {
+    const char *name_filter;
+    bool running_only;
+    bool system_scope;
+    const char *boot_id;
+    struct list_rows *rows;
+};
+
+static int collect_private_cb(const char *id, const char *path, struct hold_run_record *r, void *vctx) {
+    (void)path;
+    struct private_walk *w = vctx;
+    if (!r) {
+        fprintf(stderr, "hold: warning: skipping corrupt record %s.json\n", id);
+        return 0;
+    }
+    if (w->name_filter && (!r->has_name || strcmp(r->name, w->name_filter) != 0)) {
+        return 0;
+    }
+    enum run_state st = hold_eval_state(r, w->boot_id);
+    if (w->running_only && st != STATE_RUNNING) {
+        return 0;
+    }
+    struct list_row row;
+    memset(&row, 0, sizeof(row));
+    char display_id[ID_DISPLAY_HEX_LEN + 1];
+    hold_run_id_display(r->id, display_id);
+    snprintf(row.id, sizeof(row.id), "%s", display_id);
+    resolve_user_label(r, w->system_scope, row.owner, sizeof(row.owner));
+    if (r->has_name && r->name[0]) snprintf(row.name, sizeof(row.name), "%s", r->name);
+    snprintf(row.state, sizeof(row.state), "%s", hold_state_str(st));
+    row.start_unix_ns = r->start_unix_ns;
+    row.running = st == STATE_RUNNING;
+    int64_t created_ns = r->has_created_at && r->created_unix_ns > 0 ? r->created_unix_ns : r->start_unix_ns;
+    snprintf(row.cmd, sizeof(row.cmd), "%s", r->cmdline[0] ? r->cmdline : "?");
+    /* CREATED is humanized Docker-style: "About a minute ago", "2 days ago". */
+    char human[48];
+    hold_format_duration_human(seconds_since(created_ns), human, sizeof(human));
+    snprintf(row.created, sizeof(row.created), "%s ago", human);
+    format_status(st, r, row.status, sizeof(row.status));
+    if (r->saved) {
+        /* Surface protection where the eye already rests: a suffix on
+         * STATUS, not a new column. */
+        size_t used = strlen(row.status);
+        snprintf(row.status + used, sizeof(row.status) - used, " (saved)");
+    }
+    if (st == STATE_RUNNING) {
+        hold_observe_run_ports_column(r, row.ports, sizeof(row.ports));
+    }
+    return append_list_row(w->rows, &row) != 0 ? -1 : 0;
+}
+
 static int collect_list_private(const struct hold_store *store,
                                 const char *name_filter,
                                 bool running_only,
                                 bool system_scope,
                                 struct list_rows *rows) {
-    DIR *d = opendir(store->record_dir);
-    if (!d) {
-        return 0;
-    }
     char boot[128];
-    const char *boot_id = hold_boot_id_or_null(boot);
-    const struct dirent *e;
-    while ((e = readdir(d))) {
-        char file_id[ID_HEX_LEN + 1];
-        if (!hold_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
-            continue;
-        }
-        char path[HOLD_PATH_MAX];
-        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
-            continue;
-        }
-        struct hold_run_record r;
-        if (hold_load_record(path, &r) != 0) {
-            fprintf(stderr, "hold: warning: skipping corrupt record %s\n", e->d_name);
-            continue;
-        }
-        if (!hold_valid_record(&r) || strcmp(r.id, file_id) != 0) {
-            fprintf(stderr, "hold: warning: skipping corrupt record %s\n", e->d_name);
-            hold_free_run_record(&r);
-            continue;
-        }
-        if (name_filter && (!r.has_name || strcmp(r.name, name_filter) != 0)) {
-            hold_free_run_record(&r);
-            continue;
-        }
-        enum run_state st = hold_eval_state(&r, boot_id);
-        if (running_only && st != STATE_RUNNING) {
-            hold_free_run_record(&r);
-            continue;
-        }
-        struct list_row row;
-        memset(&row, 0, sizeof(row));
-        char display_id[ID_DISPLAY_HEX_LEN + 1];
-        hold_run_id_display(r.id, display_id);
-        snprintf(row.id, sizeof(row.id), "%s", display_id);
-        resolve_user_label(&r, system_scope, row.owner, sizeof(row.owner));
-        if (r.has_name && r.name[0]) snprintf(row.name, sizeof(row.name), "%s", r.name);
-        snprintf(row.state, sizeof(row.state), "%s", hold_state_str(st));
-        row.start_unix_ns = r.start_unix_ns;
-        row.running = st == STATE_RUNNING;
-        int64_t created_ns = r.has_created_at && r.created_unix_ns > 0 ? r.created_unix_ns : r.start_unix_ns;
-        snprintf(row.cmd, sizeof(row.cmd), "%s", r.cmdline[0] ? r.cmdline : "?");
-        /* CREATED is humanized Docker-style: "About a minute ago", "2 days ago". */
-        char human[48];
-        hold_format_duration_human(seconds_since(created_ns), human, sizeof(human));
-        snprintf(row.created, sizeof(row.created), "%s ago", human);
-        format_status(st, &r, row.status, sizeof(row.status));
-        if (r.saved) {
-            /* Surface protection where the eye already rests: a suffix on
-             * STATUS, not a new column. */
-            size_t used = strlen(row.status);
-            snprintf(row.status + used, sizeof(row.status) - used, " (saved)");
-        }
-        if (st == STATE_RUNNING) {
-            hold_observe_run_ports_column(&r, row.ports, sizeof(row.ports));
-        }
-        if (append_list_row(rows, &row) != 0) {
-            hold_free_run_record(&r);
-            closedir(d);
-            return -1;
-        }
-        hold_free_run_record(&r);
-    }
-    closedir(d);
-    return 0;
+    struct private_walk w = {
+        name_filter, running_only, system_scope, hold_boot_id_or_null(boot), rows
+    };
+    return hold_for_each_record(store->record_dir, collect_private_cb, &w);
 }
 
 /* The redacted global projection every user may see: the public index only,
@@ -482,45 +468,33 @@ static int collect_all_user_stores(const char *name_filter,
  * is where the PORTS a user sees in `list -a` come from. Best-effort and
  * eventually consistent: a failure to observe or rewrite just leaves the last
  * projection in place. */
+struct ports_refresh_walk {
+    const struct hold_store *store;
+    const char *boot_id;
+};
+
+static int refresh_ports_cb(const char *id, const char *path, struct hold_run_record *r, void *vctx) {
+    (void)id;
+    (void)path;
+    const struct ports_refresh_walk *w = vctx;
+    if (r && hold_eval_state(r, w->boot_id) == STATE_RUNNING) {
+        /* Only listening TCP and bound UDP sockets are observed here (the
+         * hold_observe_run_ports filter); outbound connections are never
+         * published, so the projection cannot leak who a call talks to. */
+        char ports[HOLD_PATH_MAX];
+        hold_observe_run_ports_column(r, ports, sizeof(ports));
+        (void)hold_write_public_index_atomic(w->store, r, ports);
+    }
+    return 0;
+}
+
 static void refresh_system_public_ports(const struct hold_store *store) {
     if (store->kind != STORE_SYSTEM_MANAGED) {
         return;
     }
-    DIR *d = opendir(store->record_dir);
-    if (!d) {
-        return;
-    }
     char boot[128];
-    const char *boot_id = hold_boot_id_or_null(boot);
-    const struct dirent *e;
-    while ((e = readdir(d))) {
-        char file_id[ID_HEX_LEN + 1];
-        if (!hold_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
-            continue;
-        }
-        char path[HOLD_PATH_MAX];
-        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
-            continue;
-        }
-        struct hold_run_record r;
-        if (hold_load_record(path, &r) != 0) {
-            continue;
-        }
-        if (!hold_valid_record(&r) || strcmp(r.id, file_id) != 0) {
-            hold_free_run_record(&r);
-            continue;
-        }
-        if (hold_eval_state(&r, boot_id) == STATE_RUNNING) {
-            /* Only listening TCP and bound UDP sockets are observed here (the
-             * hold_observe_run_ports filter); outbound connections are never
-             * published, so the projection cannot leak who a call talks to. */
-            char ports[HOLD_PATH_MAX];
-            hold_observe_run_ports_column(&r, ports, sizeof(ports));
-            (void)hold_write_public_index_atomic(store, &r, ports);
-        }
-        hold_free_run_record(&r);
-    }
-    closedir(d);
+    struct ports_refresh_walk w = { store, hold_boot_id_or_null(boot) };
+    hold_for_each_record(store->record_dir, refresh_ports_cb, &w);
 }
 
 /* list is Hold's scoped ledger. The requested scope resolves against privilege:
@@ -764,58 +738,47 @@ static void sweep_orphaned_artifacts(const struct hold_store *store,
 
 
 
+struct prune_walk {
+    const struct hold_store *store;
+    bool include_stale;
+    const char *boot_id;
+    struct prune_sweep_stats *stats;
+};
+
+static int prune_record_cb(const char *id, const char *path, struct hold_run_record *r, void *vctx) {
+    (void)id;
+    struct prune_walk *w = vctx;
+    if (!r) {
+        unlink(path);
+        return 0;
+    }
+    enum run_state st = hold_eval_state(r, w->boot_id);
+    /* The sweep accounts for everything it sees: live calls are end's
+     * business, stale needs -a, and saved calls need a targeted --force. */
+    if (st == STATE_RUNNING) {
+        w->stats->kept_live++;
+    } else if (st == STATE_STALE && !w->include_stale) {
+        w->stats->kept_stale++;
+    } else if (r->saved && (st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE)) {
+        w->stats->kept_saved++;
+    } else if (st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE) {
+        unlink(path);
+        unlink_call_artifacts(w->store, r);
+        unlink_public_index(w->store, r->id);
+        char display_id[ID_DISPLAY_HEX_LEN + 1];
+        hold_run_id_display(r->id, display_id);
+        /* Docker prune prints what it deletes; so do we. */
+        printf("%s%s%s\n", display_id, r->has_name && r->name[0] ? "  " : "", r->has_name && r->name[0] ? r->name : "");
+        w->stats->removed++;
+    }
+    return 0;
+}
+
 static int cmd_prune_store_all(const struct hold_store *store, bool include_stale, struct prune_sweep_stats *stats) {
     memset(stats, 0, sizeof(*stats));
     char boot[128];
-    const char *boot_id = hold_boot_id_or_null(boot);
-    const struct dirent *e;
-    DIR *d = opendir(store->record_dir);
-    if (!d) {
-        goto sweep_logs;
-    }
-    while ((e = readdir(d))) {
-        char file_id[ID_HEX_LEN + 1];
-        if (!hold_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) {
-            continue;
-        }
-        char path[HOLD_PATH_MAX];
-        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) {
-            continue;
-        }
-        struct hold_run_record r;
-        if (hold_load_record(path, &r) != 0) {
-            unlink(path);
-            continue;
-        }
-        if (!hold_valid_record(&r) || strcmp(r.id, file_id) != 0) {
-            unlink(path);
-            hold_free_run_record(&r);
-            continue;
-        }
-        enum run_state st = hold_eval_state(&r, boot_id);
-        /* The sweep accounts for everything it sees: live calls are end's
-         * business, stale needs -a, and saved calls need a targeted --force. */
-        if (st == STATE_RUNNING) {
-            stats->kept_live++;
-        } else if (st == STATE_STALE && !include_stale) {
-            stats->kept_stale++;
-        } else if (r.saved && (st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE)) {
-            stats->kept_saved++;
-        } else if (st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE) {
-            unlink(path);
-            unlink_call_artifacts(store, &r);
-            unlink_public_index(store, r.id);
-            char display_id[ID_DISPLAY_HEX_LEN + 1];
-            hold_run_id_display(r.id, display_id);
-            /* Docker prune prints what it deletes; so do we. */
-            printf("%s%s%s\n", display_id, r.has_name && r.name[0] ? "  " : "", r.has_name && r.name[0] ? r.name : "");
-            stats->removed++;
-        }
-        hold_free_run_record(&r);
-    }
-    closedir(d);
-
-sweep_logs:
+    struct prune_walk w = { store, include_stale, hold_boot_id_or_null(boot), stats };
+    hold_for_each_record(store->record_dir, prune_record_cb, &w);
     sweep_orphaned_artifacts(store, store->log_dir, ".log", true, stats);
     sweep_orphaned_artifacts(store, store->console_dir, ".sock", false, stats);
     sweep_orphaned_artifacts(store, store->public_dir, ".json", false, stats);

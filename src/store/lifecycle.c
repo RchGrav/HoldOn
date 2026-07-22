@@ -2,8 +2,7 @@
 #include "hold/types.h"
 #include "hold/store.h"
 #include "hold/core.h"
-#include "hold/platform.h"
-#include "record_internal.h"
+#include "store_internal.h"
 
 /* Record lifecycle: teardown of loaded records and the exit stamp
  * (mark_run_finished), including its purged-is-final semantics. */
@@ -22,12 +21,8 @@ void hold_free_run_record(struct hold_run_record *r) {
 }
 
 static int wait_status_exit_code(int status) {
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
-    }
-    if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
-    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
     return 255;
 }
 
@@ -38,9 +33,7 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
     }
     char path[HOLD_PATH_MAX];
     struct hold_run_record r;
-    if (hold_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) {
-        return -1;
-    }
+    if (hold_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) return -1;
     struct stat old_st;
     bool have_old_st = false;
     int old_fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -53,13 +46,8 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
     r.has_state = true;
     r.exit_code = wait_status_exit_code(status);
     r.has_exit_code = true;
-    if (WIFSIGNALED(status)) {
-        r.term_signal = WTERMSIG(status);
-        r.has_term_signal = true;
-    } else {
-        r.has_term_signal = false;
-        r.term_signal = 0;
-    }
+    r.has_term_signal = WIFSIGNALED(status);
+    r.term_signal = r.has_term_signal ? WTERMSIG(status) : 0;
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
         int64_t ended_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
@@ -81,20 +69,16 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
      * load failure such as "record not written yet" (retryable). */
     struct stat still_there;
     if (stat(path, &still_there) != 0 && errno == ENOENT) {
+        hold_free_run_record(&r);
         return 1;
     }
     char rewritten_path[HOLD_PATH_MAX] = {0};
     int rc = hold_write_record_atomic(store->record_dir, &r, argc, argv, rewritten_path, sizeof(rewritten_path));
     if (rc == 0 && have_old_st && geteuid() == 0 && rewritten_path[0]) {
+        /* Root restores the record's prior ownership (a sudo-user store). */
         int rewritten_fd = open(rewritten_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-        if (rewritten_fd < 0) {
-            rc = -1;
-        } else {
-            if (fchown(rewritten_fd, old_st.st_uid, old_st.st_gid) != 0) {
-                rc = -1;
-            }
-            close(rewritten_fd);
-        }
+        if (rewritten_fd < 0 || fchown(rewritten_fd, old_st.st_uid, old_st.st_gid) != 0) rc = -1;
+        if (rewritten_fd >= 0) close(rewritten_fd);
     }
     if (rc == 0 && store->kind == STORE_SYSTEM_MANAGED && store->public_dir[0]) {
         /* A finishing call has no live ports; the projection clears them. */

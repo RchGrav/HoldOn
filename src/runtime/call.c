@@ -13,66 +13,49 @@
  * restart supervisor) stays in start.c; these share only hold_perform_start_options
  * and the public runtime API. */
 
+struct name_exists_walk {
+    const char *name;
+    const char *ignore_id;
+};
+
+static int name_exists_cb(const char *id, const char *path, struct hold_run_record *r, void *vctx) {
+    (void)path;
+    const struct name_exists_walk *w = vctx;
+    if (w->ignore_id && strcmp(id, w->ignore_id) == 0) return 0;
+    return r && r->has_name && strcmp(r->name, w->name) == 0;
+}
+
 static int run_name_exists_in_store(const struct hold_store *store, const char *name, const char *ignore_id) {
     if (!store || !hold_valid_alias(name)) return 0;
-    DIR *d = opendir(store->record_dir);
-    if (!d) return 0;
-    const struct dirent *e;
-    while ((e = readdir(d))) {
-        char file_id[ID_STR_LEN];
-        if (!hold_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) continue;
-        if (ignore_id && strcmp(file_id, ignore_id) == 0) continue;
-        char path[HOLD_PATH_MAX];
-        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) continue;
-        struct hold_run_record r;
-        memset(&r, 0, sizeof(r));
-        if (hold_load_record(path, &r) == 0 && r.has_name && strcmp(r.name, name) == 0) {
-            hold_free_run_record(&r);
-            closedir(d);
-            return 1;
-        }
-        hold_free_run_record(&r);
-    }
-    closedir(d);
-    return 0;
+    struct name_exists_walk w = { name, ignore_id };
+    return hold_for_each_record(store->record_dir, name_exists_cb, &w);
+}
+
+struct restart_walk {
+    const char *token;
+    bool id_like;
+    bool name_like;
+    int matches;
+    char *out;
+};
+
+static int restart_match_cb(const char *id, const char *path, struct hold_run_record *r, void *vctx) {
+    (void)path;
+    struct restart_walk *w = vctx;
+    bool hit = w->id_like && strncmp(id, w->token, strlen(w->token)) == 0;
+    if (!hit && w->name_like) hit = r && r->has_name && strcmp(r->name, w->token) == 0;
+    if (!hit) return 0;
+    w->matches++;
+    return hold_checked_snprintf(w->out, ID_STR_LEN, "%s", id) != 0 ? -1 : 0;
 }
 
 static int find_restart_record(const struct hold_store *store, const char *token, char out[ID_STR_LEN]) {
     if (!store || !token || !*token || !out) return 0;
-    bool id_like = hold_valid_id_prefix(token);
-    bool name_like = hold_valid_alias(token);
-    if (!id_like && !name_like) return 0;
-    DIR *d = opendir(store->record_dir);
-    if (!d) return 0;
-    int matches = 0;
-    const struct dirent *e;
-    while ((e = readdir(d))) {
-        char file_id[ID_STR_LEN];
-        if (!hold_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) continue;
-        bool hit = false;
-        if (id_like && strncmp(file_id, token, strlen(token)) == 0) {
-            hit = true;
-        } else if (name_like) {
-            char path[HOLD_PATH_MAX];
-            if (hold_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) continue;
-            struct hold_run_record r;
-            memset(&r, 0, sizeof(r));
-            if (hold_load_record(path, &r) == 0 && r.has_name && strcmp(r.name, token) == 0) {
-                hit = true;
-            }
-            hold_free_run_record(&r);
-        }
-        if (hit) {
-            matches++;
-            if (hold_checked_snprintf(out, ID_STR_LEN, "%s", file_id) != 0) {
-                closedir(d);
-                return -1;
-            }
-        }
-    }
-    closedir(d);
-    if (matches == 0) return 0;
-    if (matches > 1) {
+    struct restart_walk w = { token, hold_valid_id_prefix(token), hold_valid_alias(token), 0, out };
+    if (!w.id_like && !w.name_like) return 0;
+    if (hold_for_each_record(store->record_dir, restart_match_cb, &w) != 0) return -1;
+    if (w.matches == 0) return 0;
+    if (w.matches > 1) {
         fprintf(stderr, "hold: error: call '%s' is ambiguous\n", token);
         return -2;
     }

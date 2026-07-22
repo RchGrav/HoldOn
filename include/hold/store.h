@@ -20,4 +20,15 @@ int hold_load_public_index(const char *path, struct hold_public_index *pi);
 int hold_load_public_index_by_id(const struct hold_store *store, const char *id, struct hold_public_index *pi);
 int hold_load_record_by_id(const char *dir, const char *id, struct hold_run_record *r, char *path, size_t n);
 
+/* THE id resolver: exact 64-hex id if its file exists, else a prefix matching
+ * exactly one <id>.json in dir. Works on record and public-index directories. */
+int hold_resolve_record_id(const char *dir, const char *token, char *resolved, size_t n);
+
+/* Record iteration: fn runs per <id>.json with the loaded record, or r == NULL
+ * when the file is corrupt (unloadable, invalid, or embedded id != filename).
+ * The record is freed after fn returns; a nonzero return stops the walk and
+ * becomes hold_for_each_record's return value. An unopenable dir walks empty. */
+typedef int (*hold_record_fn)(const char *id, const char *path, struct hold_run_record *r, void *ctx);
+int hold_for_each_record(const char *record_dir, hold_record_fn fn, void *ctx);
+
 #endif /* HOLD_STORE_H */

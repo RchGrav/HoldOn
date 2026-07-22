@@ -8,9 +8,6 @@
 #include "hold/console.h"
 #include "hold/access.h"
 
-static int resolve_run_id(const char *dir, const char *input, char *resolved, size_t n);
-static int resolve_user_store_id(const struct hold_store *store, const char *id, char *resolved, size_t n);
-static int resolve_system_private_id(const struct hold_store *store, const char *id, char *resolved, size_t n);
 static int resolve_system_public_id(const struct hold_store *store, const char *id, char *resolved, size_t n);
 static int append_resolved_target(struct hold_resolved_target **targets,
                                   int *count,
@@ -30,42 +27,6 @@ static int append_public_run_name_target(struct hold_resolved_target **targets,
                                          const char *name,
                                          const char *command);
 
-static int resolve_run_id(const char *dir, const char *input, char *resolved, size_t n) {
-    if (!input || !*input) {
-        return -1;
-    }
-    if (hold_valid_id(input)) {
-        char path[HOLD_PATH_MAX];
-        if (hold_checked_snprintf(path, sizeof(path), "%s/%s.json", dir, input) == 0 && access(path, F_OK) == 0) {
-            return hold_checked_snprintf(resolved, n, "%s", input);
-        }
-    }
-    if (!hold_valid_id_prefix(input)) {
-        return -1;
-    }
-    DIR *d = opendir(dir);
-    if (!d) {
-        return -1;
-    }
-    int matches = 0;
-    const struct dirent *e;
-    while ((e = readdir(d))) {
-        char id[ID_HEX_LEN + 1];
-        if (!hold_record_json_filename_id(e->d_name, id, sizeof(id))) {
-            continue;
-        }
-        if (strncmp(id, input, strlen(input)) == 0) {
-            matches++;
-            if (hold_checked_snprintf(resolved, n, "%s", id) != 0) {
-                closedir(d);
-                return -1;
-            }
-        }
-    }
-    closedir(d);
-    return (matches == 1) ? 0 : -1;
-}
-
 enum id_token_scope hold_parse_id_token(const char *token, const char **id_out) {
     if (!token || !*token) {
         return ID_TOKEN_INVALID;
@@ -82,16 +43,8 @@ enum id_token_scope hold_parse_id_token(const char *token, const char **id_out) 
     return ID_TOKEN_PLAIN;
 }
 
-static int resolve_user_store_id(const struct hold_store *store, const char *id, char *resolved, size_t n) {
-    return resolve_run_id(store->record_dir, id, resolved, n);
-}
-
-static int resolve_system_private_id(const struct hold_store *store, const char *id, char *resolved, size_t n) {
-    return resolve_run_id(store->record_dir, id, resolved, n);
-}
-
 static int resolve_system_public_id(const struct hold_store *store, const char *id, char *resolved, size_t n) {
-    if (resolve_run_id(store->public_dir, id, resolved, n) != 0) {
+    if (hold_resolve_record_id(store->public_dir, id, resolved, n) != 0) {
         return -1;
     }
     struct hold_public_index pi;
@@ -149,6 +102,26 @@ static int append_resolved_target(struct hold_resolved_target **targets,
     return 0;
 }
 
+struct name_walk {
+    const char *name;
+    const char *command;
+    const char *boot_id;
+    char matched[ID_STR_LEN];
+    int matches;
+};
+
+static int name_match_cb(const char *id, const char *path, struct hold_run_record *r, void *vctx) {
+    (void)id;
+    (void)path;
+    struct name_walk *w = vctx;
+    if (!r || !r->has_name || strcmp(r->name, w->name) != 0) return 0;
+    if (hold_record_matches_run_name_intent(w->command, r, hold_eval_state(r, w->boot_id))) {
+        w->matches++;
+        snprintf(w->matched, sizeof(w->matched), "%s", r->id);
+    }
+    return 0;
+}
+
 static int append_private_run_name_target(struct hold_resolved_target **targets,
                                           int *count,
                                           enum resolve_scope scope,
@@ -156,32 +129,11 @@ static int append_private_run_name_target(struct hold_resolved_target **targets,
                                           const char *name,
                                           const char *command) {
     if (!hold_valid_alias(name)) return 0;
-    DIR *d = opendir(store->record_dir);
-    if (!d) return 0;
     char boot[128];
-    const char *boot_id = hold_boot_id_or_null(boot);
-    char matched[ID_STR_LEN] = {0};
-    int matches = 0;
-    const struct dirent *e;
-    while ((e = readdir(d))) {
-        char file_id[ID_STR_LEN];
-        if (!hold_record_json_filename_id(e->d_name, file_id, sizeof(file_id))) continue;
-        char path[HOLD_PATH_MAX];
-        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) continue;
-        struct hold_run_record r;
-        if (hold_load_record(path, &r) != 0 || !hold_valid_record(&r) ||
-            strcmp(r.id, file_id) != 0 || !r.has_name || strcmp(r.name, name) != 0) {
-            hold_free_run_record(&r);
-            continue;
-        }
-        enum run_state st = hold_eval_state(&r, boot_id);
-        if (hold_record_matches_run_name_intent(command, &r, st)) {
-            matches++;
-            snprintf(matched, sizeof(matched), "%s", r.id);
-        }
-        hold_free_run_record(&r);
-    }
-    closedir(d);
+    struct name_walk w = { name, command, hold_boot_id_or_null(boot), {0}, 0 };
+    hold_for_each_record(store->record_dir, name_match_cb, &w);
+    const char *matched = w.matched;
+    int matches = w.matches;
     if (matches == 0) return 0;
     if (matches > 1) {
         fprintf(stderr, "hold: error: call name '%s' is ambiguous\n", name);
@@ -298,28 +250,28 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
                     fprintf(stderr, "hold: error: user:%s requires sudo provenance\n", atom);
                     return 5;
                 }
-                if (resolve_user_store_id(&user_store, atom, resolved, sizeof(resolved)) == 0) {
+                if (hold_resolve_record_id(user_store.record_dir, atom, resolved, sizeof(resolved)) == 0) {
                     return append_resolved_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, resolved, false) == 0 ? 0 : 3;
                 }
             } else if (scope == ID_TOKEN_SYSTEM) {
-                if (resolve_system_private_id(system_store, atom, resolved, sizeof(resolved)) == 0) {
+                if (hold_resolve_record_id(system_store->record_dir, atom, resolved, sizeof(resolved)) == 0) {
                     return append_resolved_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, resolved, false) == 0 ? 0 : 3;
                 }
             } else {
-                if (resolve_system_private_id(system_store, atom, resolved, sizeof(resolved)) == 0) {
+                if (hold_resolve_record_id(system_store->record_dir, atom, resolved, sizeof(resolved)) == 0) {
                     return append_resolved_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, resolved, false) == 0 ? 0 : 3;
                 }
                 if (inv->have_sudo_user) {
                     struct hold_store user_store;
                     if (hold_init_invoking_user_store(inv, &user_store) == 0 &&
-                        resolve_user_store_id(&user_store, atom, resolved, sizeof(resolved)) == 0) {
+                        hold_resolve_record_id(user_store.record_dir, atom, resolved, sizeof(resolved)) == 0) {
                         return append_resolved_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, resolved, false) == 0 ? 0 : 3;
                     }
                 }
             }
         } else {
             if (scope == ID_TOKEN_USER || scope == ID_TOKEN_PLAIN) {
-                if (resolve_user_store_id(current_user_store, atom, resolved, sizeof(resolved)) == 0) {
+                if (hold_resolve_record_id(current_user_store->record_dir, atom, resolved, sizeof(resolved)) == 0) {
                     return append_resolved_target(targets_out, count_out, RESOLVE_USER_LOCAL, current_user_store, resolved, false) == 0 ? 0 : 3;
                 }
                 if (scope == ID_TOKEN_USER) {

@@ -8,7 +8,6 @@
 #include "hold/config.h"
 
 struct hold_recipe {
-    char binary_path[HOLD_PATH_MAX];
     int argc;
     char **argv;
     int envc;
@@ -122,11 +121,7 @@ struct hold_public_index {
     pid_t pgid;
     pid_t sid;
     int exit_code;
-    char error[64];
     bool running;
-    bool paused;
-    bool restarting;
-    bool dead;
     bool has_state;
     bool has_exit_code;
 };
