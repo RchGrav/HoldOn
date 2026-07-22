@@ -73,8 +73,9 @@ dkms.conf
 # Profile-hash compatibility test binary
 /hash-vector
 
-# Viewer filter test binary
+# Standalone unit-test binaries
 /viewer-filter-test
+/logidx-recovery-test
 
 # Local scratch/test executable
 /hello

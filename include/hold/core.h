@@ -96,6 +96,12 @@ struct hold_logidx_map {
     struct hold_logidx_record *records; /* ascending by offset */
     size_t count;
     uint64_t base_unix_us;
+    /* Timing provenance (honesty rules, docs/future/playback.md): synthetic
+     * timing was reconstructed at 50 ms per line; recovered timing was
+     * CRC-anchor realigned from a corrupt sidecar. Either must be labeled in
+     * the chrome, never presented as recorded truth. */
+    bool synthetic;
+    bool recovered;
 };
 
 int hold_log_idx_path(const char *log_path, char *out, size_t n);

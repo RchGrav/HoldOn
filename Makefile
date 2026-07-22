@@ -58,6 +58,7 @@ test: $(TEST_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o hold $(TEST_OBJS)
 	@bash tests/test_hold.sh
 	@$(MAKE) viewer-filter-test
+	@$(MAKE) logidx-recovery-test
 	@bash tests/test_version_makefile.sh
 	@bash tests/test_release_installer.sh
 	@$(MAKE) test-040
@@ -65,6 +66,10 @@ test: $(TEST_OBJS)
 viewer-filter-test:
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logidx.c src/core/json.c src/core/util.c src/platform/paths.c
 	@./viewer-filter-test
+
+logidx-recovery-test:
+	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o logidx-recovery-test tests/logidx_recovery_test.c src/core/logidx.c src/core/json.c src/core/util.c src/platform/paths.c
+	@./logidx-recovery-test
 
 test-040: hold-dynamic
 	@HOLD_BIN=./hold-dynamic bash tests/test_040_dockerish.sh
@@ -100,7 +105,7 @@ lint:
 	@bash scripts/lint_layers.sh
 
 clean:
-	rm -f hold hold-dynamic viewer-filter-test
+	rm -f hold hold-dynamic viewer-filter-test logidx-recovery-test
 	rm -rf obj obj-test
 
-.PHONY: all clean test test-040 check ci lint viewer-filter-test print-version review-build review-fixture demo demo-stop demo-status
+.PHONY: all clean test test-040 check ci lint viewer-filter-test logidx-recovery-test print-version review-build review-fixture demo demo-stop demo-status

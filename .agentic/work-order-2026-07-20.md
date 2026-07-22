@@ -357,14 +357,18 @@ discussion:
       creates version-skew and packaging surface). The viewer spec already
       blesses the internal shape: reusable library inside, single binary
       outside. Tightness is WO-1's job.
-- [ ] **v2 entry (24 B)** when justified: offset:44 + len:20 + **ns delta:64**
-      (48-bit ns rolls over at ~78 h — ns requires the wider field) + meta:16 +
-      **per-line CRC32**, 16 bits spare. Monotonic-clock base alongside
-      realtime in header.
-- [ ] **Integrity + self-healing:** header hash detects edits; per-line CRCs
-      localize them; realignment = rescan text, hash lines, anchor-match the
-      CRC sequence to re-derive offsets (rsync-style), rewrite index. The
-      format heals instead of degrading.
+- [x] **v2 entry (24 B)** — LANDED 2026-07-22 (sidecar-v2 campaign): offset:44
+      + len−1:20 + ns delta:64 + meta:16 + per-line CRC32, 16 bits spare.
+      Header gains monotonic base alongside realtime, header CRC32, and
+      synthetic/recovered provenance flags. Writers emit v2; a sane existing
+      v1 sidecar keeps appending v1 (version/entry_size discipline).
+- [x] **Integrity + self-healing** — LANDED 2026-07-22 with the above: the
+      full ladder lives in `hold_logidx_map_load` (sane → use; corrupt →
+      CRC-anchor realignment + index rewrite, interpolating unanchored lines;
+      missing or corrupt-v1 → synthetic rebuild @50 ms from file birth time,
+      statx btime/st_birthtimespec/mtime fallback). Provenance surfaces as
+      `map.synthetic`/`map.recovered` — viewer/playback chrome labeling still
+      owed. Pinned by tests/logidx_recovery_test.c + two harness tests.
 - [ ] **Block skip-summaries** (per ~64 lines) so filter can skip blocks
       without touching text — makes search sidecar-fast on multi-GB logs.
       Note: today's "fast" filter is `strstr` over raw text; the sidecar

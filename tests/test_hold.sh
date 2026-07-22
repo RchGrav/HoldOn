@@ -895,6 +895,86 @@ test_log_capture() {
   grep -qx 'out' "$TEST_ROOT/log-capture-view.out" || { cat "$TEST_ROOT/log-capture-view.out" >&2; return 1; }
 }
 
+# Reads the sidecar's version (byte 8) and flags (byte 16) fields; flag bit 2
+# is SYNTHETIC, bit 4 is RECOVERED (docs/future/playback.md provenance).
+sidecar_field() {
+  od -An -j "$2" -N1 -tu1 "$1" | tr -d ' \t'
+}
+
+test_sidecar_corrupt_self_heals() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id log rc
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo "heal one"; echo "heal two"; echo "heal three"; sleep 0.1' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  log=$(log_path "$id") || return 1
+  record_ended_soon "$id" || return 1
+  [ -f "$log.idx" ] || return 1
+  # Tear the first entry's offset word; the per-line CRCs stay intact, so the
+  # viewer's load must realign against the text instead of dropping timing.
+  printf '\377\377\377\377\377\377\377\377' | dd of="$log.idx" bs=1 seek=80 count=8 conv=notrunc 2>/dev/null || return 1
+  set +e
+  # The second Esc guards against BSD pty startup swallowing early bytes; the
+  # writer tolerates EPIPE because the viewer normally quits on the first.
+  python3 -c 'import os,sys,time
+o=sys.stdout.buffer
+def w(b):
+  try: o.write(b); o.flush()
+  except OSError: pass
+time.sleep(0.3); w(b"\x14")
+time.sleep(0.3); w(b"\x1b")
+time.sleep(0.2); w(b"\x1b")
+time.sleep(0.1); os._exit(0)' |
+    pty_run "stty rows 24 cols 80; $HOLD_BIN logs $id --interactive" >"$TEST_ROOT/sidecar-heal.out" 2>"$TEST_ROOT/sidecar-heal.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/sidecar-heal.err" >&2; return 1; }
+  local plain="$TEST_ROOT/sidecar-heal.plain"
+  python3 -c 'import re,sys; raw=open(sys.argv[1],"rb").read().decode("utf-8","ignore"); sys.stdout.write(re.sub(r"\x1b\[[0-9;?]*[A-Za-z~]","",raw).replace("\r",""))' "$TEST_ROOT/sidecar-heal.out" >"$plain"
+  # Recovered timestamps render for every line, including the torn one.
+  grep -Eq '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] heal one' "$plain" || { cat "$plain" >&2; return 1; }
+  grep -Eq '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] heal three' "$plain" || { cat "$plain" >&2; return 1; }
+  # The sidecar was rewritten in place: sane v2, flagged recovered.
+  [ "$(sidecar_field "$log.idx" 8)" = "2" ] || { od -An -tx1 "$log.idx" | head -6 >&2; return 1; }
+  [ "$(($(sidecar_field "$log.idx" 16) & 4))" -eq 4 ] || { od -An -tx1 "$log.idx" | head -6 >&2; return 1; }
+}
+
+test_sidecar_missing_synthetic_rebuild() {
+  command -v script >/dev/null 2>&1 || skip "script not available"
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  local out id log rc
+  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo "gap one"; echo "gap two"; sleep 0.1' 2>&1) || return 1
+  id=$(printf '%s\n' "$out" | extract_id)
+  [ -n "$id" ] || return 1
+  log=$(log_path "$id") || return 1
+  record_ended_soon "$id" || return 1
+  rm -f "$log.idx" || return 1
+  set +e
+  # The second Esc guards against BSD pty startup swallowing early bytes; the
+  # writer tolerates EPIPE because the viewer normally quits on the first.
+  python3 -c 'import os,sys,time
+o=sys.stdout.buffer
+def w(b):
+  try: o.write(b); o.flush()
+  except OSError: pass
+time.sleep(0.3); w(b"\x14")
+time.sleep(0.3); w(b"\x1b")
+time.sleep(0.2); w(b"\x1b")
+time.sleep(0.1); os._exit(0)' |
+    pty_run "stty rows 24 cols 80; $HOLD_BIN logs $id --interactive" >"$TEST_ROOT/sidecar-gap.out" 2>"$TEST_ROOT/sidecar-gap.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/sidecar-gap.err" >&2; return 1; }
+  local plain="$TEST_ROOT/sidecar-gap.plain"
+  python3 -c 'import re,sys; raw=open(sys.argv[1],"rb").read().decode("utf-8","ignore"); sys.stdout.write(re.sub(r"\x1b\[[0-9;?]*[A-Za-z~]","",raw).replace("\r",""))' "$TEST_ROOT/sidecar-gap.out" >"$plain"
+  grep -Eq '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] gap one' "$plain" || { cat "$plain" >&2; return 1; }
+  # The index was rebuilt on disk: sane v2, flagged synthetic.
+  [ -f "$log.idx" ] || return 1
+  [ "$(sidecar_field "$log.idx" 8)" = "2" ] || { od -An -tx1 "$log.idx" | head -6 >&2; return 1; }
+  [ "$(($(sidecar_field "$log.idx" 16) & 2))" -eq 2 ] || { od -An -tx1 "$log.idx" | head -6 >&2; return 1; }
+}
+
 
 
 test_log_view_internal_seed_filters() {
@@ -4807,6 +4887,8 @@ run_test "hold shell adopt normalizes relative foreground argv paths" test_hold_
 run_test "hold shell Ctrl-P Ctrl-Q adopts the foreground process group" test_hold_shell_detach_adopts_foreground_process_group
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
+run_test "corrupt sidecar self-heals by CRC realignment under the viewer" test_sidecar_corrupt_self_heals
+run_test "missing sidecar rebuilds as synthetic v2 timing" test_sidecar_missing_synthetic_rebuild
 run_test "internal viewer harness seeds literal and similarity filters" test_log_view_internal_seed_filters
 run_test "internal viewer follows live logs through filter engine" test_log_view_follow_filters_live_output
 run_test "logs follow opens dynamic TTY filter" test_hold_logs_follow_opens_dynamic_tty_filter
