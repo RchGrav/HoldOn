@@ -21,7 +21,11 @@ places with one set of physics:
    Entry state is live-tail-with-chrome, NOT paused. From there rewind,
    scrub, or freeze are one keystroke away, and input to the held process
    is suspended only while you actually leave the live edge. Leaving the
-   viewer (Esc) returns to the bare attached console at real time.
+   viewer (Esc) returns to the bare attached console at real time — and
+   this is not a reattach: **the console was never released**. The broker
+   session persists across the jump in both directions; the viewer is the
+   same attachment wearing chrome. No replay-ring rejoin, no detach event,
+   no state the held program can observe.
    - Misfire ergonomics (accepted trade): an emacs-bound user scrolling
      shell history with rapid Ctrl-P taps may jump into the viewer; the
      cost is one Esc, because the jump changes nothing about the live
