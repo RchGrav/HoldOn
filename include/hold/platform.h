@@ -30,6 +30,17 @@ int hold_proc_read_ids(pid_t pid, pid_t *pgid_out, pid_t *sid_out, char *state_o
 int hold_proc_read_cpu_rss(pid_t pid, uint64_t *cpu_ticks_out, uint64_t *rss_bytes_out);
 int hold_proc_fd_target(pid_t pid, int fd, char *out, size_t n);
 
+/* Process snapshot primitives (adoption/off): the short command name, the
+ * NUL-separated argv, and the exe/cwd symlink targets of a live process. On
+ * platforms without /proc they fail with ENOSYS — never fabricate. */
+int hold_proc_read_comm(pid_t pid, char *out, size_t n);
+int hold_proc_read_cmdline(pid_t pid, char ***argv_out, int *argc_out);
+int hold_proc_entry_readlink(pid_t pid, const char *entry, char *out, size_t n);
+
+/* The non-zombie member of (pgid) to record as an adopted leader: the group
+ * leader when alive, else the lowest surviving pid; reports its sid too. */
+int hold_find_process_in_pgid(pid_t pgid, pid_t *pid_out, pid_t *sid_out);
+
 /* cb(pid, ctx) for every live (non-zombie) process in group (pgid, sid).
  * Nonzero cb aborts with rc -1; an unreadable table reads as empty (rc 0).
  * *denied is set when a candidate's ids were unreadable. */

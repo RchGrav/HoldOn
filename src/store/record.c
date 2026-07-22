@@ -55,6 +55,36 @@ const struct hold_record_field hold_record_fields[] = {
 };
 const size_t hold_record_field_count = sizeof(hold_record_fields) / sizeof(hold_record_fields[0]);
 
+/* The one running-record base: everything the launch and adoption paths would
+ * otherwise stamp field-by-field in parallel. The table above stays the
+ * schema authority; this only fills values. */
+void hold_record_init_running(struct hold_run_record *r,
+                              const char *id,
+                              const char *log_path,
+                              pid_t pid, pid_t pgid, pid_t sid,
+                              int64_t start_unix_ns,
+                              int64_t created_unix_ns) {
+    memset(r, 0, sizeof(*r));
+    r->version = 1;
+    snprintf(r->id, sizeof(r->id), "%s", id);
+    snprintf(r->run_id, sizeof(r->run_id), "%s", id);
+    r->pid = pid;
+    r->pgid = pgid;
+    r->sid = sid;
+    r->start_unix_ns = start_unix_ns;
+    r->created_unix_ns = created_unix_ns;
+    hold_format_rfc3339_utc_from_ns(start_unix_ns, r->started_at, sizeof(r->started_at));
+    r->has_started_at = true;
+    hold_format_rfc3339_utc_from_ns(created_unix_ns, r->created_at, sizeof(r->created_at));
+    r->has_created_at = true;
+    snprintf(r->state, sizeof(r->state), "running");
+    r->has_state = true;
+    r->uid = geteuid();
+    r->gid = getegid();
+    r->has_log = true;
+    snprintf(r->log_path, sizeof(r->log_path), "%s", log_path);
+}
+
 void hold_emit_kv(FILE *f, bool *first, const char *key) {
     fprintf(f, "%s  \"%s\": ", *first ? "" : ",\n", key);
     *first = false;

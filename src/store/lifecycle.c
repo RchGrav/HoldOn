@@ -8,7 +8,9 @@
  * teardown of loaded records, and the exit stamp (mark_run_finished),
  * including its purged-is-final semantics. */
 
-static bool run_id_material_exists(const struct hold_store *store, const char *id) {
+static bool run_id_material_exists(const struct hold_store *store,
+                                   const struct hold_store *avoid_public_store,
+                                   const char *id) {
     char path[HOLD_PATH_MAX];
     return (hold_checked_snprintf(path, sizeof(path), "%s/%s.json", store->record_dir, id) == 0 && hold_path_exists(path)) ||
            (hold_checked_snprintf(path, sizeof(path), "%s/%s.log", store->log_dir, id) == 0 && hold_path_exists(path)) ||
@@ -16,7 +18,9 @@ static bool run_id_material_exists(const struct hold_store *store, const char *i
            (store->console_dir[0] &&
             hold_checked_snprintf(path, sizeof(path), "%s/%s.sock", store->console_dir, id) == 0 && hold_path_exists(path)) ||
            (store->public_dir[0] &&
-            hold_checked_snprintf(path, sizeof(path), "%s/%s.json", store->public_dir, id) == 0 && hold_path_exists(path));
+            hold_checked_snprintf(path, sizeof(path), "%s/%s.json", store->public_dir, id) == 0 && hold_path_exists(path)) ||
+           (avoid_public_store && avoid_public_store->public_dir[0] &&
+            hold_checked_snprintf(path, sizeof(path), "%s/%s.json", avoid_public_store->public_dir, id) == 0 && hold_path_exists(path));
 }
 
 static void hash_field(struct sha256_ctx *ctx, const char *key, const char *value) {
@@ -24,50 +28,66 @@ static void hash_field(struct sha256_ctx *ctx, const char *key, const char *valu
     hold_sha256_update_nul_field(ctx, value ? value : "-");
 }
 
-static void compute_run_hash(const char *resolved_exec_path,
-                             int argc,
-                             char **argv,
-                             const char *cwd,
-                             int64_t start_unix_ns,
-                             unsigned long counter,
+/* The launch and adoption id materials, kept byte-for-byte distinct: the
+ * scope tag ("hold-run-v1" vs "hold-run-adopt-v1") guarantees a launched and
+ * an adopted id can never collide by construction. */
+struct run_hash_material {
+    const char *scope;   /* NULL = launch layout, else adoption layout */
+    const char *exe;
+    const char *cwd;
+    int argc;
+    char **argv;
+    pid_t pid, pgid;     /* adoption: the adopted leader and group */
+    int64_t start_unix_ns;
+};
+
+static void compute_run_hash(const struct run_hash_material *m, unsigned long counter,
                              char out[ID_STR_LEN]) {
     struct sha256_ctx ctx;
     unsigned char digest[32];
     char buf[64];
     hold_sha256_init(&ctx);
-    hash_field(&ctx, "version", "hold-run-v1");
-    hash_field(&ctx, "exe", resolved_exec_path);
-    hash_field(&ctx, "cwd", cwd && *cwd ? cwd : "-");
-    snprintf(buf, sizeof(buf), "%" PRId64, start_unix_ns);
-    hash_field(&ctx, "timestamp_ns", buf);
-    snprintf(buf, sizeof(buf), "%ld", (long)getpid());
-    hash_field(&ctx, "launcher_pid", buf);
-    snprintf(buf, sizeof(buf), "%d", argc);
-    hash_field(&ctx, "argc", buf);
-    for (int i = 0; i < argc; i++) {
-        snprintf(buf, sizeof(buf), "argv[%d]", i);
-        hash_field(&ctx, buf, argv && argv[i] ? argv[i] : "");
+    if (m->scope) hash_field(&ctx, "scope", m->scope);
+    else hash_field(&ctx, "version", "hold-run-v1");
+    hash_field(&ctx, "exe", m->exe);
+    hash_field(&ctx, "cwd", m->cwd && *m->cwd ? m->cwd : "-");
+    snprintf(buf, sizeof(buf), "%" PRId64, m->start_unix_ns);
+    hash_field(&ctx, m->scope ? "created_ns" : "timestamp_ns", buf);
+    snprintf(buf, sizeof(buf), "%ld", (long)(m->scope ? m->pid : getpid()));
+    hash_field(&ctx, m->scope ? "pid" : "launcher_pid", buf);
+    if (m->scope) {
+        snprintf(buf, sizeof(buf), "%ld", (long)m->pgid);
+        hash_field(&ctx, "pgid", buf);
     }
-    snprintf(buf, sizeof(buf), "%lu", counter);
-    hash_field(&ctx, "counter", buf);
+    snprintf(buf, sizeof(buf), "%d", m->argc);
+    hash_field(&ctx, "argc", buf);
+    for (int i = 0; i < m->argc; i++) {
+        snprintf(buf, sizeof(buf), "argv[%d]", i);
+        hash_field(&ctx, buf, m->argv && m->argv[i] ? m->argv[i] : (m->scope ? NULL : ""));
+    }
+    if (!m->scope) {
+        snprintf(buf, sizeof(buf), "%lu", counter);
+        hash_field(&ctx, "counter", buf);
+    } else if (counter > 0) {
+        snprintf(buf, sizeof(buf), "%lu", counter);
+        hash_field(&ctx, "collision", buf);
+    }
     hold_sha256_final(&ctx, digest);
     hold_hex_encode(digest, sizeof(digest), out, ID_STR_LEN);
 }
 
-int hold_reserve_run_id(const struct hold_store *store,
-                        const char *resolved_exec_path,
-                        int argc, char **argv,
-                        const char *cwd,
-                        int64_t start_unix_ns,
-                        char out_id[ID_STR_LEN]) {
+static int reserve_hashed_id(const struct hold_store *store,
+                             const struct hold_store *avoid_public_store,
+                             const struct run_hash_material *m,
+                             char out_id[ID_STR_LEN]) {
     if (!store || !out_id) {
         errno = EINVAL;
         return -1;
     }
     char reserve[HOLD_PATH_MAX];
     for (unsigned long counter = 0; counter < 1024; counter++) {
-        compute_run_hash(resolved_exec_path, argc, argv, cwd, start_unix_ns, counter, out_id);
-        if (!hold_valid_id(out_id) || run_id_material_exists(store, out_id)) continue;
+        compute_run_hash(m, counter, out_id);
+        if (!hold_valid_id(out_id) || run_id_material_exists(store, avoid_public_store, out_id)) continue;
         if (hold_checked_snprintf(reserve, sizeof(reserve), "%s/.%s.reserve", store->record_dir, out_id) != 0) return -1;
         int fd = open(reserve, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
         if (fd >= 0) {
@@ -78,6 +98,35 @@ int hold_reserve_run_id(const struct hold_store *store,
     }
     errno = EEXIST;
     return -1;
+}
+
+int hold_reserve_run_id(const struct hold_store *store,
+                        const char *resolved_exec_path,
+                        int argc, char **argv,
+                        const char *cwd,
+                        int64_t start_unix_ns,
+                        char out_id[ID_STR_LEN]) {
+    struct run_hash_material m = {
+        .exe = resolved_exec_path, .cwd = cwd, .argc = argc, .argv = argv,
+        .start_unix_ns = start_unix_ns,
+    };
+    return reserve_hashed_id(store, NULL, &m, out_id);
+}
+
+int hold_reserve_adopted_run_id(const struct hold_store *store,
+                                const struct hold_store *avoid_public_store,
+                                const char *observed_exe,
+                                int argc, char **argv,
+                                const char *cwd,
+                                pid_t pid, pid_t pgid,
+                                int64_t start_unix_ns,
+                                char out_id[ID_STR_LEN]) {
+    struct run_hash_material m = {
+        .scope = "hold-run-adopt-v1", .exe = observed_exe, .cwd = cwd,
+        .argc = argc, .argv = argv, .pid = pid, .pgid = pgid,
+        .start_unix_ns = start_unix_ns,
+    };
+    return reserve_hashed_id(store, avoid_public_store, &m, out_id);
 }
 
 void hold_abort_run_reservation(const struct hold_store *store, const char *id) {

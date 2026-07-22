@@ -18,6 +18,7 @@ void hold_sig_note(const struct hold_invocation *inv, const char *fmt, ...);
 int hold_checked_snprintf(char *dst, size_t n, const char *fmt, ...);
 bool hold_has_suffix(const char *s, const char *suffix);
 int hold_write_all(int fd, const void *buf, size_t n);
+void hold_close_stdio_to_devnull(void);
 int hold_format_argv_human(char *dst, size_t n, int argc, char **argv);
 int hold_read_exec_handshake(int fd, int *child_errno);
 void hold_format_rfc3339_utc_from_ns(int64_t unix_ns, char *out, size_t n);

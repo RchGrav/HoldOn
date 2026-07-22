@@ -37,20 +37,23 @@ void hold_run_console_broker(int parent_pipe,
                         unsigned short init_cols);
 int hold_run_native_console(const char *sock_path);
 
-/* Serve an already-running PTY (hold shell adoption): the target is not the
- * broker's child, must never be killed by broker cleanup, and its exit is
- * detected via PTY EOF or group/session liveness. All fds are opened by the
- * caller before forking so this path has no failure handshake. */
-void hold_run_console_broker_adopted(const struct hold_store *store,
-                                       const char *run_id,
-                                       const char *sock_path,
-                                       int listener,
-                                       int master,
-                                       int logfd,
-                                       int logidxfd,
-                                       uid_t owner_uid,
-                                       pid_t adopted_pgid,
-                                       pid_t adopted_sid,
-                                       pid_t hup_pid);
+/* Provision and fork the server for an already-running PTY (hold shell
+ * adoption): a console broker when the socket and log can be opened (the run
+ * stays reattachable), else the log-only fallback pump. The adopted target
+ * is never the server's child, is never killed or waited, and its exit is
+ * detected via PTY EOF or group/session liveness. Every fd is opened before
+ * forking so the child has no failure path; the parent's copies are closed
+ * before return. Returns the server pid with *console_sock_out holding the
+ * socket path ("" when the fallback serves), or -1 with errno set and
+ * nothing forked (master left open). */
+pid_t hold_spawn_adopted_console_server(const struct hold_store *store,
+                                          const char *run_id,
+                                          const char *log_path,
+                                          int master,
+                                          pid_t adopted_pgid,
+                                          pid_t adopted_sid,
+                                          pid_t hup_pid,
+                                          char *console_sock_out,
+                                          size_t console_sock_n);
 
 #endif /* HOLD_CONSOLE_H */

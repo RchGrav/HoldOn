@@ -52,6 +52,16 @@ int hold_write_all(int fd, const void *buf, size_t n) {
     return 0;
 }
 
+/* Detach a daemonizing process from the invoking terminal's stdio. */
+void hold_close_stdio_to_devnull(void) {
+    int fd = open("/dev/null", O_RDWR);
+    if (fd < 0) return;
+    dup2(fd, STDIN_FILENO);
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    if (fd > STDERR_FILENO) close(fd);
+}
+
 static int put_ch(char *dst, size_t n, size_t *off, char c) {
     if (*off + 1 >= n) return -1;
     dst[(*off)++] = c;

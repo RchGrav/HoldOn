@@ -8,24 +8,11 @@
 #include "hold/console.h"
 #include "hold/access.h"
 
-static int resolve_system_public_id(const struct hold_store *store, const char *id, char *resolved, size_t n);
-static int append_resolved_target(struct hold_resolved_target **targets,
-                                  int *count,
-                                  enum resolve_scope scope,
-                                  const struct hold_store *store,
-                                  const char *id,
-                                  bool requires_root);
-static int append_private_run_name_target(struct hold_resolved_target **targets,
-                                          int *count,
-                                          enum resolve_scope scope,
-                                          const struct hold_store *store,
-                                          const char *name,
-                                          const char *command);
-static int append_public_run_name_target(struct hold_resolved_target **targets,
-                                         int *count,
-                                         const struct hold_store *system_store,
-                                         const char *name,
-                                         const char *command);
+/* Target resolution: the privilege/scope/intent matrix. The store owns raw
+ * id/prefix scanning (hold_resolve_record_id); this file owns WHICH stores a
+ * token may reach — root-vs-nonroot × plain/user:/system: — with alias
+ * intent, sudo provenance for user:, and ambiguity rc 6. The candidate list
+ * is built once and shared by the alias and id-prefix passes (alias wins). */
 
 enum id_token_scope hold_parse_id_token(const char *token, const char **id_out) {
     if (!token || !*token) {
@@ -43,6 +30,7 @@ enum id_token_scope hold_parse_id_token(const char *token, const char **id_out) 
     return ID_TOKEN_PLAIN;
 }
 
+/* A public-projection id resolves only when the projection is root-managed. */
 static int resolve_system_public_id(const struct hold_store *store, const char *id, char *resolved, size_t n) {
     if (hold_resolve_record_id(store->public_dir, id, resolved, n) != 0) {
         return -1;
@@ -128,40 +116,29 @@ static int append_private_run_name_target(struct hold_resolved_target **targets,
                                           const struct hold_store *store,
                                           const char *name,
                                           const char *command) {
-    if (!hold_valid_alias(name)) return 0;
     char boot[128];
     struct name_walk w = { name, command, hold_boot_id_or_null(boot), {0}, 0 };
     hold_for_each_record(store->record_dir, name_match_cb, &w);
-    const char *matched = w.matched;
-    int matches = w.matches;
-    if (matches == 0) return 0;
-    if (matches > 1) {
+    if (w.matches == 0) return 0;
+    if (w.matches > 1) {
         fprintf(stderr, "hold: error: call name '%s' is ambiguous\n", name);
         return -2;
     }
-    return append_resolved_target(targets, count, scope, store, matched, false) == 0 ? 1 : -1;
+    return append_resolved_target(targets, count, scope, store, w.matched, false) == 0 ? 1 : -1;
 }
 
 static int append_public_run_name_target(struct hold_resolved_target **targets,
                                          int *count,
                                          const struct hold_store *system_store,
-                                         const char *name,
-                                         const char *command) {
-    (void)command;
-    if (!hold_valid_alias(name)) return 0;
+                                         const char *name) {
     DIR *d = opendir(system_store->public_dir);
     if (!d) return 0;
     char matched[ID_STR_LEN] = {0};
     int matches = 0;
     const struct dirent *e;
     while ((e = readdir(d))) {
-        if (!hold_has_suffix(e->d_name, ".json")) continue;
-        size_t len = strlen(e->d_name);
-        if (len <= 5 || len - 5 >= ID_STR_LEN) continue;
         char id[ID_STR_LEN];
-        memcpy(id, e->d_name, len - 5);
-        id[len - 5] = '\0';
-        if (!hold_valid_id(id)) continue;
+        if (!hold_record_json_filename_id(e->d_name, id, sizeof(id))) continue;
         struct hold_public_index pi;
         if (hold_load_public_index_by_id(system_store, id, &pi) == 0 &&
             pi.has_name && strcmp(pi.name, name) == 0) {
@@ -188,6 +165,52 @@ int hold_report_requires_root(const char *token) {
     return 3;
 }
 
+/* One candidate store the token's scope may reach, in resolution order. */
+struct resolve_candidate {
+    enum resolve_scope scope;
+    struct hold_store store;
+    bool public_scan; /* match via the public projection; hits require root */
+};
+
+/* The matrix. Root reads private stores only (system, plus the invoking
+ * user's under sudo provenance — user: DEMANDS that provenance); non-root
+ * reads its own store, then falls back to the redacted public projection.
+ * Returns the candidate count, or -1 with the provenance error printed. */
+static int build_scope_candidates(const struct hold_invocation *inv,
+                                  const struct hold_store *current_user_store,
+                                  const struct hold_store *system_store,
+                                  enum id_token_scope scope,
+                                  const char *atom,
+                                  struct resolve_candidate cands[2]) {
+    int n = 0;
+    if (inv->euid_root) {
+        if (scope == ID_TOKEN_USER) {
+            struct hold_store user_store;
+            if (hold_init_invoking_user_store(inv, &user_store) != 0) {
+                fprintf(stderr, "hold: error: user:%s requires sudo provenance\n", atom);
+                return -1;
+            }
+            cands[n++] = (struct resolve_candidate){RESOLVE_USER_LOCAL, user_store, false};
+            return n;
+        }
+        cands[n++] = (struct resolve_candidate){RESOLVE_SYSTEM_MANAGED, *system_store, false};
+        if (scope == ID_TOKEN_PLAIN && inv->have_sudo_user) {
+            struct hold_store user_store;
+            if (hold_init_invoking_user_store(inv, &user_store) == 0) {
+                cands[n++] = (struct resolve_candidate){RESOLVE_USER_LOCAL, user_store, false};
+            }
+        }
+        return n;
+    }
+    if (scope == ID_TOKEN_USER || scope == ID_TOKEN_PLAIN) {
+        cands[n++] = (struct resolve_candidate){RESOLVE_USER_LOCAL, *current_user_store, false};
+    }
+    if (scope == ID_TOKEN_SYSTEM || scope == ID_TOKEN_PLAIN) {
+        cands[n++] = (struct resolve_candidate){RESOLVE_SYSTEM_MANAGED, *system_store, true};
+    }
+    return n;
+}
+
 int hold_resolve_action_token(const struct hold_invocation *inv,
                                 const struct hold_store *current_user_store,
                                 const struct hold_store *system_store,
@@ -207,81 +230,30 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
         return 5;
     }
 
+    struct resolve_candidate cands[2];
+    int ncands = build_scope_candidates(inv, current_user_store, system_store, scope, atom, cands);
+    if (ncands < 0) return 5;
+
     if (hold_valid_alias(atom)) {
-        int name_rc = 0;
-        if (inv->euid_root) {
-            if (scope == ID_TOKEN_USER) {
-                struct hold_store user_store;
-                if (hold_init_invoking_user_store(inv, &user_store) != 0) {
-                    fprintf(stderr, "hold: error: user:%s requires sudo provenance\n", atom);
-                    return 5;
-                }
-                name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, atom, command);
-            } else if (scope == ID_TOKEN_SYSTEM) {
-                name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, atom, command);
-            } else {
-                name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, atom, command);
-                if (name_rc == 0 && inv->have_sudo_user) {
-                    struct hold_store user_store;
-                    if (hold_init_invoking_user_store(inv, &user_store) == 0) {
-                        name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, atom, command);
-                    }
-                }
-            }
-        } else {
-            if (scope == ID_TOKEN_USER || scope == ID_TOKEN_PLAIN) {
-                name_rc = append_private_run_name_target(targets_out, count_out, RESOLVE_USER_LOCAL, current_user_store, atom, command);
-            }
-            if (name_rc == 0 && (scope == ID_TOKEN_SYSTEM || scope == ID_TOKEN_PLAIN)) {
-                name_rc = append_public_run_name_target(targets_out, count_out, system_store, atom, command);
-            }
+        for (int i = 0; i < ncands; i++) {
+            int name_rc = cands[i].public_scan
+                ? append_public_run_name_target(targets_out, count_out, system_store, atom)
+                : append_private_run_name_target(targets_out, count_out, cands[i].scope, &cands[i].store, atom, command);
+            if (name_rc == 1) return 0;
+            if (name_rc == -2) return 6;
+            if (name_rc < 0) return 3;
         }
-        if (name_rc == 1) return 0;
-        if (name_rc == -2) return 6;
-        if (name_rc < 0) return 3;
     }
 
     if (hold_valid_id_prefix(atom)) {
-        char resolved[ID_STR_LEN];
-        if (inv->euid_root) {
-            if (scope == ID_TOKEN_USER) {
-                struct hold_store user_store;
-                if (hold_init_invoking_user_store(inv, &user_store) != 0) {
-                    fprintf(stderr, "hold: error: user:%s requires sudo provenance\n", atom);
-                    return 5;
-                }
-                if (hold_resolve_record_id(user_store.record_dir, atom, resolved, sizeof(resolved)) == 0) {
-                    return append_resolved_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, resolved, false) == 0 ? 0 : 3;
-                }
-            } else if (scope == ID_TOKEN_SYSTEM) {
-                if (hold_resolve_record_id(system_store->record_dir, atom, resolved, sizeof(resolved)) == 0) {
-                    return append_resolved_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, resolved, false) == 0 ? 0 : 3;
-                }
-            } else {
-                if (hold_resolve_record_id(system_store->record_dir, atom, resolved, sizeof(resolved)) == 0) {
-                    return append_resolved_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, resolved, false) == 0 ? 0 : 3;
-                }
-                if (inv->have_sudo_user) {
-                    struct hold_store user_store;
-                    if (hold_init_invoking_user_store(inv, &user_store) == 0 &&
-                        hold_resolve_record_id(user_store.record_dir, atom, resolved, sizeof(resolved)) == 0) {
-                        return append_resolved_target(targets_out, count_out, RESOLVE_USER_LOCAL, &user_store, resolved, false) == 0 ? 0 : 3;
-                    }
-                }
-            }
-        } else {
-            if (scope == ID_TOKEN_USER || scope == ID_TOKEN_PLAIN) {
-                if (hold_resolve_record_id(current_user_store->record_dir, atom, resolved, sizeof(resolved)) == 0) {
-                    return append_resolved_target(targets_out, count_out, RESOLVE_USER_LOCAL, current_user_store, resolved, false) == 0 ? 0 : 3;
-                }
-                if (scope == ID_TOKEN_USER) {
-                    return hold_report_not_found(token);
-                }
-            }
-            if (scope == ID_TOKEN_SYSTEM || scope == ID_TOKEN_PLAIN) {
-                if (resolve_system_public_id(system_store, atom, resolved, sizeof(resolved)) == 0) {
-                    return append_resolved_target(targets_out, count_out, RESOLVE_SYSTEM_MANAGED, system_store, resolved, true) == 0 ? 0 : 3;
-                }
+        for (int i = 0; i < ncands; i++) {
+            char resolved[ID_STR_LEN];
+            bool hit = cands[i].public_scan
+                ? resolve_system_public_id(system_store, atom, resolved, sizeof(resolved)) == 0
+                : hold_resolve_record_id(cands[i].store.record_dir, atom, resolved, sizeof(resolved)) == 0;
+            if (hit) {
+                return append_resolved_target(targets_out, count_out, cands[i].scope, &cands[i].store,
+                                              resolved, cands[i].public_scan) == 0 ? 0 : 3;
             }
         }
     }

@@ -215,19 +215,107 @@ void hold_run_console_broker(int parent_pipe,
                  target, 0, 0, -1);
 }
 
-void hold_run_console_broker_adopted(const struct hold_store *store,
-                                       const char *run_id,
-                                       const char *sock_path,
-                                       int listener,
-                                       int master,
-                                       int logfd,
-                                       int logidxfd,
-                                       uid_t owner_uid,
-                                       pid_t adopted_pgid,
-                                       pid_t adopted_sid,
-                                       pid_t hup_pid) {
-    broker_serve(store, run_id, sock_path, listener, master, logfd, logidxfd,
-                 owner_uid, false, 0, -1, adopted_pgid, adopted_sid, hup_pid);
+/* Log-only fallback for an adopted PTY when no broker socket could be
+ * provisioned: drain the master through the one pump until the adopted side
+ * is gone, then hang up the wrapper shell. */
+static void adopted_log_only_pump(int master, const char *log_path, pid_t hup_pid,
+                                  pid_t adopted_pgid, pid_t adopted_sid) {
+    int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0) _exit(1);
+    int idxfd = hold_open_log_index_fd(log_path, fd);
+    while (1) {
+        struct pollfd pfd = {
+            .fd = master,
+            .events = POLLIN,
+            .revents = 0,
+        };
+        int ready;
+        do {
+            ready = poll(&pfd, 1, 200);
+        } while (ready < 0 && errno == EINTR);
+        if (ready > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+            char buf[4096];
+            ssize_t n = hold_term_pump_master(master, fd, idxfd, buf, sizeof(buf));
+            if (n == 0 || (n < 0 && errno != EINTR)) {
+                break;
+            }
+        }
+        if (adopted_pgid > 1 && adopted_sid > 0 &&
+            hold_group_session_liveness(adopted_pgid, adopted_sid) != GROUP_LIVE) {
+            break;
+        }
+    }
+    kill(hup_pid, SIGHUP);
+    if (idxfd >= 0) close(idxfd);
+    close(fd);
+    close(master);
+    _exit(0);
+}
+
+pid_t hold_spawn_adopted_console_server(const struct hold_store *store,
+                                          const char *run_id,
+                                          const char *log_path,
+                                          int master,
+                                          pid_t adopted_pgid,
+                                          pid_t adopted_sid,
+                                          pid_t hup_pid,
+                                          char *console_sock_out,
+                                          size_t console_sock_n) {
+    /* Prefer serving the adopted PTY through a broker so the run stays
+     * reattachable; every fd is opened here so the child has no failure path.
+     * If broker setup fails, fall back to the log-only capture. */
+    char console_sock[HOLD_PATH_MAX];
+    console_sock[0] = '\0';
+    int listener = -1, logfd = -1, logidxfd = -1;
+    if (hold_format_console_sock_path(store, run_id, console_sock, sizeof(console_sock)) == 0) {
+        listener = hold_make_console_listener(console_sock);
+        if (listener < 0) {
+            console_sock[0] = '\0';
+        } else {
+            logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
+            logidxfd = logfd >= 0 ? hold_open_log_index_fd(log_path, logfd) : -1;
+            if (logfd < 0) {
+                close(listener);
+                listener = -1;
+                unlink(console_sock);
+                console_sock[0] = '\0';
+            }
+        }
+    } else {
+        console_sock[0] = '\0';
+    }
+
+    pid_t server = fork();
+    if (server < 0) {
+        int saved = errno;
+        if (listener >= 0) {
+            close(listener);
+            if (logidxfd >= 0) close(logidxfd);
+            if (logfd >= 0) close(logfd);
+            unlink(console_sock);
+        }
+        errno = saved;
+        return -1;
+    }
+    if (server == 0) {
+        signal(SIGHUP, SIG_IGN);
+        hold_close_stdio_to_devnull();
+        if (listener >= 0) {
+            broker_serve(store, run_id, console_sock, listener, master, logfd, logidxfd,
+                         geteuid(), false, 0, -1, adopted_pgid, adopted_sid, hup_pid);
+            _exit(0);
+        }
+        adopted_log_only_pump(master, log_path, hup_pid, adopted_pgid, adopted_sid);
+    }
+    if (listener >= 0) {
+        close(listener);
+        if (logidxfd >= 0) close(logidxfd);
+        if (logfd >= 0) close(logfd);
+    }
+    if (hold_checked_snprintf(console_sock_out, console_sock_n, "%s", console_sock) != 0) {
+        console_sock_out[0] = '\0';
+    }
+    return server;
 }
 
 /* Shared serve loop. child_target > 0 means the target is our child (waitpid

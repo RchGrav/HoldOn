@@ -37,4 +37,30 @@ int hold_cloexec_pipe(int fds[2]);
 ssize_t hold_term_pump_master(int master, int logfd, int logidxfd,
                               char *buf, size_t n);
 
+/* THE detach-key FSM (Ctrl-P Ctrl-Q by default at both call sites): input
+ * bytes are fed one at a time; bytes that stop matching the chord are handed
+ * back through the sink in original order, a completed chord reports
+ * *detached without forwarding, and a pending prefix left hanging is flushed
+ * after HOLD_TERM_DETACH_FLUSH_USEC (drive it from poll via
+ * hold_term_detach_timeout_ms: -1 = nothing pending, 0 = flush now). */
+#define HOLD_TERM_DETACH_MAX_KEYS 8
+#define HOLD_TERM_DETACH_FLUSH_USEC 500000
+
+struct hold_term_detach {
+    unsigned char keys[HOLD_TERM_DETACH_MAX_KEYS];
+    size_t nkeys;
+    unsigned char pending[HOLD_TERM_DETACH_MAX_KEYS];
+    size_t pending_len;
+    int64_t deadline_usec;
+};
+
+/* Sink for bytes the FSM releases; nonzero aborts the feed/flush with -1. */
+typedef int (*hold_term_detach_sink)(void *ctx, const unsigned char *bytes, size_t n);
+
+void hold_term_detach_init(struct hold_term_detach *d, const unsigned char *keys, size_t nkeys);
+int hold_term_detach_feed(struct hold_term_detach *d, unsigned char c,
+                          hold_term_detach_sink sink, void *ctx, bool *detached);
+int hold_term_detach_flush(struct hold_term_detach *d, hold_term_detach_sink sink, void *ctx);
+int hold_term_detach_timeout_ms(const struct hold_term_detach *d);
+
 #endif /* HOLD_TERM_H */

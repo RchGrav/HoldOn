@@ -37,6 +37,21 @@ int hold_scan_listening_sockets(const unsigned long long *inodes, size_t count,
     (void)inodes; (void)count; (void)cb; (void)ctx;
     return 0;
 }
+int hold_proc_read_comm(pid_t pid, char *out, size_t n) {
+    (void)pid; (void)out; (void)n;
+    errno = ENOSYS;
+    return -1;
+}
+int hold_proc_read_cmdline(pid_t pid, char ***argv_out, int *argc_out) {
+    (void)pid; (void)argv_out; (void)argc_out;
+    errno = ENOSYS;
+    return -1;
+}
+int hold_proc_entry_readlink(pid_t pid, const char *entry, char *out, size_t n) {
+    (void)pid; (void)entry; (void)out; (void)n;
+    errno = ENOSYS;
+    return -1;
+}
 
 #else /* /proc-shaped platforms */
 
@@ -140,6 +155,54 @@ int hold_proc_socket_inodes(pid_t pid, int (*cb)(unsigned long long, void *), vo
         if (sscanf(target, "socket:[%llu]", &inode) == 1 && cb(inode, ctx) != 0) { closedir(d); return -1; }
     }
     closedir(d);
+    return 0;
+}
+
+int hold_proc_read_comm(pid_t pid, char *out, size_t n) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%ld/comm", (long)pid);
+    if (read_small_file(path, out, n) < 0) return -1;
+    size_t len = strlen(out);
+    while (len && (out[len - 1] == '\n' || out[len - 1] == '\r')) out[--len] = '\0';
+    return 0;
+}
+
+int hold_proc_entry_readlink(pid_t pid, const char *entry, char *out, size_t n) {
+    char path[128];
+    if (hold_checked_snprintf(path, sizeof(path), "/proc/%ld/%s", (long)pid, entry) != 0) return -1;
+    ssize_t nr = readlink(path, out, n - 1);
+    if (nr < 0 || (size_t)nr >= n) return -1;
+    out[nr] = '\0';
+    return 0;
+}
+
+/* /proc/<pid>/cmdline: NUL-separated argv; a missing trailing NUL still
+ * yields the last argument. An empty read is EIO (kernel threads). */
+int hold_proc_read_cmdline(pid_t pid, char ***argv_out, int *argc_out) {
+    char path[64];
+    static char buf[65536];
+    snprintf(path, sizeof(path), "/proc/%ld/cmdline", (long)pid);
+    ssize_t nr = read_small_file(path, buf, sizeof(buf));
+    if (nr < 0) return -1;
+    int argc = 0;
+    for (ssize_t i = 0; i < nr; i++)
+        if (buf[i] == '\0') argc++;
+    if (buf[nr - 1] != '\0') argc++;
+    char **argv = calloc((size_t)argc + 1, sizeof(*argv));
+    if (!argv) return -1;
+    ssize_t pos = 0;
+    for (int i = 0; i < argc; i++) {
+        ssize_t start = pos;
+        while (pos < nr && buf[pos] != '\0') pos++;
+        argv[i] = strndup(buf + start, (size_t)(pos - start));
+        if (!argv[i]) {
+            hold_free_argv_alloc(argv, i);
+            return -1;
+        }
+        pos++;
+    }
+    *argv_out = argv;
+    *argc_out = argc;
     return 0;
 }
 
@@ -333,6 +396,35 @@ int hold_count_session_escapees(pid_t sid, pid_t expected_pgid) {
     struct group_scan g = {expected_pgid, sid, false, false, 0};
     if (for_each_process(escapee_cb, &g, NULL) < 0) return -1;
     return g.count;
+}
+
+struct pgid_find { pid_t pgid, best, best_sid; };
+
+static int pgid_find_cb(pid_t pid, pid_t pgid, pid_t sid, bool zombie, void *ctx) {
+    struct pgid_find *f = ctx;
+    if (pgid != f->pgid || zombie) return 0;
+    if (pid == f->pgid) {
+        f->best = pid;
+        f->best_sid = sid;
+        return 1; /* the live leader wins outright */
+    }
+    if (f->best == 0 || pid < f->best) {
+        f->best = pid;
+        f->best_sid = sid;
+    }
+    return 0;
+}
+
+int hold_find_process_in_pgid(pid_t pgid, pid_t *pid_out, pid_t *sid_out) {
+    struct pgid_find f = {pgid, 0, 0};
+    if (for_each_process(pgid_find_cb, &f, NULL) < 0) return -1;
+    if (f.best <= 0) {
+        errno = ESRCH;
+        return -1;
+    }
+    *pid_out = f.best;
+    *sid_out = f.best_sid;
+    return 0;
 }
 
 struct group_walk { pid_t pgid, sid; int (*cb)(pid_t, void *); void *ctx; };

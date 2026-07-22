@@ -40,19 +40,6 @@ static void kill_supervisor_if_distinct(pid_t supervisor_pid, pid_t target_pid) 
     }
 }
 
-static void close_stdio_to_devnull(void) {
-    int fd = open("/dev/null", O_RDWR);
-    if (fd < 0) {
-        return;
-    }
-    dup2(fd, STDIN_FILENO);
-    dup2(fd, STDOUT_FILENO);
-    dup2(fd, STDERR_FILENO);
-    if (fd > STDERR_FILENO) {
-        close(fd);
-    }
-}
-
 /* ---- child environment ---- */
 
 extern char **environ;
@@ -246,7 +233,7 @@ static int spawn_log_capture(int stdout_fd, int stderr_fd, const char *log_path)
         errno = saved;
         return logger < 0 ? -1 : 0;
     }
-    close_stdio_to_devnull();
+    hold_close_stdio_to_devnull();
     int logfd = hold_open_append_no_symlink(log_path);
     if (logfd < 0) _exit(0);
     int idxfd = hold_open_log_index_fd(log_path, logfd);
@@ -317,7 +304,7 @@ static void spawn_auto_remove_watcher(const struct hold_store *store, const stru
     if (watcher != 0) {
         return;
     }
-    close_stdio_to_devnull();
+    hold_close_stdio_to_devnull();
     struct hold_store watch_store = *store;
     struct hold_run_record watch_record = *record;
     for (;;) {
@@ -640,7 +627,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
                 if (io[OUT_W] >= 0) close(io[OUT_W]);
                 if (io[ERR_W] >= 0) close(io[ERR_W]);
                 close(io[HS_W]);
-                close_stdio_to_devnull();
+                hold_close_stdio_to_devnull();
                 signal(SIGTERM, SIG_IGN);
                 signal(SIGINT, SIG_IGN);
                 signal(SIGHUP, SIG_IGN);
@@ -747,27 +734,12 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         }
     }
 
-    struct hold_run_record r = {0};
-    r.version = 1;
-    copy_field(&u, r.id, sizeof(r.id), id, "hold: id too long");
-    copy_field(&u, r.run_id, sizeof(r.run_id), id, "hold: id too long");
-    r.pid = pid;
-    r.pgid = pid;
-    r.sid = pid;
-    r.start_unix_ns = start_unix_ns;
-    r.created_unix_ns = opts->existing_created_unix_ns > 0 ? opts->existing_created_unix_ns : start_unix_ns;
-    hold_format_rfc3339_utc_from_ns(r.start_unix_ns, r.started_at, sizeof(r.started_at));
-    r.has_started_at = true;
+    struct hold_run_record r;
+    hold_record_init_running(&r, id, log_path, pid, pid, pid, start_unix_ns,
+                             opts->existing_created_unix_ns > 0 ? opts->existing_created_unix_ns : start_unix_ns);
     if (opts->existing_created_at && *opts->existing_created_at) {
         copy_field(&u, r.created_at, sizeof(r.created_at), opts->existing_created_at, "hold: created timestamp too long");
-    } else {
-        hold_format_rfc3339_utc_from_ns(r.created_unix_ns, r.created_at, sizeof(r.created_at));
     }
-    r.has_created_at = true;
-    snprintf(r.state, sizeof(r.state), "running");
-    r.has_state = true;
-    r.uid = geteuid();
-    r.gid = getegid();
     if (store->kind == STORE_SYSTEM_MANAGED) {
         r.has_invocation = true;
         bool via_sudo = inv && inv->have_sudo_user;
@@ -799,8 +771,6 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     }
     r.recipe.restart_delay_seconds = opts->restart_delay_seconds;
     r.recipe.has_restart_delay = opts->restart_delay_seconds > 0;
-    r.has_log = true;
-    copy_field(&u, r.log_path, sizeof(r.log_path), log_path, "hold: log path too long");
     r.has_boot = has_boot;
     if (r.has_boot) {
         snprintf(r.boot_id, sizeof(r.boot_id), "%s", boot_id);

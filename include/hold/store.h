@@ -28,7 +28,29 @@ int hold_reserve_run_id(const struct hold_store *store,
                         const char *cwd,
                         int64_t start_unix_ns,
                         char out_id[ID_STR_LEN]);
+/* The adoption variant of the same two-phase reserve: scope tag
+ * hold-run-adopt-v1 (so launched and adopted ids never collide), material
+ * from the observed process (exe, cwd, created_ns, pid, pgid, argv), and an
+ * extra collision check against avoid_public_store's public projections
+ * (adopting into a user store must not shadow a system-managed id). */
+int hold_reserve_adopted_run_id(const struct hold_store *store,
+                                const struct hold_store *avoid_public_store,
+                                const char *observed_exe,
+                                int argc, char **argv,
+                                const char *cwd,
+                                pid_t pid, pid_t pgid,
+                                int64_t start_unix_ns,
+                                char out_id[ID_STR_LEN]);
 void hold_abort_run_reservation(const struct hold_store *store, const char *id);
+/* The running-record base builder: stamps every field the launch and adoption
+ * paths set identically (ids, group identity, timestamps, state, owner, log).
+ * Callers add their own provenance (recipe/observed/boot/name/console). */
+void hold_record_init_running(struct hold_run_record *r,
+                              const char *id,
+                              const char *log_path,
+                              pid_t pid, pid_t pgid, pid_t sid,
+                              int64_t start_unix_ns,
+                              int64_t created_unix_ns);
 int hold_load_record(const char *path, struct hold_run_record *r);
 void hold_free_run_record(struct hold_run_record *r);
 int hold_load_public_index(const char *path, struct hold_public_index *pi);
