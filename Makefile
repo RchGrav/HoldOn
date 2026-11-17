@@ -45,16 +45,18 @@ INCLUDES := -Iinclude -Ithird_party/libvterm/include
 ALL_CPPFLAGS := $(CPPFLAGS) $(EXTRA_CPPFLAGS) $(INCLUDES) $(VERSION_CPPFLAG)
 TEST_CPPFLAGS := -DHOLD_TESTING -DHOLD_BOOT_ID_PATH='"/tmp/hold_test_boot_id"'
 # Each object records the headers it read (obj/x.d), so editing a header
-# (font_data.h, console.h, ...) rebuilds what uses it.
+# (font_data.h, console.h, ...) rebuilds what uses it; objects also depend on
+# this Makefile, so changed build rules (or objects from before .d files)
+# rebuild once.
 DEPFLAGS := -MMD -MP
 
 all: hold
 
-obj/vterm/%.o: third_party/libvterm/src/%.c
+obj/vterm/%.o: third_party/libvterm/src/%.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) -Ithird_party/libvterm/include $(VTERM_CFLAGS) $(DEPFLAGS) -c -o $@ $<
 
-obj/%.o: src/%.c
+obj/%.o: src/%.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c -o $@ $<
 
@@ -62,7 +64,7 @@ obj/%.o: src/%.c
 # (glibc cannot load NSS modules into a static binary, and warns).
 STATIC_OBJS := $(if $(strip $(STATIC_LDFLAGS)),$(filter-out obj/platform/paths.o,$(OBJS)) obj/platform/paths-static.o,$(OBJS))
 
-obj/platform/paths-static.o: src/platform/paths.c
+obj/platform/paths-static.o: src/platform/paths.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CPPFLAGS) -DHOLD_STATIC_LINK $(DEPFLAGS) $(CFLAGS) -c -o $@ $<
 
@@ -72,7 +74,7 @@ hold: $(STATIC_OBJS)
 hold-dynamic: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o hold-dynamic $(OBJS)
 
-obj-test/%.o: src/%.c
+obj-test/%.o: src/%.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c -o $@ $<
 

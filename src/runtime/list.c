@@ -450,6 +450,79 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
     }
 }
 
+/* An --rm call's exit note: ".<id>.exit.tmp" holding "<code> <name>". The
+ * dot-and-.tmp name puts it under sweep_tmp_litter, which deletes it after
+ * a minute, so notes never pile up. */
+static void write_exit_note(const struct hold_store *store, const struct hold_run_record *r) {
+    char path[HOLD_PATH_MAX];
+    if (hold_checked_snprintf(path, sizeof(path), "%s/.%s.exit.tmp", store->record_dir, r->id) != 0) return;
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0) return;
+    char line[ALIAS_MAX_LEN + 32];
+    int n = snprintf(line, sizeof(line), "%d %s\n", r->exit_code, r->has_name ? r->name : "");
+    if (n > 0) (void)hold_write_all(fd, line, (size_t)n);
+    close(fd);
+}
+
+bool hold_auto_removed_exit(const struct hold_store *store, const char *token, int *code) {
+    if (!store || !token || !*token) return false;
+    DIR *d = opendir(store->record_dir);
+    if (!d) return false;
+    bool found = false;
+    time_t newest = 0;
+    const struct dirent *e;
+    while ((e = readdir(d))) {
+        size_t n = strlen(e->d_name);
+        if (e->d_name[0] != '.' || n != 1 + ID_STR_LEN - 1 + 9 || strcmp(e->d_name + n - 9, ".exit.tmp") != 0) continue;
+        char id[ID_STR_LEN];
+        memcpy(id, e->d_name + 1, ID_STR_LEN - 1);
+        id[ID_STR_LEN - 1] = '\0';
+        char path[HOLD_PATH_MAX], buf[ALIAS_MAX_LEN + 32] = {0};
+        struct stat st;
+        if (hold_checked_snprintf(path, sizeof(path), "%s/%s", store->record_dir, e->d_name) != 0) continue;
+        int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd < 0) continue;
+        ssize_t got = fstat(fd, &st) == 0 && S_ISREG(st.st_mode) ? read(fd, buf, sizeof(buf) - 1) : -1;
+        close(fd);
+        if (got <= 0 || time(NULL) - st.st_mtime > 60) continue;
+        int c;
+        char name[ALIAS_MAX_LEN + 1] = "";
+        if (sscanf(buf, "%d %64s", &c, name) < 1) continue;
+        bool match = !strcmp(name, token) || (hold_valid_id_prefix(token) && !strncmp(id, token, strlen(token)));
+        if (match && (!found || st.st_mtime >= newest)) { /* a reused name: the latest removal */
+            found = true;
+            newest = st.st_mtime;
+            *code = c;
+        }
+    }
+    closedir(d);
+    return found;
+}
+
+void hold_auto_remove_settle(const struct hold_store *store, const char *id, int timeout_ms) {
+    for (int waited = 0;; waited += 20) {
+        struct hold_run_record r;
+        char path[HOLD_PATH_MAX];
+        if (hold_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) return; /* already gone */
+        char boot[128];
+        const char *boot_id = hold_boot_id_or_null(boot);
+        bool auto_remove = r.auto_remove, stamped = r.has_exit_code;
+        enum run_state st = hold_eval_state(&r, boot_id);
+        hold_free_run_record(&r);
+        if (!auto_remove) return;
+        /* Prefer the reaper's stamp (it carries the exit code into the note);
+         * past the timeout, a dead call is removed without one. */
+        if (st != STATE_RUNNING && (stamped || waited >= timeout_ms)) {
+            bool removed = false;
+            (void)hold_prune_one_run(store, id, boot_id, true, &removed);
+            return;
+        }
+        if (waited >= timeout_ms) return; /* still running: the watcher keeps watching */
+        struct timespec sl = {.tv_sec = 0, .tv_nsec = 20 * 1000000L};
+        nanosleep(&sl, NULL);
+    }
+}
+
 int hold_prune_one_run(const struct hold_store *store, const char *id, const char *boot, bool allow_stale, bool *removed) {
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
@@ -463,6 +536,7 @@ int hold_prune_one_run(const struct hold_store *store, const char *id, const cha
     /* Under the store lock so a racing exit stamp cannot recreate the
      * record after this unlink (see hold_mark_run_finished). */
     int lock_fd = hold_store_lock(store->record_dir);
+    if (r.auto_remove && r.has_exit_code) write_exit_note(store, &r);
     unlink(path);
     unlink_call_artifacts(store, &r);
     unlink_public_index(store, id);

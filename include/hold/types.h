@@ -65,6 +65,7 @@ struct hold_run_record {
     bool has_created_at;
     bool has_console;
     bool saved;
+    bool auto_remove; /* --rm: removed as soon as it ends */
     struct hold_recipe recipe;
     bool has_observed;
     char observed_exe[HOLD_PATH_MAX];

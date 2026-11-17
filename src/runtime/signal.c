@@ -191,6 +191,8 @@ int hold_cmd_signal_action(const struct hold_invocation *inv,
     for (int i = 0; i < ntargets; i++) {
         bool already_done = false;
         int rc = signal_one(&targets[i].store, targets[i].id, sig, graceful, print_cmd, &already_done);
+        /* --rm: removed before we return, so the name is free for a rerun. */
+        if (!print_cmd && rc == 0) hold_auto_remove_settle(&targets[i].store, targets[i].id, 3000);
         if (!print_cmd && rc == 0) {
             if (already_done) {
                 hold_sig_note(inv, "hold: %s already exited\n", targets[i].id);

@@ -47,6 +47,21 @@
   halving peak memory (a 1000x1000 screen: 787 MB to 408 MB) with identical
   output.
 
+- `--rm` behaved like Docker's only some of the time. `kill`/`end` returned
+  before the call was removed (and an agent harness that killed the caller's
+  process group killed the remover, leaving `Exited (137)` behind for good);
+  `wait` on an `--rm` call said "removed while waiting"; and a rerun under the
+  same name right after `wait --exit` or `end` failed with "name already
+  exists". Now `kill`, `end`, and `wait` remove an `--rm` call before they
+  return, `wait` prints its exit code even if removal won the race (for a
+  minute afterwards, too), and the record notes `auto_remove`.
+- A call's background helpers (the reaper that records its exit, the log
+  pump, the `--rm` watcher) ran in the caller's process group, so a harness
+  that SIGKILLs that group after each command lost the call's output and
+  exit code. They now move to their own sessions before hold returns.
+- Objects now also depend on the Makefile, so objects built before header
+  tracking (or with different rules) rebuild once.
+
 ### Changed
 
 - `hold wait --idle` takes an optional value: a bare `--idle` means 500 ms,

@@ -1797,6 +1797,54 @@ test_docker_rm_removes_run_artifacts_after_exit() {
   path_absent_soon "$log" || { echo "--rm did not remove log $log" >&2; return 1; }
 }
 
+# --rm, Docker-style: kill/end remove the call before they return (the name is
+# free at once), and wait reports the exit code even when removal won the race.
+test_rm_removed_on_kill_end_and_wait_reports_code() {
+  local f out
+  for f in -d -dt; do
+    "$HOLD_BIN" $f --rm --name rmk -- sleep 30 >/dev/null || return 1
+    "$HOLD_BIN" kill rmk >/dev/null || return 1
+    ! "$HOLD_BIN" list | grep -q ' rmk$' || { echo "$f: --rm call still listed after kill" >&2; return 1; }
+    "$HOLD_BIN" $f --rm --name rmk -- sleep 30 >/dev/null || { echo "$f: name not free after kill" >&2; return 1; }
+    "$HOLD_BIN" end rmk >/dev/null || return 1
+    ! "$HOLD_BIN" list | grep -q ' rmk$' || { echo "$f: --rm call still listed after end" >&2; return 1; }
+    # wait while it runs: the code, then the name is free
+    "$HOLD_BIN" $f --rm --name rmw -- /bin/sh -c 'sleep 0.4; exit 3' >/dev/null || return 1
+    out=$("$HOLD_BIN" wait rmw) || return 1
+    [ "$out" = 3 ] || { echo "$f: wait printed '$out', want 3" >&2; return 1; }
+    "$HOLD_BIN" $f --rm --name rmw -- true >/dev/null || { echo "$f: name not free after wait" >&2; return 1; }
+    # wait after it was already removed: the exit it left behind
+    "$HOLD_BIN" $f --rm --name rmg -- /bin/sh -c 'exit 7' >/dev/null || return 1
+    sleep 1
+    out=$("$HOLD_BIN" wait rmg) || { echo "$f: wait on a removed --rm call failed" >&2; return 1; }
+    [ "$out" = 7 ] || { echo "$f: wait after removal printed '$out', want 7" >&2; return 1; }
+  done
+}
+
+# A call's helpers (reaper, log pump, --rm watcher) leave the caller's session:
+# an agent harness that SIGKILLs the caller's process group the moment the
+# command returns must not lose the call's output, exit code, or --rm.
+test_call_survives_caller_group_kill() {
+  python3 - "$HOLD_BIN" <<'PY' || return 1
+import os, signal, subprocess, sys
+hold = sys.argv[1]
+pid = os.fork()
+if pid == 0:
+    os.setsid()  # a fresh group, like a harness running one tool call
+    subprocess.run([hold, "-d", "--name", "grpk", "--", "/bin/sh", "-c", "sleep 0.4; echo late-line; exit 5"],
+                   stdout=subprocess.DEVNULL)
+    subprocess.run([hold, "-d", "--rm", "--name", "grpr", "--", "/bin/sh", "-c", "sleep 0.4; exit 2"],
+                   stdout=subprocess.DEVNULL)
+    os.killpg(0, signal.SIGKILL)
+os.waitpid(pid, 0)
+PY
+  [ "$("$HOLD_BIN" wait grpk --timeout 10000)" = 5 ] || { echo "exit code lost when the caller's group was killed" >&2; return 1; }
+  "$HOLD_BIN" logs grpk | grep -qx late-line || { echo "output lost when the caller's group was killed" >&2; return 1; }
+  [ "$("$HOLD_BIN" wait grpr --timeout 10000)" = 2 ] || { echo "--rm exit lost when the caller's group was killed" >&2; return 1; }
+  sleep 0.5
+  ! "$HOLD_BIN" list | grep -q ' grpr$' || { echo "--rm call left behind when the caller's group was killed" >&2; return 1; }
+}
+
 test_env_flag_is_recipe_data_only() {
   local out id store fake record log
   store="$HOME/.local/state/hold"
@@ -4282,6 +4330,8 @@ run_test "normal run does not self-elevate on local/root ID conflict" test_user_
 run_test "explicit user:<id> targets user-local run" test_explicit_user_target
 run_test "deleted capability flags are rejected honestly" test_cap_flags_are_rejected
 run_test "Docker --rm removes run artifacts after exit" test_docker_rm_removes_run_artifacts_after_exit
+run_test "--rm: kill/end remove before returning; wait reports the code" test_rm_removed_on_kill_end_and_wait_reports_code
+run_test "a call survives its caller's process group being killed" test_call_survives_caller_group_kill
 run_test "env flags are recipe data, not hold's own environment" test_env_flag_is_recipe_data_only
 run_test "tail Ctrl-C detaches from tail and does not stop run" test_tail_ctrl_c_detaches_from_tail_and_keeps_run
 run_test "build artifacts for static and dynamic coexist" test_build_artifact_coexistence

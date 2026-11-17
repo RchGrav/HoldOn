@@ -271,10 +271,33 @@ static void run_restart_supervisor(const struct hold_store *store,
     _exit(0);
 }
 
+/* fork() for a helper that must outlive the caller's process group: the
+ * child moves to its own session before the parent returns, so an agent
+ * harness that kills the caller's group the moment the command finishes
+ * cannot take it along (a plain fork leaves a gap before the child's setsid). */
+static pid_t fork_detached(void) {
+    int sync[2];
+    if (pipe(sync) != 0) sync[0] = sync[1] = -1;
+    pid_t pid = fork();
+    if (pid != 0) {
+        if (sync[1] >= 0) close(sync[1]);
+        if (pid > 0 && sync[0] >= 0) {
+            char c;
+            while (read(sync[0], &c, 1) < 0 && errno == EINTR) continue;
+        }
+        if (sync[0] >= 0) close(sync[0]);
+        return pid;
+    }
+    (void)setsid();
+    if (sync[0] >= 0) close(sync[0]);
+    if (sync[1] >= 0) close(sync[1]); /* EOF: detached */
+    return 0;
+}
+
 /* Out-of-process pipe logger: drains the target's stdout/stderr pipes into
  * the log. Closes both read ends in the launcher either way. */
 static int spawn_log_capture(int stdout_fd, int stderr_fd, const char *log_path) {
-    pid_t logger = fork();
+    pid_t logger = fork_detached();
     if (logger != 0) {
         int saved = errno;
         if (stdout_fd >= 0) close(stdout_fd);
@@ -346,7 +369,7 @@ static void spawn_auto_remove_watcher(const struct hold_store *store, const stru
     if (!store || !record || !hold_valid_id(record->id)) {
         return;
     }
-    pid_t watcher = fork();
+    pid_t watcher = fork_detached();
     if (watcher != 0) {
         return;
     }
@@ -358,8 +381,10 @@ static void spawn_auto_remove_watcher(const struct hold_store *store, const stru
         const char *boot_id = hold_boot_id_or_null(boot);
         enum run_state st = hold_eval_state(&watch_record, boot_id);
         if (st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE) {
-            bool removed = false;
-            hold_prune_one_run(&watch_store, watch_record.id, boot_id, true, &removed);
+            /* The process can be gone a moment before its reaper stamps the
+             * exit code; settle waits for the stamp so the exit note left
+             * for `hold wait` carries it. */
+            hold_auto_remove_settle(&watch_store, watch_record.id, 2000);
             _exit(0);
         }
         struct timespec sl = {.tv_sec = 0, .tv_nsec = 200 * 1000000L};
@@ -661,7 +686,10 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         }
         if (!console_mode) {
             /* Double-fork: this middle process becomes the waiter; the record
-             * pid/pgid/sid are the TARGET's. */
+             * pid/pgid/sid are the TARGET's. Its own session first, so killing
+             * the caller's process group cannot leave the exit unrecorded (the
+             * launcher returns only after the target has exec'd, after this). */
+            (void)setsid();
             pid_t target = fork();
             if (target < 0) {
                 child_fail_errno(io[HS_W]);
@@ -802,6 +830,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         r.has_name = true;
         copy_field(&u, r.name, sizeof(r.name), run_name, "hold: call name too long");
     }
+    r.auto_remove = opts->auto_remove;
     if (console_sock[0]) {
         r.has_console = true;
         copy_field(&u, r.console_sock, sizeof(r.console_sock), console_sock, "hold: console socket path too long");

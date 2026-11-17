@@ -566,6 +566,12 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
         struct hold_run_record cur;
         char path[HOLD_PATH_MAX];
         if (hold_load_record_by_id(t->target.store.record_dir, t->r.id, &cur, path, sizeof(path)) != 0) {
+            /* --rm removed it as it ended: report the exit it left behind. */
+            int code;
+            if (hold_auto_removed_exit(&t->target.store, t->r.id, &code)) {
+                printf("%d\n", code);
+                return 0;
+            }
             fprintf(stderr, "hold: %s was removed while waiting\n", t->label);
             return 5;
         }
@@ -652,12 +658,24 @@ static int wait_action_impl(const struct hold_invocation *inv,
      * waiting for exit alone is unbounded unless --timeout says otherwise. */
     if (timeout < 0) timeout = screen_cond ? 30000 : 0;
 
+    /* docker run --rm + docker wait: an --rm call that already ended and
+     * was removed still reports how it exited (for a minute). */
+    if (!screen_cond && !hold_token_resolves(inv, user_store, system_store, "wait", token)) {
+        int code;
+        if (hold_auto_removed_exit(user_store, token, &code) ||
+            (system_store && hold_auto_removed_exit(system_store, token, &code))) {
+            printf("%d\n", code);
+            return 0;
+        }
+    }
     struct screen_target t;
     int rc = open_screen_target(inv, user_store, system_store, "wait", token, &t);
     if (rc != 0) return rc;
     if (!screen_cond) {
         rc = (t.r.has_console && t.st == STATE_RUNNING) ? -1 : wait_record_exit(&t, timeout);
         if (rc != -1) {
+            /* --rm: removed before we return, so the name is free again. */
+            if (rc == 0) hold_auto_remove_settle(&t.target.store, t.r.id, 2000);
             close_screen_target(&t);
             return rc;
         }
@@ -710,6 +728,12 @@ static int wait_action_impl(const struct hold_invocation *inv,
     rc |= rb_str(&b, num);
     rc = rc ? 1 : run_wait(&t, b.p, !screen_cond);
     free(b.p);
+    if (!screen_cond) {
+        /* The broker can vanish with its call before answering (an --rm
+         * call removed as it ended): the record, or its exit note, says. */
+        if (rc == 3) rc = wait_record_exit(&t, timeout);
+        if (rc == 0) hold_auto_remove_settle(&t.target.store, t.r.id, 2000);
+    }
     close_screen_target(&t);
     return rc;
 }

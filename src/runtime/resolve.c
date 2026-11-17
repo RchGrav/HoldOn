@@ -214,15 +214,14 @@ static int build_scope_candidates(const struct hold_invocation *inv,
     return n;
 }
 
-int hold_resolve_action_token(const struct hold_invocation *inv,
+static int resolve_action_token(const struct hold_invocation *inv,
                                 const struct hold_store *current_user_store,
                                 const struct hold_store *system_store,
                                 const char *command,
                                 const char *token,
-                                bool all,
+                                bool report_missing,
                                 struct hold_resolved_target **targets_out,
                                 int *count_out) {
-    (void)all;
     *targets_out = NULL;
     *count_out = 0;
 
@@ -261,5 +260,32 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
         }
     }
 
-    return hold_report_not_found(token);
+    return report_missing ? hold_report_not_found(token) : 5;
+}
+
+int hold_resolve_action_token(const struct hold_invocation *inv,
+                                const struct hold_store *current_user_store,
+                                const struct hold_store *system_store,
+                                const char *command,
+                                const char *token,
+                                bool all,
+                                struct hold_resolved_target **targets_out,
+                                int *count_out) {
+    (void)all;
+    return resolve_action_token(inv, current_user_store, system_store, command, token, true, targets_out, count_out);
+}
+
+bool hold_token_resolves(const struct hold_invocation *inv,
+                         const struct hold_store *current_user_store,
+                         const struct hold_store *system_store,
+                         const char *command,
+                         const char *token) {
+    const char *atom = NULL;
+    enum id_token_scope scope = hold_parse_id_token(token, &atom);
+    if (scope == ID_TOKEN_INVALID || (!hold_valid_id_prefix(atom) && !hold_valid_alias(atom))) return true; /* let the caller report it */
+    struct hold_resolved_target *targets = NULL;
+    int count = 0;
+    int rc = resolve_action_token(inv, current_user_store, system_store, command, token, false, &targets, &count);
+    free(targets);
+    return rc != 5;
 }
