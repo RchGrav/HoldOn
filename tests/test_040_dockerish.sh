@@ -20,6 +20,16 @@ export HOLD_TEST_SYSTEM_STATE_DIR="$TEST_ROOT/system"
 export HOLD_TEST_INVOKING_HOME="$TEST_ROOT/home"
 mkdir -p "$HOME"
 
+# Where calls land: root uses the system store (runs/ and logs/ under its
+# base), everyone else the user store (records and logs side by side).
+if [ "$(id -u)" -eq 0 ]; then
+  REC_DIR="$HOLD_TEST_SYSTEM_STATE_DIR/runs"
+  LOG_DIR="$HOLD_TEST_SYSTEM_STATE_DIR/logs"
+else
+  REC_DIR="$HOME/.local/state/hold"
+  LOG_DIR="$HOME/.local/state/hold"
+fi
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1
@@ -43,10 +53,10 @@ fi
 if printf '%s\n' "$out" | grep -Eq '^[0-9a-f]{12}$|^[0-9a-f]{64}$'; then
   fail "foreground call printed an id line"
 fi
-full=$(basename "$(ls "$HOME/.local/state/hold/"*.log | head -n1)" .log)
+full=$(basename "$(ls "$LOG_DIR/"*.log | head -n1)" .log)
 [ "${#full}" -eq 64 ] || fail "full 64-hex call id missing from store"
 display=${full:0:12}
-log="$HOME/.local/state/hold/$full.log"
+log="$LOG_DIR/$full.log"
 grep -qx 'smoke-out' "$log" || fail "stdout raw log line missing"
 test ! -e "$log.idx" || fail "a log index sidecar was written"
 hold logs --plain "$display" | grep -qx 'smoke-out' || fail "logs --plain did not print raw log"
@@ -101,10 +111,10 @@ rmout=$(hold -d --rm -- /bin/sh -c 'echo rm; sleep 0.1' 2>&1)
 rmfull=$(printf '%s\n' "$rmout" | extract_full64)
 [ "${#rmfull}" -eq 64 ] || fail "--rm full id missing"
 for _ in $(seq 1 50); do
-  [ ! -e "$HOME/.local/state/hold/$rmfull.json" ] && [ ! -e "$HOME/.local/state/hold/$rmfull.log" ] && break
+  [ ! -e "$REC_DIR/$rmfull.json" ] && [ ! -e "$LOG_DIR/$rmfull.log" ] && break
   sleep 0.1
 done
-[ ! -e "$HOME/.local/state/hold/$rmfull.json" ] || fail "--rm record remained"
-[ ! -e "$HOME/.local/state/hold/$rmfull.log" ] || fail "--rm log remained"
+[ ! -e "$REC_DIR/$rmfull.json" ] || fail "--rm record remained"
+[ ! -e "$LOG_DIR/$rmfull.log" ] || fail "--rm log remained"
 
 echo "PASS: hold surface smoke"
