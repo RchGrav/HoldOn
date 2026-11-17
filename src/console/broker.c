@@ -563,7 +563,10 @@ static int64_t quiet_since(const struct broker *b, const struct wait_request *w)
 /* Check one waiter; replies (and frees the slot) when a condition holds. */
 static void check_wait(struct broker *b, struct control_client *c, int64_t now) {
     struct wait_request *w = &c->wait;
-    if (w->has_match && screen_matches(b, w)) {
+    /* With --since, a match counts only on a screen changed after SEQ:
+     * text that was already there is not an answer to what was just sent. */
+    bool match_fresh = !w->has_since || b->output_seq > w->since;
+    if (w->has_match && match_fresh && screen_matches(b, w)) {
         control_replyf(c, "ok reason=match seq=%" PRIu64 "\n", b->output_seq);
         return;
     }

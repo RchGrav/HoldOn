@@ -73,6 +73,12 @@ for test scripts, CI, and AI agents alike.
 - `hold wait --idle` could pass before a slow-starting program drew
   anything. Idle now requires output first (after `--since SEQ`, output past
   it).
+- `peek --image` drew CJK, Hangul, and emoji as hollow boxes and clipped
+  combining accents at the top of the cell. The embedded font now carries
+  CJK ideographs, Hangul, and Unifont's monochrome emoji, and combining
+  marks sit above their base letter (the binary grows by about 1.4 MB).
+- `hold wait --match TEXT --since SEQ` accepted text already on the screen;
+  with `--since`, a match now needs output past SEQ.
 - `hold msg` marked a genuine sender `(unverified)` when its agent harness
   ran the command in a new session (Claude Code does). The receiver now also
   accepts a sender that descends from the claimed call's leader.

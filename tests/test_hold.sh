@@ -3848,6 +3848,47 @@ test_wait_idle_needs_first_output_and_symlink_launch() {
   "$HOLD_BIN" inspect via-link | grep -q '"exe": ".*/bin/real-tool"' || return 1
 }
 
+# --since makes --match wait for a changed screen: text already showing is
+# not a fresh answer.
+test_wait_match_since_ignores_stale_screen() {
+  "$HOLD_BIN" -dt --name stale -- /bin/sh -c 'stty -echo; echo "BLUE BACKGROUND"; while IFS= read -r l; do echo "again: $l"; done' >/dev/null || return 1
+  "$HOLD_BIN" wait stale --match 'BLUE BACKGROUND' --timeout 5000 || return 1
+  seq=$("$HOLD_BIN" peek stale --json | sed -n 's/.*"output_seq": \([0-9]*\).*/\1/p')
+  set +e
+  "$HOLD_BIN" wait stale --match 'BLUE BACKGROUND' --since "$seq" --timeout 600 2>/dev/null; rc=$?
+  set -e
+  [ "$rc" -eq 7 ] || { echo "stale match passed (rc $rc)" >&2; return 1; }
+  seq=$("$HOLD_BIN" send stale --seq x --enter) || return 1
+  "$HOLD_BIN" wait stale --match 'BLUE BACKGROUND' --since "$seq" --timeout 5000 || return 1
+  "$HOLD_BIN" end stale >/dev/null 2>&1 || true
+}
+
+# Screenshot fidelity: CJK and emoji draw real glyphs, not the missing box.
+test_peek_image_draws_cjk_and_emoji() {
+  "$HOLD_BIN" -dt --name glyphs -- /bin/sh -c 'printf "\347\225\214\n\360\237\232\200\n\356\200\200\n"; sleep 20' >/dev/null || return 1
+  "$HOLD_BIN" wait glyphs --idle 300 --timeout 5000 || return 1
+  "$HOLD_BIN" peek glyphs --image "$TEST_ROOT/g.png" --scale 1 --no-ruler --no-footer || return 1
+  python3 - "$TEST_ROOT/g.png" <<'PY' || return 1
+import struct, sys, zlib
+d = open(sys.argv[1], "rb").read()
+w, h = struct.unpack(">II", d[16:24]); pos, idat = 8, b""
+while pos < len(d):
+    n, = struct.unpack(">I", d[pos:pos + 4])
+    if d[pos + 4:pos + 8] == b"IDAT": idat += d[pos + 8:pos + 8 + n]
+    pos += 12 + n
+raw = zlib.decompress(idat); st = w * 3 + 1; px = []
+for y in range(h):
+    line = bytearray(raw[y * st + 1:(y + 1) * st])
+    for i in range(3, len(line)): line[i] = (line[i] + line[i - 3]) & 255
+    px.append(line)
+def cell(row):  # the 16x16 block of a wide cell at column 0
+    return b"".join(bytes(px[row * 16 + y][:16 * 3]) for y in range(16))
+cjk, emoji, missing = cell(0), cell(1), cell(2)
+assert missing != cjk and missing != emoji, "CJK or emoji drawn as the missing-glyph box"
+PY
+  "$HOLD_BIN" end glyphs >/dev/null 2>&1 || true
+}
+
 # ---- the screen verbs: peek / send / wait / resize -------------------------
 
 # A TTY call's screen reads back as plain text, with a ruler, and as JSON.
@@ -4182,6 +4223,8 @@ run_test "tmux: prefix split, mouse pane focus, detach" test_tmux_prefix_mouse_a
 run_test "an ncurses program takes mouse clicks" test_curses_mouse_checklist
 run_test "micro: click, double-click, drag select, wheel" test_micro_mouse_editing
 run_test "wait --idle needs first output; symlinked programs keep their name" test_wait_idle_needs_first_output_and_symlink_launch
+run_test "wait --match --since ignores a stale screen" test_wait_match_since_ignores_stale_screen
+run_test "peek --image draws CJK and emoji glyphs" test_peek_image_draws_cjk_and_emoji
 
 echo "----------------------------------------------------------------"
 echo "summary: $PASSES passed, $FAILS failed, $SKIPS skipped"

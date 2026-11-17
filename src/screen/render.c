@@ -53,7 +53,6 @@ static void fill_alpha(struct fb *fb, int x, int y, int w, int h, rgb c, double 
 /* ---- glyphs ---------------------------------------------------------------- */
 
 static int font_find(uint32_t cp) {
-    if (cp > 0xffff) return -1;
     int lo = 0, hi = HOLD_FONT_GLYPHS - 1;
     while (lo <= hi) {
         int mid = (lo + hi) / 2;
@@ -62,6 +61,33 @@ static int font_find(uint32_t cp) {
         else hi = mid - 1;
     }
     return -1;
+}
+
+/* First and last rows with ink in glyph g (16 rows); false if blank. */
+static bool glyph_ink_rows(int g, int *top, int *bottom) {
+    uint32_t off = font_off[g] & 0x7fffffffu;
+    int bpr = (font_off[g] & 0x80000000u) ? 2 : 1;
+    *top = -1;
+    for (int row = 0; row < 16; row++) {
+        bool ink = false;
+        for (int k = 0; k < bpr; k++) ink |= font_bits[off + (size_t)row * bpr + k] != 0;
+        if (!ink) continue;
+        if (*top < 0) *top = row;
+        *bottom = row;
+    }
+    return *top >= 0;
+}
+
+/* Unifont draws marks above at the top of the cell (placed for capitals);
+ * lower one to sit two rows above its base letter's ink, as precomposed
+ * letters do. Marks below, and marks over tall letters, stay put. */
+static int combining_shift(uint32_t base, uint32_t mark) {
+    int gb = font_find(base), gm = font_find(mark);
+    int btop, bbot, mtop, mbot;
+    if (gb < 0 || gm < 0 || !glyph_ink_rows(gb, &btop, &bbot) || !glyph_ink_rows(gm, &mtop, &mbot)) return 0;
+    if (mbot >= 8) return 0; /* a mark below or through the letter */
+    int shift = (btop - 2) - mbot;
+    return shift > 0 ? shift : 0;
 }
 
 /* Draw a font glyph with its top-left at (x, y); returns false if absent. */
@@ -221,7 +247,7 @@ static void draw_cell(struct fb *fb, const struct hold_snapshot *snap, int r, in
         if (!draw_procedural(fb, x, y, cw * span, ch, s, cp, fg)) {
             if (draw_font_glyph(fb, x, y, s, cp, fg, bold)) {
                 for (int k = 1; k < HOLD_CELL_CHARS && cell->ch[k]; k++)
-                    (void)draw_font_glyph(fb, x, y, s, cell->ch[k], fg, bold);
+                    (void)draw_font_glyph(fb, x, y + combining_shift(cp, cell->ch[k]) * s, s, cell->ch[k], fg, bold);
             } else {
                 draw_missing(fb, x, y, cw * span, ch, s, fg);
             }
