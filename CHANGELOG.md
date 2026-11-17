@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.2 - Field-tested — 2026-11-17
 
 ### Fixed
 
