@@ -63,6 +63,10 @@
   pump, the `--rm` watcher) ran in the caller's process group, so a harness
   that SIGKILLs that group after each command lost the call's output and
   exit code. They now move to their own sessions before hold returns.
+- The launcher reads a new call's identity (start time, executable) before
+  spawning its log pump, so a leader that exits at once while its group
+  lives on can still be signaled safely (`hold end`); under a slow fork
+  (sanitizers, a loaded machine) the identity could be gone first.
 - Objects now also depend on the Makefile, so objects built before header
   tracking (or with different rules) rebuild once.
 

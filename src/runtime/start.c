@@ -801,6 +801,13 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         u.group = pid;
     }
 
+    /* The target's identity, read first: a leader that exits at once (its
+     * group living on, as in `sh -c 'worker & exit'`) leaves nothing to read
+     * once we have spent time spawning the logger. */
+    uint64_t id_starttime = 0, id_exe_dev = 0, id_exe_ino = 0;
+    hold_read_proc_stat_tokens(pid, NULL, &id_starttime);
+    hold_read_proc_exe(pid, &id_exe_dev, &id_exe_ino);
+
     if (!console_mode) {
         int logger_rc = spawn_log_capture(io[OUT_R], io[ERR_R], log_path);
         io[OUT_R] = -1;
@@ -853,8 +860,9 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     if (r.has_boot) {
         snprintf(r.boot_id, sizeof(r.boot_id), "%s", boot_id);
     }
-    hold_read_proc_stat_tokens(pid, NULL, &r.proc_starttime_ticks);
-    hold_read_proc_exe(pid, &r.exe_dev, &r.exe_ino);
+    r.proc_starttime_ticks = id_starttime;
+    r.exe_dev = id_exe_dev;
+    r.exe_ino = id_exe_ino;
     if (hold_format_argv_human(r.cmdline, sizeof(r.cmdline), argc, launch_argv) != 0) {
         snprintf(r.cmdline, sizeof(r.cmdline), "?");
     }
