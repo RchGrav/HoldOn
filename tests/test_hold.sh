@@ -52,6 +52,9 @@ skip_note() { echo "SKIP: $1"; SKIPS=$((SKIPS + 1)); }
 # PASS. It returns sentinel 77, which run_test maps to SKIP (or to FAIL when
 # HOLD_REQUIRE_ROOT_TESTS=1, so CI cannot silently no-op the root lane).
 skip() { [ -n "${1:-}" ] && echo "  (skipped: $1)" >&2; return 77; }
+# An optional program (vim, tmux, ...) is missing: always a plain skip, even
+# under HOLD_REQUIRE_ROOT_TESTS=1, which exists to catch skipped root tests.
+skip_tool() { echo "  (skipped: $1)" >&2; return 78; }
 
 # Refuse to run vacuously: a missing core tool (e.g. ps from procps) must be a
 # hard, visible failure, never a quietly-green test.
@@ -434,6 +437,8 @@ run_test() {
   set -e
   if [ "$rc" -eq 0 ]; then
     pass "$desc"
+  elif [ "$rc" -eq 78 ]; then
+    skip_note "$desc"
   elif [ "$rc" -eq 77 ]; then
     if [ "${HOLD_REQUIRE_ROOT_TESTS:-0}" -eq 1 ]; then
       fail "$desc (skipped, but HOLD_REQUIRE_ROOT_TESTS=1)"
@@ -3535,7 +3540,7 @@ test_tty_call_defaults_term() {
 
 # Arrow keys and mouse events move a real program's cursor (vim, mouse=a).
 test_cursor_control_keys_and_mouse() {
-  command -v vim >/dev/null 2>&1 || skip "vim not installed"
+  command -v vim >/dev/null 2>&1 || skip_tool "vim not installed"
   seq -f 'line %g of a file long enough to click anywhere on it' 1 60 >"$TEST_ROOT/f.txt"
   "$HOLD_BIN" -dt --name v -- vim -u NONE -N -i NONE -c 'set mouse=a' -c 'set ttymouse=sgr' "$TEST_ROOT/f.txt" >/dev/null || return 1
   "$HOLD_BIN" wait v --idle 400 --timeout 8000 || return 1
@@ -3584,7 +3589,7 @@ PY
 # A dialog-style form driven by keyboard only: Down, Space, Tab, Tab,
 # Shift+Tab back to <Ok>, Enter -> the checklist answers "2".
 test_whiptail_form_by_keyboard() {
-  command -v whiptail >/dev/null 2>&1 || skip "whiptail not installed"
+  command -v whiptail >/dev/null 2>&1 || skip_tool "whiptail not installed"
   "$HOLD_BIN" -dt --name wt -- /bin/sh -c 'r=$(whiptail --checklist "Select options:" 15 40 3 1 "Option A" off 2 "Option B" off 3 "Option C" off 3>&1 1>&2 2>&3); echo "rc=$? RESULT:$r"; sleep 20' >/dev/null || return 1
   "$HOLD_BIN" wait wt --match 'Option C' --timeout 5000 || return 1
   "$HOLD_BIN" wait wt --idle 300 --timeout 3000 || return 1
@@ -3610,7 +3615,7 @@ test_send_mouse_legacy_clamp_is_reported() {
 
 # tmux under Grutty: prefix chord split, mouse pane focus, prefix detach.
 test_tmux_prefix_mouse_and_detach() {
-  command -v tmux >/dev/null 2>&1 || skip "tmux not installed"
+  command -v tmux >/dev/null 2>&1 || skip_tool "tmux not installed"
   local sock="$TEST_ROOT/tmux.sock"
   "$HOLD_BIN" -dt --name tx -- tmux -S "$sock" -f /dev/null new-session \; set -g mouse on >/dev/null || return 1
   "$HOLD_BIN" wait tx --idle 500 --timeout 8000 || return 1
@@ -3626,7 +3631,7 @@ test_tmux_prefix_mouse_and_detach() {
 
 # An ncurses program's own mouse handling: click a checkbox, click <OK>.
 test_curses_mouse_checklist() {
-  python3 -c 'import curses' 2>/dev/null || skip "python3 curses unavailable"
+  python3 -c 'import curses' 2>/dev/null || skip_tool "python3 curses unavailable"
   cat >"$TEST_ROOT/checklist.py" <<'PY'
 import curses, sys, time
 items = ["Option A", "Option B", "Option C"]
@@ -3634,6 +3639,7 @@ def main(scr):
     curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
     curses.mouseinterval(0)
     checked = [False] * 3
+    pressed = False
     while True:
         scr.erase()
         for i, it in enumerate(items):
@@ -3641,26 +3647,38 @@ def main(scr):
         scr.addstr(7, 4, "<  OK  >")
         scr.refresh()
         if scr.getch() != curses.KEY_MOUSE: continue
-        _, x, y, _, b = curses.getmouse()
-        if not b & (curses.BUTTON1_CLICKED | curses.BUTTON1_RELEASED): continue
+        try:
+            _, x, y, _, b = curses.getmouse()
+        except curses.error:
+            continue
+        # ncurses versions differ in which of press/click/release they report;
+        # act once per click on whichever arrives first.
+        if b & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED):
+            pressed = True
+        elif b & curses.BUTTON1_RELEASED:
+            if pressed:
+                pressed = False
+                continue
+        else:
+            continue
         if 3 <= y <= 5 and 4 <= x <= 16: checked[y - 3] = not checked[y - 3]
         elif y == 7 and 4 <= x <= 11: return " ".join(str(i + 1) for i, c in enumerate(checked) if c)
 print("RESULT:" + curses.wrapper(main)); sys.stdout.flush(); time.sleep(20)
 PY
   "$HOLD_BIN" -dt --name cl -- python3 "$TEST_ROOT/checklist.py" >/dev/null || return 1
-  "$HOLD_BIN" wait cl --match 'Option C' --timeout 8000 || return 1
-  "$HOLD_BIN" wait cl --idle 300 --timeout 3000 || return 1
+  "$HOLD_BIN" wait cl --match 'OK' --timeout 15000 || { "$HOLD_BIN" peek cl --json >&2; "$HOLD_BIN" logs cl >&2; return 1; }
+  "$HOLD_BIN" wait cl --idle 300 --timeout 5000 || { "$HOLD_BIN" peek cl >&2; return 1; }
   "$HOLD_BIN" send cl --mouse click,8,4 --wait 300 || return 1
-  "$HOLD_BIN" peek cl | grep -qF '[X] Option B' || { "$HOLD_BIN" peek cl >&2; return 1; }
+  "$HOLD_BIN" wait cl --match '[X] Option B' --timeout 5000 || { "$HOLD_BIN" peek cl --json >&2; return 1; }
   "$HOLD_BIN" send cl --mouse click,6,7 || return 1
-  "$HOLD_BIN" wait cl --match 'RESULT:2' --timeout 5000 || { "$HOLD_BIN" peek cl >&2; return 1; }
+  "$HOLD_BIN" wait cl --match 'RESULT:2' --timeout 8000 || { "$HOLD_BIN" peek cl >&2; return 1; }
   "$HOLD_BIN" end cl >/dev/null 2>&1 || true
 }
 
 # micro: click places the cursor, double-click selects a word, drag selects
 # across lines, the wheel scrolls.
 test_micro_mouse_editing() {
-  command -v micro >/dev/null 2>&1 || skip "micro not installed"
+  command -v micro >/dev/null 2>&1 || skip_tool "micro not installed"
   mkdir -p "$TEST_ROOT/mcfg"
   seq -f 'alpha bravo charlie delta %g' 1 80 >"$TEST_ROOT/m.txt"
   "$HOLD_BIN" -dt --name mi -- micro -config-dir "$TEST_ROOT/mcfg" "$TEST_ROOT/m.txt" >/dev/null || return 1

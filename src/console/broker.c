@@ -30,6 +30,8 @@
 #define BROKER_MAX_MSGS 16
 /* hold msg loop guard: at most this many deliveries per receiver per minute. */
 #define BROKER_MSG_RATE 20
+/* A sender that messages the instant it starts may beat its call's record. */
+#define BROKER_MSG_VERIFY_GRACE_MS 2000
 
 /* The child-mode broker's forked target group, set right after the pid is
  * reported and cleared at every reap site. The SIGTERM forwarder reads it so a
@@ -77,10 +79,13 @@ struct broker {
     uint64_t next_gen;
     struct pending_msg {
         bool used;
-        char *text; /* header + body, ready to type */
+        char *text; /* the body; the header is built at delivery */
         size_t len;
         bool submit;
         bool verified;
+        bool has_claim;
+        char claim[ALIAS_MAX_LEN + ID_STR_LEN + 1]; /* the sender's claimed call */
+        pid_t peer;                                 /* the sending process */
         int64_t start_ms, deadline_ms;
         uint32_t quiet_ms;
         struct control_client *waiter; /* reply here if still the same client */
@@ -616,19 +621,21 @@ static int match_record_name(const char *id, const char *path, struct hold_run_r
 /* Who is speaking: the claimed call (the sender's GRUTTY_CALL_ID, or a name)
  * is verified when the connecting process belongs to that call's session or
  * descends from its leader. */
-static bool verify_sender(const struct broker *b, pid_t peer, const char *claim, char *label, size_t n) {
+/* 1 verified, 0 not verified, -1 the claimed call has no record (yet: a
+ * call that messages the moment it starts can beat its own record write). */
+static int verify_sender(const struct broker *b, pid_t peer, const char *claim, char *label, size_t n) {
     snprintf(label, n, "%s", claim);
-    if (!b->store || peer <= 0) return false;
+    if (!b->store || peer <= 0) return 0;
     char id[ID_STR_LEN];
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
     if (hold_resolve_record_id(b->store->record_dir, claim, id, sizeof(id)) != 0) {
         struct name_lookup nl = {.name = claim};
         (void)hold_for_each_record(b->store->record_dir, match_record_name, &nl);
-        if (nl.matches != 1) return false;
+        if (nl.matches != 1) return nl.matches == 0 ? -1 : 0;
         memcpy(id, nl.id, sizeof(id));
     }
-    if (hold_load_record_by_id(b->store->record_dir, id, &r, path, sizeof(path)) != 0) return false;
+    if (hold_load_record_by_id(b->store->record_dir, id, &r, path, sizeof(path)) != 0) return -1;
     if (r.has_name && r.name[0]) snprintf(label, n, "%s", r.name);
     /* Same session as the call, or a descendant of its leader: agent
      * harnesses (Claude Code among them) run each tool command in a new
@@ -636,7 +643,7 @@ static bool verify_sender(const struct broker *b, pid_t peer, const char *claim,
     pid_t peer_sid = getsid(peer);
     bool ok = (peer_sid > 0 && r.sid > 0 && peer_sid == r.sid) || hold_pid_has_ancestor(peer, r.pid);
     hold_free_run_record(&r);
-    return ok;
+    return ok ? 1 : 0;
 }
 
 static void handle_msg(struct broker *b, struct control_client *c, const char *args, char *body) {
@@ -666,39 +673,27 @@ static void handle_msg(struct broker *b, struct control_client *c, const char *a
         control_replyf(c, "error malformed message\n");
         return;
     }
-    char header[320] = "[msg via grutty] ";
-    bool verified = false;
-    const char *v = kv_get(args, "from");
-    if (v) {
-        char claim[ALIAS_MAX_LEN + ID_STR_LEN + 1];
-        size_t vl = strcspn(v, " ");
-        if (vl / 2 < sizeof(claim) && vl > 0) {
-            memcpy(claim, v, vl);
-            claim[vl] = '\0';
-            char label[ALIAS_MAX_LEN + ID_STR_LEN + 1];
-            if (hex_decode(claim) > 0) {
-                verified = verify_sender(b, c->peer_pid, claim, label, sizeof(label));
-                if (verified)
-                    snprintf(header, sizeof(header), "[msg from %.100s; reply: grutty msg %.100s \"...\"] ", label, label);
-                else
-                    snprintf(header, sizeof(header), "[msg from %.100s (unverified)] ", label);
-            }
-        }
-    }
-    size_t hl = strlen(header);
     struct pending_msg *m = &b->msgs[slot];
     memset(m, 0, sizeof(*m));
-    m->text = malloc(hl + (size_t)blen + 1);
+    const char *v = kv_get(args, "from");
+    if (v) {
+        size_t vl = strcspn(v, " ");
+        if (vl > 0 && vl < sizeof(m->claim)) {
+            memcpy(m->claim, v, vl);
+            m->claim[vl] = '\0';
+            m->has_claim = hex_decode(m->claim) > 0;
+        }
+    }
+    m->peer = c->peer_pid;
+    m->text = malloc((size_t)blen + 1);
     if (!m->text) {
         control_replyf(c, "error out of memory\n");
         return;
     }
-    memcpy(m->text, header, hl);
-    memcpy(m->text + hl, body, (size_t)blen);
-    m->len = hl + (size_t)blen;
+    memcpy(m->text, body, (size_t)blen);
+    m->len = (size_t)blen;
     m->text[m->len] = '\0';
     m->used = true;
-    m->verified = verified;
     m->submit = !((v = kv_get(args, "submit")) && *v == '0');
     m->quiet_ms = (v = kv_get(args, "quiet")) ? (uint32_t)strtoul(v, NULL, 10) : 1000;
     long timeout = (v = kv_get(args, "timeout")) ? strtol(v, NULL, 10) : 60000;
@@ -713,17 +708,30 @@ static void handle_msg(struct broker *b, struct control_client *c, const char *a
 
 /* Type a queued message: bracketed paste when the program asked for it, else
  * newlines flattened so it cannot submit early; then Enter. */
-static void deliver_msg(struct broker *b, struct pending_msg *m) {
+static void deliver_msg(struct broker *b, struct pending_msg *m, int verdict, const char *label) {
+    char header[320] = "[msg via grutty] ";
+    m->verified = verdict == 1;
+    if (m->has_claim && verdict == 1)
+        snprintf(header, sizeof(header), "[msg from %.100s; reply: grutty msg %.100s \"...\"] ", label, label);
+    else if (m->has_claim)
+        snprintf(header, sizeof(header), "[msg from %.100s (unverified)] ", label);
+    size_t hl = strlen(header);
+    char *full = malloc(hl + m->len + 1);
+    if (!full) return;
+    memcpy(full, header, hl);
+    memcpy(full + hl, m->text, m->len);
+    size_t flen = hl + m->len;
     struct hold_screen_modes modes;
     hold_screen_modes(b->screen, &modes);
     if (modes.bracketed_paste) {
-        hold_screen_send_paste(b->screen, m->text, m->len);
+        hold_screen_send_paste(b->screen, full, flen);
         flush_screen_output(b);
     } else {
-        for (size_t i = 0; i < m->len; i++)
-            if (m->text[i] == '\n' || m->text[i] == '\r') m->text[i] = ' ';
-        (void)hold_write_all(b->master, m->text, m->len);
+        for (size_t i = 0; i < flen; i++)
+            if (full[i] == '\n' || full[i] == '\r') full[i] = ' ';
+        (void)hold_write_all(b->master, full, flen);
     }
+    free(full);
     if (m->submit) (void)hold_write_all(b->master, "\r", 1);
     struct control_client *w = m->waiter;
     if (w && w->fd >= 0 && w->gen == m->waiter_gen && w->phase == CTL_MSG)
@@ -741,7 +749,13 @@ static void pump_msgs(struct broker *b, int64_t now) {
         if (b->msgs[i].used && (!oldest || b->msgs[i].start_ms < oldest->start_ms)) oldest = &b->msgs[i];
     if (!oldest || b->target_done) return;
     int64_t quiet_from = b->last_output_ms > oldest->start_ms ? b->last_output_ms : oldest->start_ms;
-    if (now - quiet_from >= (int64_t)oldest->quiet_ms || now >= oldest->deadline_ms) deliver_msg(b, oldest);
+    if (now - quiet_from < (int64_t)oldest->quiet_ms && now < oldest->deadline_ms) return;
+    /* Verify at delivery: by now a just-launched sender's record exists. If
+     * the claimed call still has none, give it up to 2 s before deciding. */
+    char label[ALIAS_MAX_LEN + ID_STR_LEN + 1] = "";
+    int verdict = oldest->has_claim ? verify_sender(b, oldest->peer, oldest->claim, label, sizeof(label)) : 0;
+    if (verdict == -1 && now - oldest->start_ms < BROKER_MSG_VERIFY_GRACE_MS && now < oldest->deadline_ms) return;
+    deliver_msg(b, oldest, verdict, label);
 }
 
 static int64_t msgs_due_in(const struct broker *b, int64_t now) {
@@ -752,6 +766,7 @@ static int64_t msgs_due_in(const struct broker *b, int64_t now) {
         int64_t quiet_from = b->last_output_ms > m->start_ms ? b->last_output_ms : m->start_ms;
         int64_t d = quiet_from + m->quiet_ms - now;
         if (m->deadline_ms - now < d) d = m->deadline_ms - now;
+        if (d < 50 && m->has_claim) d = 50; /* re-check a pending verification soon */
         if (d < due) due = d;
     }
     return due < 0 ? 0 : due;
