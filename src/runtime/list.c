@@ -461,9 +461,13 @@ int hold_prune_one_run(const struct hold_store *store, const char *id, const cha
         hold_free_run_record(&r);
         return 2;
     }
+    /* Under the store lock so a racing exit stamp cannot recreate the
+     * record after this unlink (see hold_mark_run_finished). */
+    int lock_fd = hold_store_lock(store->record_dir);
     unlink(path);
     unlink_call_artifacts(store, &r);
     unlink_public_index(store, id);
+    hold_store_unlock(lock_fd);
     if (removed) *removed = true;
     hold_free_run_record(&r);
     return 0;

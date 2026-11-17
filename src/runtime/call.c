@@ -304,10 +304,15 @@ int hold_generate_run_name_for_id(const struct hold_store *store, const char *id
     size_t adj_n = adjectives_count;
     size_t noun_n = nouns_count;
     size_t total = adj_n * noun_n;
+    /* The word lists are 256 each, so the id's first byte picks the adjective
+     * and its second byte the noun: an uncontested name spells the id's first
+     * four hex digits. A taken name steps to the next adjective. */
+    _Static_assert(sizeof(adjectives) / sizeof(adjectives[0]) == 256, "adjectives must hold 256 words");
+    _Static_assert(sizeof(nouns) / sizeof(nouns[0]) == 256, "nouns must hold 256 words");
     unsigned long long seed = 0;
-    for (size_t i = 0; id && id[i] && i < 16; i++) {
-        seed <<= 4;
-        seed |= (unsigned long long)(id[i] <= '9' ? id[i] - '0' : id[i] - 'a' + 10);
+    for (size_t i = 0; id && id[i] && i < 4; i++) {
+        unsigned nibble = (unsigned)(id[i] <= '9' ? id[i] - '0' : id[i] - 'a' + 10);
+        seed |= (unsigned long long)nibble << (i < 2 ? (1 - i) * 4 : 8 + (3 - i) * 4);
     }
     for (size_t tries = 0; tries < total; tries++) {
         unsigned long long candidate = seed + tries;

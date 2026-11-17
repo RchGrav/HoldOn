@@ -47,3 +47,25 @@ out:
     if (rc != 0) unlink(tmp);
     return rc;
 }
+
+/* Store-wide advisory lock: flock on the record directory. It serializes the
+ * exit stamp's exists-check-to-rename against purge's unlink, so a purged
+ * record stays gone (a re-check alone leaves the whole fsync'd write as a
+ * window). Held only around short critical sections; never nested. Returns an
+ * fd to pass to hold_store_unlock, or -1 when locking is unavailable (callers
+ * proceed unlocked: best effort, as before). */
+int hold_store_lock(const char *record_dir) {
+    int fd = open(record_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    while (flock(fd, LOCK_EX) != 0) {
+        if (errno != EINTR) {
+            close(fd);
+            return -1;
+        }
+    }
+    return fd;
+}
+
+void hold_store_unlock(int fd) {
+    if (fd >= 0) close(fd); /* close releases the flock */
+}

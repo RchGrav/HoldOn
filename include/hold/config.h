@@ -22,6 +22,7 @@
 #include <limits.h>
 #include <poll.h>
 #include <pwd.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/socket.h>

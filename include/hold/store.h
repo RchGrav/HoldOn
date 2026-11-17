@@ -14,6 +14,9 @@ int hold_write_record_atomic(const char *dir, const struct hold_run_record *r, i
 int hold_write_public_index_atomic(const struct hold_store *store, const struct hold_run_record *r,
                                      const char *observed_ports_csv);
 int hold_mark_run_finished(const struct hold_store *store, const char *id, int status);
+/* Store-wide advisory lock (see atomic.c); -1 means proceed unlocked. */
+int hold_store_lock(const char *record_dir);
+void hold_store_unlock(int fd);
 
 /* Two-phase creation, step 1: derive a collision-free hashed run id
  * (hold-run-v1 material: exe, cwd, timestamp_ns, launcher pid, argc, argv[],
