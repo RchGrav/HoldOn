@@ -33,6 +33,7 @@ for test scripts, CI, and AI agents alike.
 - Calls see `HOLD_CALL_ID` and `HOLD_CALL_NAME`, plus `HOLD_CALL_PARENT`
   when launched from inside another call.
 - Docker-style flag clusters: `-dt`, `-dit`, `-td`.
+- An undocumented verb, contributed by the Azgoths of Kria.
 - A `-t` call launched without a usable `TERM` (unset or `dumb`, as under
   cron, CI, or systemd) gets `TERM=xterm-256color`, as `docker run -t` does;
   an explicit `-e TERM=...` wins.

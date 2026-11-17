@@ -633,7 +633,27 @@ int hold_cli_main(int argc, char **argv) {
     } else if (!strcmp(canon, "logs")) {
         rc = hold_cmd_view_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
     } else if (!strcmp(canon, "peek")) {
-        rc = hold_cmd_peek_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
+        if (!strcmp(command, "peen") && cmd_argc == 0) {
+            /* Ode to a Small Lump of Green Putty I Found in My Armpit One
+             * Midsummer Morning, the Azgoths of Kria's finest export. */
+            fputs("Putty. Putty. Putty.\n"
+                  "Green Putty \u2013 Grutty Peen.\n"
+                  "Grarmpitutty \u2013 Morning!\n"
+                  "Pridsummer \u2013 Grorning Utty!\n"
+                  "Discovery\u2026.. Oh.\n"
+                  "Putty?\u2026.. Armpit?\n"
+                  "Armpit\u2026.. Putty.\n"
+                  "Not even a particularly\n"
+                  "Nice shade of green.\n"
+                  "As I lick my armpit and shall agree,\n"
+                  "That this putty is very well green.\n"
+                  "\n"
+                  "-- Grunthos the Flatulent\n",
+                  stdout);
+            rc = 0;
+        } else {
+            rc = hold_cmd_peek_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
+        }
     } else if (!strcmp(canon, "send")) {
         rc = hold_cmd_send_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
     } else if (!strcmp(canon, "wait")) {

@@ -3737,6 +3737,18 @@ PY
   "$HOLD_BIN" end glyphs >/dev/null 2>&1 || true
 }
 
+# peen: peek's undocumented cousin. With a target it peeks; alone it recites.
+test_peen_recites_and_peeks() {
+  out=$("$HOLD_BIN" peen) || return 1
+  printf '%s\n' "$out" | head -1 | grep -qx 'Putty. Putty. Putty.' || return 1
+  printf '%s\n' "$out" | tail -1 | grep -qx -- '-- Grunthos the Flatulent' || return 1
+  ! "$HOLD_BIN" --help | grep -q peen || return 1
+  "$HOLD_BIN" -dt --name lump -- /bin/sh -c 'echo green putty; sleep 10' >/dev/null || return 1
+  "$HOLD_BIN" wait lump --match putty --timeout 5000 || return 1
+  "$HOLD_BIN" peen lump | head -1 | grep -qx 'green putty' || return 1
+  "$HOLD_BIN" end lump >/dev/null 2>&1 || true
+}
+
 # ---- the screen verbs: peek / send / wait / resize -------------------------
 
 # A TTY call's screen reads back as plain text, with a ruler, and as JSON.
@@ -4069,6 +4081,7 @@ run_test "micro: click, double-click, drag select, wheel" test_micro_mouse_editi
 run_test "wait --idle needs first output; symlinked programs keep their name" test_wait_idle_needs_first_output_and_symlink_launch
 run_test "wait --match --since ignores a stale screen" test_wait_match_since_ignores_stale_screen
 run_test "peek --image draws CJK and emoji glyphs" test_peek_image_draws_cjk_and_emoji
+run_test "peen recites alone and peeks with a target" test_peen_recites_and_peeks
 
 echo "----------------------------------------------------------------"
 echo "summary: $PASSES passed, $FAILS failed, $SKIPS skipped"
