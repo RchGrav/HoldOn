@@ -142,6 +142,7 @@ static void test_roundtrip_and_repaint(void) {
     CHECK(b.meta.output_seq == 12345 && b.meta.running && b.meta.has_mouse && b.meta.mouse_col == 7, "meta");
     CHECK(b.modes.app_cursor_keys && b.modes.bracketed_paste, "modes");
     CHECK(!memcmp(a.cells, b.cells, sizeof(*a.cells) * 6 * 30), "cells identical");
+    hold_snapshot_free(&b);
     CHECK(hold_snapshot_parse(blob, blob_len - 1, &b) == -1, "truncated blob rejected");
     free(blob);
 
