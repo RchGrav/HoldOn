@@ -89,8 +89,11 @@ for _ in $(seq 1 30); do
 done
 printf '%s\n' "$psout" | grep -q '^CALL ID[[:space:]]\+COMMAND[[:space:]]\+CREATED[[:space:]]\+STATUS[[:space:]]\+PORTS[[:space:]]\+NAMES' ||
   fail "ps header is not Docker-shaped"
-printf '%s\n' "$psout" | grep -Eq '127\.0\.0\.1:[0-9]+/tcp' ||
-  fail "observed listening port missing from ps"
+# Port observation reads /proc: Linux-only (macOS shows an honest empty PORTS).
+if [ "$(uname -s)" = Linux ]; then
+  printf '%s\n' "$psout" | grep -Eq '127\.0\.0\.1:[0-9]+/tcp' ||
+    fail "observed listening port missing from ps"
+fi
 hold end port-smoke >/dev/null 2>&1 || true
 
 hold attach -h 2>&1 | grep -q 'usage: hold attach <target>' || fail "attach help missing"

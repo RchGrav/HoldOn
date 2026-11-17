@@ -2571,6 +2571,7 @@ test_ps_table_columns_do_not_shear() {
 # hold ports lists the bound listeners of a call's process group, one per line.
 test_ports_lists_bound_listener() {
   local out id ports_out tries rc
+  [ "$(uname -s)" = Linux ] || skip "process observation (ports) is Linux-only"
   out=$("$HOLD_BIN" -d --name ports-smoke -- python3 -c 'import socket,time
 s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
 s.bind(("127.0.0.1",0)); s.listen(); print(s.getsockname()[1]); time.sleep(30)' 2>&1) || return 1
@@ -2609,6 +2610,7 @@ test_stats_single_shot_shape() {
 # inspect reports where a live call's fds actually point. A child that redirects
 # its own stdout to a file must show that file under Stdio.Stdout.
 test_inspect_reports_stdio_targets() {
+  [ "$(uname -s)" = Linux ] || skip "process observation (stdio fd targets) is Linux-only"
   local redir out id
   redir="$TEST_ROOT/inspect-stdio.out"
   out=$("$HOLD_BIN" -d --name stdio-smoke -- /bin/sh -c "exec >\"$redir\"; sleep 30" 2>&1) || return 1
@@ -3752,6 +3754,77 @@ test_send_mouse_legacy_clamp_is_reported() {
   "$HOLD_BIN" end lm >/dev/null 2>&1 || true
 }
 
+# tmux under Hold: prefix chord split, mouse pane focus, prefix detach.
+test_tmux_prefix_mouse_and_detach() {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not installed"
+  local sock="$TEST_ROOT/tmux.sock"
+  "$HOLD_BIN" -dt --name tx -- tmux -S "$sock" -f /dev/null new-session \; set -g mouse on >/dev/null || return 1
+  "$HOLD_BIN" wait tx --idle 500 --timeout 8000 || return 1
+  "$HOLD_BIN" send tx -k C-b --text % --wait 500 || { tmux -S "$sock" kill-server; return 1; }
+  [ "$(tmux -S "$sock" list-panes | wc -l | tr -d ' ')" -eq 2 ] || { tmux -S "$sock" kill-server; return 1; }
+  [ "$(tmux -S "$sock" display -p '#{pane_index}')" = 1 ] || { tmux -S "$sock" kill-server; return 1; }
+  "$HOLD_BIN" send tx --mouse click,5,3 --wait 400 || { tmux -S "$sock" kill-server; return 1; }
+  [ "$(tmux -S "$sock" display -p '#{pane_index}')" = 0 ] || { tmux -S "$sock" kill-server; echo "mouse did not focus pane 0" >&2; return 1; }
+  "$HOLD_BIN" send tx -k C-b --text d || { tmux -S "$sock" kill-server; return 1; }
+  [ "$("$HOLD_BIN" wait tx --timeout 8000)" = 0 ] || { tmux -S "$sock" kill-server; return 1; }
+  tmux -S "$sock" kill-server
+}
+
+# An ncurses program's own mouse handling: click a checkbox, click <OK>.
+test_curses_mouse_checklist() {
+  python3 -c 'import curses' 2>/dev/null || skip "python3 curses unavailable"
+  cat >"$TEST_ROOT/checklist.py" <<'PY'
+import curses, sys, time
+items = ["Option A", "Option B", "Option C"]
+def main(scr):
+    curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+    curses.mouseinterval(0)
+    checked = [False] * 3
+    while True:
+        scr.erase()
+        for i, it in enumerate(items):
+            scr.addstr(3 + i, 4, "[%s] %s" % ("X" if checked[i] else " ", it))
+        scr.addstr(7, 4, "<  OK  >")
+        scr.refresh()
+        if scr.getch() != curses.KEY_MOUSE: continue
+        _, x, y, _, b = curses.getmouse()
+        if not b & (curses.BUTTON1_CLICKED | curses.BUTTON1_RELEASED): continue
+        if 3 <= y <= 5 and 4 <= x <= 16: checked[y - 3] = not checked[y - 3]
+        elif y == 7 and 4 <= x <= 11: return " ".join(str(i + 1) for i, c in enumerate(checked) if c)
+print("RESULT:" + curses.wrapper(main)); sys.stdout.flush(); time.sleep(20)
+PY
+  "$HOLD_BIN" -dt --name cl -- python3 "$TEST_ROOT/checklist.py" >/dev/null || return 1
+  "$HOLD_BIN" wait cl --match 'Option C' --timeout 8000 || return 1
+  "$HOLD_BIN" wait cl --idle 300 --timeout 3000 || return 1
+  "$HOLD_BIN" send cl --mouse click,8,4 --wait 300 || return 1
+  "$HOLD_BIN" peek cl | grep -qF '[X] Option B' || { "$HOLD_BIN" peek cl >&2; return 1; }
+  "$HOLD_BIN" send cl --mouse click,6,7 || return 1
+  "$HOLD_BIN" wait cl --match 'RESULT:2' --timeout 5000 || { "$HOLD_BIN" peek cl >&2; return 1; }
+  "$HOLD_BIN" end cl >/dev/null 2>&1 || true
+}
+
+# micro: click places the cursor, double-click selects a word, drag selects
+# across lines, the wheel scrolls.
+test_micro_mouse_editing() {
+  command -v micro >/dev/null 2>&1 || skip "micro not installed"
+  mkdir -p "$TEST_ROOT/mcfg"
+  seq -f 'alpha bravo charlie delta %g' 1 80 >"$TEST_ROOT/m.txt"
+  "$HOLD_BIN" -dt --name mi -- micro -config-dir "$TEST_ROOT/mcfg" "$TEST_ROOT/m.txt" >/dev/null || return 1
+  "$HOLD_BIN" wait mi --match 'delta 5' --timeout 8000 || return 1
+  "$HOLD_BIN" wait mi --idle 500 --timeout 5000 || return 1
+  "$HOLD_BIN" send mi --mouse click,12,2 --wait 300 || return 1
+  "$HOLD_BIN" peek mi --json | grep -q '"cursor": {"row": 2, "col": 12,' || { "$HOLD_BIN" peek mi --json | grep cursor >&2; return 1; }
+  "$HOLD_BIN" send mi --mouse click,11,1 --mouse click,11,1 --wait 300 || return 1
+  "$HOLD_BIN" send mi -k C-c -k End -k Enter -k C-v --wait 300 || return 1
+  "$HOLD_BIN" peek mi | sed -n 3p | grep -qE '^ *3 bravo$' || { "$HOLD_BIN" peek mi | head -4 >&2; return 1; }
+  "$HOLD_BIN" send mi --mouse press,9,4 --mouse drag,10,5 --mouse release,10,5 --wait 300 || return 1
+  "$HOLD_BIN" send mi -k Delete --wait 300 || return 1
+  "$HOLD_BIN" peek mi | grep -qE '^ *5 alpha ravo charlie delta 5$' || { "$HOLD_BIN" peek mi | head -7 >&2; return 1; }
+  "$HOLD_BIN" send mi --mouse scroll-down,10,10 --wait 300 || return 1
+  "$HOLD_BIN" peek mi | head -1 | grep -qv '^ *1 ' || return 1
+  "$HOLD_BIN" end mi >/dev/null 2>&1 || true
+}
+
 # ---- the screen verbs: peek / send / wait / resize -------------------------
 
 # A TTY call's screen reads back as plain text, with a ruler, and as JSON.
@@ -4081,6 +4154,9 @@ run_test "arrow keys and mouse move a real program's cursor" test_cursor_control
 run_test "keys arrive as exact xterm bytes, one write each" test_keys_exact_bytes_one_write_each
 run_test "a whiptail form is driven by keyboard alone" test_whiptail_form_by_keyboard
 run_test "send reports a clamped legacy mouse event" test_send_mouse_legacy_clamp_is_reported
+run_test "tmux: prefix split, mouse pane focus, detach" test_tmux_prefix_mouse_and_detach
+run_test "an ncurses program takes mouse clicks" test_curses_mouse_checklist
+run_test "micro: click, double-click, drag select, wheel" test_micro_mouse_editing
 
 echo "----------------------------------------------------------------"
 echo "summary: $PASSES passed, $FAILS failed, $SKIPS skipped"

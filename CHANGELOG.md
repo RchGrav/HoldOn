@@ -33,6 +33,18 @@ for test scripts, CI, and AI agents alike.
 - Calls see `HOLD_CALL_ID` and `HOLD_CALL_NAME`, plus `HOLD_CALL_PARENT`
   when launched from inside another call.
 - Docker-style flag clusters: `-dt`, `-dit`, `-td`.
+- A `-t` call launched without a usable `TERM` (unset or `dumb`, as under
+  cron, CI, or systemd) gets `TERM=xterm-256color`, as `docker run -t` does;
+  an explicit `-e TERM=...` wins.
+- `hold send --mouse` notes when a program's legacy byte mouse encoding
+  cannot reach the requested cell (past column/row 222) instead of letting
+  the click land at the edge silently.
+- Tests drive real terminal programs where installed: vim (arrows, click,
+  drag, wheel), whiptail and dialog forms, nano chords, tmux (prefix
+  split, mouse pane focus, detach), micro, and an ncurses mouse checklist;
+  key bytes are checked against xterm in both cursor modes.
+  `HOLD_TEST_ONLY=<regex>` runs a subset of `tests/test_hold.sh`.
+- macOS CI smoke covers the screen verbs and `make screen-test`.
 - Generated names come from a new 256 x 256 word list; an uncontested name
   spells the call id's first four hex digits.
 

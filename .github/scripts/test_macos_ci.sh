@@ -64,6 +64,27 @@ run_native_smoke() {
   rm -rf "$tmp"
 }
 
+# The screen verbs on a TTY call: -dt, wait --match, send, peek text and PNG,
+# the saved final screen, and docker-wait exit codes.
+run_screen_smoke() {
+  local tmp home h
+  tmp=$(mktemp -d)
+  home="$tmp/home"
+  mkdir -p "$home"
+  h() { env HOME="$home" ./hold "$@"; }
+  h -dt --name scr -- /bin/sh -c 'stty -echo; echo ready; read -r l; echo "got:$l"; exit 3' >/dev/null ||
+    fail "screen smoke: -dt launch failed"
+  h wait scr --match ready --timeout 10000 || fail "screen smoke: wait --match ready failed"
+  h send scr hello --enter --wait 300 --timeout 10000 >/dev/null 2>&1 || true
+  h wait scr --timeout 10000 >"$tmp/code" || fail "screen smoke: exit wait failed"
+  [ "$(cat "$tmp/code")" = 3 ] || fail "screen smoke: exit code $(cat "$tmp/code"), want 3"
+  h peek scr >"$tmp/screen" || fail "screen smoke: peek of the ended call failed"
+  grep -qx 'got:hello' "$tmp/screen" || { cat "$tmp/screen" >&2; fail "screen smoke: typed line missing"; }
+  h peek scr --image "$tmp/scr.png" || fail "screen smoke: peek --image failed"
+  head -c 8 "$tmp/scr.png" | od -An -c | grep -q 'P   N   G' || fail "screen smoke: image is not a PNG"
+  rm -rf "$tmp"
+}
+
 [ "$(uname -s)" = Darwin ] || fail "expected Darwin runner, got $(uname -s)"
 
 actual_arch=$(uname -m)
@@ -95,8 +116,10 @@ esac
 ./hold help system | grep -Fq 'macOS: /var/db/hold' || fail "macOS system store help is missing"
 ./hold --version | grep -Eq "^(v?${version}|${version}-|dev|[0-9a-f]{7,40}).*$" || fail "unexpected version output"
 run_native_smoke
+run_screen_smoke
 
 make viewer-filter-test "${make_args[@]}"
+make screen-test "${make_args[@]}"
 bash tests/test_version_makefile.sh
 bash tests/test_release_installer.sh
 
