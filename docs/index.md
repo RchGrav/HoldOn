@@ -1,9 +1,11 @@
 # Hold documentation
 
-Hold is a daemonless host-process manager. `nohup` hangs up gracefully; Hold
-keeps the line open. It places ordinary commands as durable **calls** —
-recorded, logged, listable, reattachable — and later ends, redials, saves, or
-purges them.
+Hold is a daemonless host-process manager and a terminal for scripts and
+agents. `nohup` hangs up gracefully; Hold keeps the line open. It places
+ordinary commands as durable **calls** — recorded, logged, listable,
+reattachable — and later ends, redials, saves, or purges them. TTY calls
+carry a live headless screen that `hold peek`, `send`, `wait`, `resize`, and
+`msg` read and drive.
 
 This index points to the current documentation. Historical planning, review
 notes, and documentation for removed subsystems live in
@@ -29,14 +31,14 @@ notes, and documentation for removed subsystems live in
 - [Launcher](launcher.md): fork/session/process-group launch model.
 - [Store](store.md): user-local and root-managed state layout.
 - [Identity](identity.md): validation before signaling.
-- [Console](console.md): PTY-backed calls, attach/detach, adoption.
+- [Console](console.md): PTY-backed calls, attach/detach.
+- [Screens](screen.md): the headless terminal, the control protocol, HSNAP1, messaging.
 - [Implementation invariants](SPEC.md): the on-disk contract everything relies on.
 - [CI parity](CI-PARITY.md): keeping local checks equal to CI.
 
 ## Future work
 
 - [Future notes](future/README.md)
-- [Dynamic log viewer design](future/viewer-fixes-before-0.5.md)
 - [Additional log destinations](future/log-destinations.md)
 
 ## Source map

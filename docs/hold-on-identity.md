@@ -35,12 +35,9 @@ so anything else can read Hold's logs without Hold's help.
 `hold` is already a verb. There is no `run` command.
 
 ```sh
-hold on                     # guarded shell: "Hold is now active. Ctrl-P Ctrl-Q
-                            #  puts the foreground program on hold; hold off or
-                            #  exit ends the session."
-hold off                    # end the guarded shell
 hold -d <cmd> [args...]     # start on hold (detached), print the 64-hex run id
 hold -it <cmd> [args...]    # start attached on a PTY
+hold -dt <cmd> [args...]    # start detached on a PTY (a screen to drive)
 hold <cmd> [args...]        # start in the foreground, stream output
 hold <id|name>              # redial: restart a retained call from its recipe
                             #  (-it recipe reattaches, -d recipe detaches,
@@ -58,12 +55,17 @@ hold end <target>           # end the call politely: TERM, then KILL
                             #  (stop is an alias)
 hold kill <target>          # KILL now, when it won't listen
 hold logs <call> [-f] [-n N]
-                            # the polished full-screen viewer, built in
-                            #  (plain output automatically when not a TTY)
-hold logs <call> -p         # --print: plain dump, always script-safe
-                            #  -t/--time prepends times, --date adds date+time
-                            #  (timestamps read from the sidecar, never parsed
-                            #   out of the log text)
+                            # captured output, plain text, always script-safe
+                            #  (--filter, --similar, --replay for recorded timing)
+hold peek <call>            # a TTY call's screen: text (--ruler), --json, or
+                            #  --image a color PNG with ruler, cursor marks, footer
+hold send <call> TEXT -k KEY  # type and press keys, encoded for the program's
+                            #  modes; --paste, --mouse ACTION,COL,ROW, --wait MS
+hold wait <call>            # until it exits (prints the code, docker wait), or
+                            #  --idle MS / --match TEXT / --regex RE on the screen
+hold resize <call> C R      # resize its terminal (SIGWINCH)
+hold msg <call> TEXT        # message an agent running under Hold; the sender
+                            #  ($HOLD_CALL_ID) is verified and told how to reply
 hold inspect <call>         # uptime, session type (plain/console/fullscreen),
                             #  fd targets, everything visible at your access
                             #  level, as JSON
@@ -160,23 +162,11 @@ There is no profile system. A call record already is a launch recipe:
 `save` flags it as protected, `rename` gives it a meaningful name, and
 `hold <name>` redials it. One concept instead of three.
 
-## Automatic console detection
+## Screens, not guesses
 
-No guessing and no flags required for adoption:
-
-- `tty_nr` (`/proc/<pid>/stat` field 7) — does it have a controlling
-  terminal at all;
-- termios sampled over time on the broker's poll loop — line vs raw
-  framing (dwell time, so readline flips don't flap it);
-- foreground-pgid tracking (`TIOCGPGRP`) in the `hold on` proxy loop —
-  attributes PTY bytes to the child, anchors classification at the spawn
-  moment, and snapshots `/proc/<fg>/exe` facts when the child starts;
-- positioning-escape scan of the broker replay buffer (ignoring SGR
-  color) — confirmatory full-screen tag only, never load-bearing.
-
-Redirected stdio is purposeful, not a failure: `inspect` records where
-fds 1/2 point as neutral state; `log` prints one informative line only
-when the log would otherwise be misleadingly empty.
+A TTY call's broker keeps an exact headless terminal, so nothing about the
+screen is inferred: `hold peek` reads it, `hold inspect` reports where fds
+0/1/2 point, and redirected stdio stays purposeful, not a failure.
 
 ## What leaves the core
 
@@ -186,13 +176,13 @@ when the log would otherwise be misleadingly empty.
 | profiles, alias store, `profile`/`profiles`/`export`/`import`/`commit` | delete — replaced by save/rename on run records |
 | grants, sudoers pinning, elevation, `--cap-add`/`--cap-drop`/`--privileged` launch flags | deleted (executed 2026-07-04) — Hold launches with the invoker's rights; `--system` selects scope; the flags are rejected honestly |
 | captive CLI (`src/runtime/captive.c`) and the `hcli` idea | delete — with profiles gone there is nothing to edit |
-| viewer (`src/viewer/`) | stays — rebuilt in core to the before-0.5 design as `hold logs` |
-| `hold shell` | becomes `hold on` / `hold off` |
+| viewer (`src/viewer/`) | the full-screen viewer and playback transport were removed in the agent-terminal turn (2026-11); `hold logs` is plain text, the filter engine stays |
+| `hold shell` / `hold on` / `hold off` | removed in the agent-terminal turn (2026-11), with foreground adoption; `-dt` plus the screen verbs replace watching a program by hand |
 
 ## What stays (the hard-won plumbing)
 
 Hash-derived 64-hex call IDs with generated `adjective_noun` names; the
-raw-log + sidecar capture path; the console broker with child and adopted
-modes; the call record store with restart-append; stop/kill escalation
+raw-log + sidecar capture path; the console broker, now carrying a headless
+screen (see [screen.md](screen.md)); the call record store with restart-append; stop/kill escalation
 with target revalidation; the test-suite discipline (every surface shape
 asserted).

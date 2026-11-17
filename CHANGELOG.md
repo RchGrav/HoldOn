@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased - A terminal for scripts and agents
+
+Hold turns from keeping programs alive toward seeing and driving them. Every
+TTY call now carries a headless terminal, and five verbs read and steer it —
+for test scripts, CI, and AI agents alike.
+
+### Added
+
+- `hold peek <target>`: a TTY call's screen right now — plain text, one line
+  per row (`--ruler` numbers them); `--json` with the cursor, input modes,
+  title, output counter, and idle time; `--image FILE` a color PNG with
+  labeled ruler margins (the cursor's column and row marked in red), an
+  optional `--cursor-ring`, a mouse reticle, and a footer line
+  (`CURSOR: col 14, row 8   SIZE: 80x24`). After a call ends, peek shows its
+  last screen (kept as `<id>.screen`, removed by purge).
+- `hold send <target>`: type text, press keys (`-k Enter`, `C-c`, `M-x`,
+  `F5`, ...), paste (bracketed when the program asked), and send SGR mouse
+  events, all encoded for the program's current modes. `--wait MS` returns
+  once the program has answered and gone quiet.
+- `hold wait <target>`: block until `--idle MS`, `--match TEXT` /
+  `--regex RE` on the screen, or exit (the default, printing the exit code
+  like `docker wait`; works for any call). Exit 7 on timeout, 8 when the
+  call ended first.
+- `hold resize <target> <cols> <rows>`: resize the terminal; the program
+  gets SIGWINCH and the screen reflows.
+- `hold msg <target> TEXT`: message another call — typically an agent
+  harness — typed into its prompt once its screen is quiet, with a header
+  naming the sender and how to reply. The receiver verifies the sender's
+  call by its session; impostors are marked `(unverified)`. Capped at 20
+  messages a minute per receiver.
+- Calls see `HOLD_CALL_ID` and `HOLD_CALL_NAME`, plus `HOLD_CALL_PARENT`
+  when launched from inside another call.
+- Docker-style flag clusters: `-dt`, `-dit`, `-td`.
+- Generated names come from a new 256 x 256 word list; an uncontested name
+  spells the call id's first four hex digits.
+
+### Changed
+
+- Attaching repaints the live screen (cells, colors, modes, cursor) instead
+  of replaying the last 64 KiB of bytes.
+- The console broker serves control clients alongside the one attach
+  client, and answers the program's terminal queries while no terminal is
+  attached.
+- `hold logs` always prints plain text; `--plain`/`-p` are accepted and
+  ignored.
+
+### Removed
+
+- `hold on` / `hold off` / `hold shell` and foreground-program adoption.
+- The full-screen log viewer, playback transport, and attach time-travel.
+
+### Fixed
+
+- `rm --force` could resurrect the call it removed: the exit stamp's
+  existence check and its fsync'd rewrite raced purge's unlink. Both now
+  hold a store lock.
+
 ## 0.7.0 - Play it back — 2026-07-22
 
 ### Added

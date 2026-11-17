@@ -19,8 +19,9 @@ user-local:    ~/.local/state/hold          (0700, owned by the user)
 root-managed:  /var/lib/hold  (Linux)       /var/db/hold  (macOS)
 ```
 
-User-local layout: call records (`<64hex>.json`, 0600) and logs
-(`<64hex>.log` + `.log.idx`, 0600) directly under the base; console sockets
+User-local layout: call records (`<64hex>.json`, 0600), logs
+(`<64hex>.log` + `.log.idx`, 0600), and a TTY call's final screen
+(`<64hex>.screen`, HSNAP1 — see [screen.md](screen.md)) directly under the base; console sockets
 under `console/` (0700 dir, 0600 sockets).
 
 Root-managed layout: `runs/`, `logs/`, `console/` are 0700 root-only —
