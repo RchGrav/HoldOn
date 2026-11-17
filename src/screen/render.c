@@ -1,8 +1,6 @@
 #include "hold/config.h"
 #include "hold/screen.h"
 
-#include <math.h>
-
 #include "font_data.h"
 
 /* Snapshot -> PNG. A framebuffer of 8x16-pixel cells (times scale), an
@@ -212,6 +210,14 @@ static void box_segment(struct fb *fb, int x, int y, int cw, int ch, int s, int 
     }
 }
 
+/* No libm: the static and cross-compiled release builds link without -lm. */
+static double sqrt_newton(double v) {
+    if (v <= 0) return 0;
+    double x = v > 1 ? v : 1;
+    for (int i = 0; i < 30; i++) x = 0.5 * (x + v / x);
+    return x;
+}
+
 /* Rounded corners U+256D..U+2570 (╭ ╮ ╯ ╰): a quarter circle, anti-aliased,
  * the thickness of a light line, joining the cell's two edge midpoints the
  * straight box lines meet, then straight down/up to the far edge. */
@@ -230,7 +236,8 @@ static void draw_arc(struct fb *fb, int x, int y, int cw, int ch, int s, uint32_
         for (int px = x0; px <= x1; px++) {
             double dx = px + 0.5 - ax, dy = py + 0.5 - ay;
             if ((right ? dx > 0.5 : dx < -0.5) || (down ? dy > 0.5 : dy < -0.5)) continue; /* other quadrants */
-            double a = t / 2.0 + 0.5 - fabs(sqrt(dx * dx + dy * dy) - r);
+            double off = sqrt_newton(dx * dx + dy * dy) - r;
+            double a = t / 2.0 + 0.5 - (off < 0 ? -off : off);
             if (a > 0) blend(fb, px, py, fg, a > 1 ? 1 : a);
         }
     }
@@ -364,13 +371,6 @@ static void draw_cell(struct fb *fb, const struct hold_snapshot *snap, int r, in
 /* ---- overlays --------------------------------------------------------------- */
 
 /* Newton square root: keeps the static binary free of libm. */
-static double sqrt_newton(double v) {
-    if (v <= 0) return 0;
-    double x = v > 1 ? v : 1;
-    for (int i = 0; i < 30; i++) x = 0.5 * (x + v / x);
-    return x;
-}
-
 /* Anti-aliased ring: radius 0.75 x cell height, stroke ~2.5 px x scale. */
 static void draw_ring(struct fb *fb, double cx, double cy, double radius, double stroke, rgb c) {
     int x0 = (int)(cx - radius - stroke - 1), x1 = (int)(cx + radius + stroke + 1);

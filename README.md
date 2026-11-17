@@ -1,9 +1,10 @@
-# hold — the agent TUI tester
+# hold — Playwright for the terminal
 
-**See, drive, and test terminal programs from scripts and AI agents.**
-A headless terminal for every command you run: read its screen as text, JSON,
-or a color screenshot; type keys, paste, and click; wait for it to settle;
-and let AI coding agents message each other. One static binary. No daemon.
+**The agent TUI tester: see, drive, and test terminal programs from scripts
+and AI agents.** hold runs any command on its own headless terminal. Read its
+screen as text, JSON, or a color screenshot; type keys, paste, and click; wait
+for it to settle; and let AI coding agents message each other. One static
+binary. No daemon.
 
 [![CI](https://github.com/RchGrav/HoldOn/actions/workflows/ci.yml/badge.svg)](https://github.com/RchGrav/HoldOn/actions/workflows/ci.yml)
 [![Release build](https://github.com/RchGrav/HoldOn/actions/workflows/release.yml/badge.svg)](https://github.com/RchGrav/HoldOn/actions/workflows/release.yml)
@@ -33,14 +34,32 @@ hold send app i "hello" -k Escape :wq --enter   # type, press keys, in order
 hold wait app                          # until it exits; prints the exit code
 ```
 
-Think of it as **Playwright for the terminal**, or `tmux send-keys` and
-`capture-pane` built for automation: no session to manage, exact key
-encoding, deterministic waits, and screenshots an agent can actually read.
+What Playwright does for web pages, hold does for terminal programs — and
+unlike `tmux send-keys` and `capture-pane`, it was built for automation: no
+session to manage, exact key encoding, waits instead of sleeps, and
+screenshots an agent can actually read.
+
+### The whole idea in one minute
+
+- **A call** is a program you start with hold: `hold -dt --name app -- CMD`.
+  `-t` gives it a headless terminal, `-d` returns at once. Every call has a
+  name, an ID, a log, and (once it ends) an exit code.
+- **Look** with `hold peek`: the screen as text, with `--ruler` coordinates,
+  as `--json` state, or as an `--image` PNG.
+- **Act** with `hold send`: text, keys, pastes, and mouse events, encoded for
+  the program's current terminal modes — exactly what a real xterm would send.
+- **Wait** with `hold wait`: until text appears, the screen settles, or the
+  program exits. Never `sleep`.
+- **Check** the exit codes: every verb returns a meaningful one, so a plain
+  shell script is a test, and an agent always knows whether a step worked.
+
+Look → act → wait → check. Everything below is that loop in detail.
 
 ---
 
 ## Contents
 
+- [The whole idea in one minute](#the-whole-idea-in-one-minute)
 - [Why hold](#why-hold)
 - [Install](#install)
 - [Drive a TUI in five commands](#drive-a-tui-in-five-commands)
@@ -107,7 +126,7 @@ checksums, and offline installs: [docs/install.md](docs/install.md).
 
 ```sh
 hold -dt --name ed -- vim hello.c                # 1. run it on a headless terminal
-hold wait ed --idle 500                          # 2. wait until it has drawn
+hold wait ed --idle                              # 2. wait until it has drawn
 hold peek ed --ruler                             # 3. look at it
 hold send ed --mouse click,29,4                  # 4. click where you want...
 hold send ed ciw agents -k Escape :w --enter --wait 300   # ...and type
@@ -205,7 +224,7 @@ terminal driver — exactly as at a keyboard.
 
 ```sh
 hold wait app --match "Ready"          # the text appears on screen (--regex too)
-hold wait app --idle 500               # the program drew something, then went quiet
+hold wait app --idle                   # it drew something, then stayed quiet 500 ms
 hold send app -k Enter --wait 300      # send, then wait for the answer to settle
 seq=$(hold send app q --seq)           # remember the output counter...
 hold wait app --match "Bye" --since "$seq"   # ...and accept only a fresh screen
@@ -231,11 +250,11 @@ hold -dt --name worker -- claude          # or codex, aider, ...
 hold msg worker "Run the tests in tests/redial and report back with hold msg."
 ```
 
-Here one Claude Code session started a second one under hold, asked it a
-question with `hold msg`, and the second answered back the same way — on its
-own, using the reply hint in the header:
+Here one Claude Code session started a second one under hold and sent it a
+message. Using only the hints in the header, the second checked the message
+was genuine with `hold msg --received`, then answered back with `hold msg`:
 
-![A Claude Code session (helper) receiving a verified message from the Claude Code session that launched it, and replying with hold msg.](docs/images/claude-to-claude.png)
+![A Claude Code session (helper) receiving a message from the session that launched it, checking it with hold msg --received, and replying with hold msg.](docs/images/claude-to-claude.png)
 
 Any program can be on either end; a plain shell loop receiving a worker's
 report looks like this:
@@ -253,10 +272,11 @@ A header is still just text, though — a file, a web page, or a program's
 output can contain one. So every message gets an ID, and the header says how
 to check it: `hold msg --received ID`, run inside the receiving call, prints
 the sender and full text hold delivered under that ID, and fails if there was
-none (`hold msg --received` alone lists them all). Given only that header, a
-fresh Claude Code session ran the check on its own before acting on the
-message. Delivery is capped at 20
-messages a minute per receiver, so two polite agents can't loop forever.
+none (`hold msg --received` alone lists them all). That is the check the
+helper above ran on its own before acting.
+
+Delivery is capped at 20 messages a minute per receiver, so two polite agents
+can't loop forever.
 
 ## Give your agent hold
 
@@ -392,7 +412,7 @@ renderer and its PNG encoder are built in; glyphs come from
 | `hold send CALL [TEXT] [-k KEY] [--paste T] [--mouse A,C,R] [--wait MS]` | type, press, paste, click |
 | `hold wait CALL [--idle [MS]] [--match T \| --regex R] [--since SEQ]` | block until it settles, shows text, or exits |
 | `hold resize CALL COLS ROWS` | resize its terminal (SIGWINCH) |
-| `hold msg CALL TEXT` | message an agent; it can reply the same way |
+| `hold msg CALL TEXT` · `hold msg --received [ID]` | message an agent (it can reply the same way) · check what hold really delivered |
 | `hold list` · `hold ps` · `hold inspect CALL` | what is running, and everything known about it |
 | `hold logs CALL [-f] [-n N]` | captured output |
 | `hold attach CALL` | interactive attach (Ctrl-P Ctrl-Q detaches) |
@@ -417,7 +437,13 @@ Running an agent harness *under* hold also makes it observable and messageable.
 **Is it safe?** Calls and their sockets are private to your user (root can
 see all); signals are delivered only after identity re-validation; `msg`
 headers say whether the sender was verified (who sent it — not whether the
-content is safe to act on). hold never elevates on its own.
+content is safe to act on), and `hold msg --received ID` tells a real
+message from a header that is only text. hold never elevates on its own.
+
+**What happens if my agent's shell is killed?** Nothing bad. A call and the
+small helpers that log it and record its exit live in their own sessions, so
+harnesses that kill a command's process group when it returns cannot take
+them along.
 
 **Why "hold"?** `nohup` says *no hang-up*. hold says **hold on**: the line
 stays open. Calls, redial, picking the line back up — and now caller ID
@@ -425,13 +451,7 @@ between agents. (It began life as *sigmund*: signal guardian.)
 
 ---
 
-Apache-2.0. Vendored: [libvterm](third_party/libvterm/) (MIT),
+Apache-2.0. Vendored: [libvterm](third_party/libvterm/) (MIT, with a small local patch),
 [GNU Unifont](third_party/unifont/) subset and
 [Noto Emoji](third_party/noto-emoji/) masks (both SIL OFL 1.1).
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-<sub>Keywords: agent TUI tester, TUI testing, terminal UI automation, headless
-terminal, terminal screenshot, AI agent tools, Claude Code, Codex, coding
-agents, multi-agent orchestration, expect alternative, pexpect alternative, tmux
-send-keys alternative, ncurses testing, end-to-end CLI testing, Playwright for
-the terminal, process manager, nohup alternative.</sub>
