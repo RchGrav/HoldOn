@@ -76,6 +76,24 @@ struct hold_screen *hold_screen_new(int rows, int cols) {
     vterm_screen_enable_altscreen(s->vs, 1);
     vterm_screen_set_callbacks(s->vs, &screen_callbacks, s);
     vterm_screen_reset(s->vs, 1);
+    /* The 16 ANSI colors: VS Code's Dark+ terminal palette instead of
+     * libvterm's saturated defaults, whose blue (0,0,224) is near-invisible
+     * on the screenshot background (1.8:1). Every color but black reads at
+     * 3:1 or better there, and blue also works as a background behind light
+     * text (lazygit's selection). Real terminals differ anyway; this one is
+     * common and balanced (bright white made pure white, to differ from
+     * white). 256-color and truecolor values are untouched. */
+    static const uint8_t palette[16][3] = {
+        {0x00, 0x00, 0x00}, {0xcd, 0x31, 0x31}, {0x0d, 0xbc, 0x79}, {0xe5, 0xe5, 0x10},
+        {0x24, 0x72, 0xc8}, {0xbc, 0x3f, 0xbc}, {0x11, 0xa8, 0xcd}, {0xe5, 0xe5, 0xe5},
+        {0x66, 0x66, 0x66}, {0xf1, 0x4c, 0x4c}, {0x23, 0xd1, 0x8b}, {0xf5, 0xf5, 0x43},
+        {0x3b, 0x8e, 0xea}, {0xd6, 0x70, 0xd6}, {0x29, 0xb8, 0xdb}, {0xff, 0xff, 0xff},
+    };
+    for (int i = 0; i < 16; i++) {
+        VTermColor c;
+        vterm_color_rgb(&c, palette[i][0], palette[i][1], palette[i][2]);
+        vterm_state_set_palette_color(s->state, i, &c);
+    }
     return s;
 }
 

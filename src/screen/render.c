@@ -1,6 +1,8 @@
 #include "hold/config.h"
 #include "hold/screen.h"
 
+#include <math.h>
+
 #include "font_data.h"
 
 /* Snapshot -> PNG. A framebuffer of 8x16-pixel cells (times scale), an
@@ -20,12 +22,17 @@ static const rgb MOUSE_MARK = {0x00, 0xe5, 0xff};  /* cyan: the last mouse event
 
 struct fb {
     int w, h;
-    uint8_t *px; /* RGB, row-major */
+    uint8_t *px; /* PNG scanlines: per row, one filter byte then w RGB pixels */
 };
+
+/* Row y's first pixel; the byte before it is the row's PNG filter type. */
+static inline uint8_t *fb_row(const struct fb *fb, int y) {
+    return fb->px + (size_t)y * ((size_t)fb->w * 3 + 1) + 1;
+}
 
 static void put(struct fb *fb, int x, int y, rgb c) {
     if (x < 0 || y < 0 || x >= fb->w || y >= fb->h) return;
-    uint8_t *p = fb->px + ((size_t)y * fb->w + x) * 3;
+    uint8_t *p = fb_row(fb, y) + (size_t)x * 3;
     p[0] = c.r;
     p[1] = c.g;
     p[2] = c.b;
@@ -34,7 +41,7 @@ static void put(struct fb *fb, int x, int y, rgb c) {
 static void blend(struct fb *fb, int x, int y, rgb c, double a) {
     if (x < 0 || y < 0 || x >= fb->w || y >= fb->h || a <= 0) return;
     if (a > 1) a = 1;
-    uint8_t *p = fb->px + ((size_t)y * fb->w + x) * 3;
+    uint8_t *p = fb_row(fb, y) + (size_t)x * 3;
     p[0] = (uint8_t)(p[0] + (c.r - p[0]) * a + 0.5);
     p[1] = (uint8_t)(p[1] + (c.g - p[1]) * a + 0.5);
     p[2] = (uint8_t)(p[2] + (c.b - p[2]) * a + 0.5);
@@ -90,22 +97,81 @@ static int combining_shift(uint32_t base, uint32_t mark) {
     return shift > 0 ? shift : 0;
 }
 
-/* Draw a font glyph with its top-left at (x, y); returns false if absent. */
-static bool draw_font_glyph(struct fb *fb, int x, int y, int s, uint32_t cp, rgb fg, bool bold) {
+/* Draw a font glyph into `cells` terminal cells (1 or 2) with its top-left
+ * at (x, y); returns false if absent. The terminal decides a character's
+ * width, not the font: a 16-pixel glyph in a single cell (Unifont draws
+ * Ethiopic, Indic, and some math letters wide) is squeezed into it by
+ * merging pixel pairs, and an 8-pixel glyph in a double cell is centered,
+ * so nothing spills into (and gets painted over by) the next cell. */
+static bool draw_font_glyph(struct fb *fb, int x, int y, int s, int cells, uint32_t cp, rgb fg, bool bold) {
     int g = font_find(cp);
     if (g < 0) return false;
     uint32_t off = font_off[g] & 0x7fffffffu;
     bool wide = font_off[g] & 0x80000000u;
-    int gw = wide ? 16 : 8;
+    int bpr = wide ? 2 : 1;
+    bool squeeze = wide && cells == 1;
+    int ox = !wide && cells == 2 ? x + 4 * s : x;
+    int out_w = wide && !squeeze ? 16 : 8;
     for (int row = 0; row < 16; row++) {
-        for (int col = 0; col < gw; col++) {
-            unsigned char byte = font_bits[off + (size_t)row * (wide ? 2 : 1) + (size_t)(col / 8)];
-            if (!(byte & (0x80 >> (col % 8)))) continue;
-            fill(fb, x + col * s, y + row * s, s, s, fg);
-            if (bold) fill(fb, x + col * s + s, y + row * s, s, s, fg);
+        const unsigned char *bits = &font_bits[off + (size_t)row * bpr];
+        for (int col = 0; col < out_w; col++) {
+            int sc = squeeze ? col * 2 : col;
+            bool ink = bits[sc / 8] & (0x80 >> (sc % 8));
+            if (squeeze) ink |= (bits[(sc + 1) / 8] & (0x80 >> ((sc + 1) % 8))) != 0;
+            if (!ink) continue;
+            fill(fb, ox + col * s, y + row * s, s, s, fg);
+            if (bold) fill(fb, ox + col * s + s, y + row * s, s, s, fg);
         }
     }
     return true;
+}
+
+/* Noto Emoji mask index for cp, or -1. */
+static int emoji_find(uint32_t cp) {
+    int lo = 0, hi = HOLD_EMOJI_GLYPHS - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (emoji_cp[mid] == cp) return mid;
+        if (emoji_cp[mid] < cp) lo = mid + 1;
+        else hi = mid - 1;
+    }
+    return -1;
+}
+
+static double emoji_alpha(int e, int x, int y) {
+    if (x < 0 || y < 0 || x >= HOLD_EMOJI_PX || y >= HOLD_EMOJI_PX) return 0;
+    size_t i = (size_t)e * HOLD_EMOJI_PX * HOLD_EMOJI_PX + (size_t)y * HOLD_EMOJI_PX + (size_t)x;
+    unsigned char b = emoji_mask[i / 2];
+    return ((i & 1) ? (b & 15) : (b >> 4)) / 15.0;
+}
+
+/* Draw emoji e anti-aliased into the w x h box at (x, y): the 32x32 mask
+ * resampled bilinearly (at scale 1 that is the average of each 2x2 block). */
+static void draw_emoji(struct fb *fb, int x, int y, int w, int h, int e, rgb fg) {
+    for (int ty = 0; ty < h; ty++) {
+        double fy = (ty + 0.5) * HOLD_EMOJI_PX / h - 0.5;
+        int y0 = (int)(fy < 0 ? fy - 1 : fy);
+        double wy = fy - y0;
+        for (int tx = 0; tx < w; tx++) {
+            double fx = (tx + 0.5) * HOLD_EMOJI_PX / w - 0.5;
+            int x0 = (int)(fx < 0 ? fx - 1 : fx);
+            double wx = fx - x0;
+            double a = (1 - wy) * ((1 - wx) * emoji_alpha(e, x0, y0) + wx * emoji_alpha(e, x0 + 1, y0)) +
+                       wy * ((1 - wx) * emoji_alpha(e, x0, y0 + 1) + wx * emoji_alpha(e, x0 + 1, y0 + 1));
+            blend(fb, x + tx, y + ty, fg, a);
+        }
+    }
+}
+
+/* Unicode default-ignorable code points (variation selectors, zero-width
+ * joiner/space, bidi controls, tags, ...): terminals draw nothing for them,
+ * but Unifont gives them visible labelled boxes. */
+static bool default_ignorable(uint32_t cp) {
+    return cp == 0x034F || cp == 0x061C || (cp >= 0x115F && cp <= 0x1160) || (cp >= 0x17B4 && cp <= 0x17B5) ||
+           (cp >= 0x180B && cp <= 0x180F) || (cp >= 0x200B && cp <= 0x200F) || (cp >= 0x202A && cp <= 0x202E) ||
+           (cp >= 0x2060 && cp <= 0x206F) || cp == 0x3164 || (cp >= 0xFE00 && cp <= 0xFE0F) || cp == 0xFEFF ||
+           cp == 0xFFA0 || (cp >= 0xFFF0 && cp <= 0xFFF8) || (cp >= 0x1BCA0 && cp <= 0x1BCA3) ||
+           (cp >= 0x1D173 && cp <= 0x1D17A) || (cp >= 0xE0000 && cp <= 0xE0FFF);
 }
 
 /* U+2500..U+257F as up/down/left/right weights: 0 none, 1 light, 2 heavy,
@@ -146,8 +212,36 @@ static void box_segment(struct fb *fb, int x, int y, int cw, int ch, int s, int 
     }
 }
 
+/* Rounded corners U+256D..U+2570 (╭ ╮ ╯ ╰): a quarter circle, anti-aliased,
+ * the thickness of a light line, joining the cell's two edge midpoints the
+ * straight box lines meet, then straight down/up to the far edge. */
+static void draw_arc(struct fb *fb, int x, int y, int cw, int ch, int s, uint32_t cp, rgb fg) {
+    bool right = cp == 0x256D || cp == 0x2570, down = cp == 0x256D || cp == 0x256E;
+    int t = s;
+    int lx = x + (cw - t) / 2, ly = y + (ch - t) / 2; /* the straight lines' top-left */
+    double xc = lx + t / 2.0, yc = ly + t / 2.0;       /* their centre lines */
+    double r = right ? x + cw - xc : xc - x;          /* reach the side edge exactly */
+    double ax = right ? xc + r : xc - r, ay = down ? yc + r : yc - r;
+    if (down) fill(fb, lx, (int)(ay + 0.5), t, y + ch - (int)(ay + 0.5), fg);
+    else fill(fb, lx, y, t, (int)(ay + 0.5) - y, fg);
+    int x0 = (int)(right ? xc - t : ax - 1), x1 = (int)(right ? ax + 1 : xc + t);
+    int y0 = (int)(down ? yc - t : ay - 1), y1 = (int)(down ? ay + 1 : yc + t);
+    for (int py = y0; py <= y1; py++) {
+        for (int px = x0; px <= x1; px++) {
+            double dx = px + 0.5 - ax, dy = py + 0.5 - ay;
+            if ((right ? dx > 0.5 : dx < -0.5) || (down ? dy > 0.5 : dy < -0.5)) continue; /* other quadrants */
+            double a = t / 2.0 + 0.5 - fabs(sqrt(dx * dx + dy * dy) - r);
+            if (a > 0) blend(fb, px, py, fg, a > 1 ? 1 : a);
+        }
+    }
+}
+
 /* Procedural glyphs: box drawing, blocks, shades, Braille. */
 static bool draw_procedural(struct fb *fb, int x, int y, int cw, int ch, int s, uint32_t cp, rgb fg) {
+    if (cp >= 0x256D && cp <= 0x2570) {
+        draw_arc(fb, x, y, cw, ch, s, cp, fg);
+        return true;
+    }
     if (cp >= 0x2500 && cp <= 0x257f && box_weights[cp - 0x2500]) {
         const char *w = box_weights[cp - 0x2500];
         for (int d = 0; d < 4; d++) box_segment(fb, x, y, cw, ch, s, d, w[d] - '0', fg);
@@ -212,7 +306,7 @@ static void draw_missing(struct fb *fb, int x, int y, int cw, int ch, int s, rgb
 }
 
 static void draw_text(struct fb *fb, int x, int y, int s, const char *txt, rgb fg) {
-    for (; *txt; txt++, x += 8 * s) (void)draw_font_glyph(fb, x, y, s, (unsigned char)*txt, fg, false);
+    for (; *txt; txt++, x += 8 * s) (void)draw_font_glyph(fb, x, y, s, 1, (unsigned char)*txt, fg, false);
 }
 
 /* ---- cells ------------------------------------------------------------------ */
@@ -245,12 +339,17 @@ static void draw_cell(struct fb *fb, const struct hold_snapshot *snap, int r, in
     int x = ox + c * cw, y = oy + r * ch;
     fill(fb, x, y, cw * span, ch, bg);
     uint32_t cp = cell->ch[0];
-    if (cp && cp != ' ') {
+    int emoji = span == 2 ? emoji_find(cp) : -1;
+    if (emoji >= 0) {
+        draw_emoji(fb, x, y, cw * 2, ch, emoji, fg); /* its variation selector / modifiers add nothing drawable */
+    } else if (cp && cp != ' ' && !default_ignorable(cp)) {
         bool bold = cell->attrs & HOLD_ATTR_BOLD;
         if (!draw_procedural(fb, x, y, cw * span, ch, s, cp, fg)) {
-            if (draw_font_glyph(fb, x, y, s, cp, fg, bold)) {
+            if (draw_font_glyph(fb, x, y, s, span, cp, fg, bold)) {
                 for (int k = 1; k < HOLD_CELL_CHARS && cell->ch[k]; k++)
-                    (void)draw_font_glyph(fb, x, y + combining_shift(cp, cell->ch[k]) * s, s, cell->ch[k], fg, bold);
+                    if (!default_ignorable(cell->ch[k]))
+                        (void)draw_font_glyph(fb, x, y + combining_shift(cp, cell->ch[k]) * s, s, span, cell->ch[k], fg,
+                                              bold);
             } else {
                 draw_missing(fb, x, y, cw * span, ch, s, fg);
             }
@@ -538,21 +637,19 @@ static int write_chunk(FILE *f, const char *type, const uint8_t *data, size_t n)
     return 0;
 }
 
-static int write_png(const struct fb *fb, FILE *f) {
+/* Filters the framebuffer in place (it is laid out as PNG scanlines), so the
+ * image is held once, not twice: a 1000x1000 screen is 384 MB of pixels. */
+static int write_png(struct fb *fb, FILE *f) {
     crc_init();
     size_t stride = (size_t)fb->w * 3 + 1;
-    uint8_t *raw = malloc(stride * fb->h);
-    if (!raw) return -1;
     for (int y = 0; y < fb->h; y++) {
-        uint8_t *row = raw + stride * y;
-        const uint8_t *src = fb->px + (size_t)y * fb->w * 3;
-        row[0] = 1; /* Sub filter: flat runs become zeros */
-        for (size_t i = 0; i < (size_t)fb->w * 3; i++) row[1 + i] = (uint8_t)(src[i] - (i >= 3 ? src[i - 3] : 0));
+        uint8_t *row = fb_row(fb, y);
+        row[-1] = 1; /* Sub filter: flat runs become zeros; right to left keeps the left neighbor intact */
+        for (size_t i = (size_t)fb->w * 3; i-- > 3;) row[i] = (uint8_t)(row[i] - row[i - 3]);
     }
     uint8_t *z = NULL;
     size_t zn = 0;
-    int rc = zlib_compress(raw, stride * fb->h, &z, &zn);
-    free(raw);
+    int rc = zlib_compress(fb->px, stride * fb->h, &z, &zn);
     if (rc != 0) return -1;
     static const uint8_t sig[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
     uint8_t ihdr[13] = {(uint8_t)(fb->w >> 24), (uint8_t)(fb->w >> 16), (uint8_t)(fb->w >> 8), (uint8_t)fb->w,
@@ -599,7 +696,7 @@ int hold_snapshot_write_png(const struct hold_snapshot *snap, const struct hold_
     int view_w = lm + snap->cols * cw;
     /* footer: a one-cell blank gutter, then the line */
     struct fb fb = {view_w > lm + foot_w ? view_w : lm + foot_w, tm + snap->rows * ch + (o->footer ? 2 * ch : 0), NULL};
-    fb.px = malloc((size_t)fb.w * fb.h * 3);
+    fb.px = malloc(((size_t)fb.w * 3 + 1) * fb.h);
     if (!fb.px) return -1;
     fill(&fb, 0, 0, fb.w, fb.h, THEME_BG);
     bool show_cursor = snap->modes.cursor_visible;
