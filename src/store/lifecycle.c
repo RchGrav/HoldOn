@@ -180,8 +180,8 @@ int hold_mark_run_finished(const struct hold_store *store, const char *id, int s
      * the call after our load above. The exit stamp owns only state/exit code;
      * re-read the user-owned fields from the current record so this write does
      * not clobber that update (lost update). Best-effort: on a transient read
-     * failure keep our loaded values. save/rename do not take the store
-     * lock, so a re-read-to-rename gap remains for them. */
+     * failure keep our loaded values. save/rename hold the same store lock
+     * across their read-modify-write, so neither update can be lost. */
     struct hold_run_record cur;
     char cur_path[HOLD_PATH_MAX];
     if (hold_load_record_by_id(store->record_dir, id, &cur, cur_path, sizeof(cur_path)) == 0) {

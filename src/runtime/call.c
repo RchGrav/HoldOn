@@ -209,14 +209,20 @@ static int protect_record_action(const struct hold_invocation *inv,
         free(targets);
         return hold_report_requires_root(target.id);
     }
+    /* The store lock serializes this read-modify-write with the exit stamp
+     * (hold_mark_run_finished), which otherwise could rewrite the record
+     * from a copy read before this save and drop the saved flag or name. */
+    int lock_fd = hold_store_lock(target.store.record_dir);
     if (new_name && run_name_exists_in_store(&target.store, new_name, target.id)) {
         fprintf(stderr, "grutty: error: call name '%s' already exists\n", new_name);
+        hold_store_unlock(lock_fd);
         free(targets);
         return 5;
     }
     struct hold_run_record r;
     char record_path[HOLD_PATH_MAX];
     if (hold_load_record_by_id(target.store.record_dir, target.id, &r, record_path, sizeof(record_path)) != 0) {
+        hold_store_unlock(lock_fd);
         free(targets);
         return 5;
     }
@@ -225,6 +231,7 @@ static int protect_record_action(const struct hold_invocation *inv,
     /* Saving is idempotent: an already-saved call needs no rewrite, but still
      * confirms the protected state on stderr and exits 0. */
     if (!new_name && r.saved) {
+        hold_store_unlock(lock_fd);
         hold_sig_note(inv, "grutty: saved %s (%s)\n", display_id, r.has_name ? r.name : display_id);
         hold_free_run_record(&r);
         free(targets);
@@ -236,6 +243,7 @@ static int protect_record_action(const struct hold_invocation *inv,
     if (hold_read_owned_file_no_symlink(record_path, &j) != 0 ||
         hold_json_get_argv_alloc(j, &argv, &argc) != 0) {
         fprintf(stderr, "grutty: error: failed to load call record for %s\n", target.id);
+        hold_store_unlock(lock_fd);
         free(j);
         hold_free_run_record(&r);
         free(targets);
@@ -255,6 +263,7 @@ static int protect_record_action(const struct hold_invocation *inv,
     if (target.store.kind == STORE_SYSTEM_MANAGED) {
         (void)hold_write_public_index_atomic(&target.store, &r, NULL);
     }
+    hold_store_unlock(lock_fd);
     if (new_name) {
         hold_sig_note(inv, "grutty: renamed %s to %s%s\n", display_id, new_name,
                       newly_saved ? " (saved)" : "");
