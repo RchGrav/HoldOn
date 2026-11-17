@@ -6,10 +6,18 @@ or a color screenshot; type keys, paste, and click; wait for it to settle;
 and let AI coding agents message each other. One static binary. No daemon.
 
 [![CI](https://github.com/RchGrav/HoldOn/actions/workflows/ci.yml/badge.svg)](https://github.com/RchGrav/HoldOn/actions/workflows/ci.yml)
-[![Multi-arch Release](https://github.com/RchGrav/HoldOn/actions/workflows/release.yml/badge.svg)](https://github.com/RchGrav/HoldOn/actions/workflows/release.yml)
-![Linux](https://img.shields.io/badge/Linux-x86__64%20%7C%20arm64%20%7C%20armhf%20%7C%20riscv64%20%7C%20mipsel-informational)
-![macOS](https://img.shields.io/badge/macOS-arm64%20%7C%20x86__64-informational)
-![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+[![Release build](https://github.com/RchGrav/HoldOn/actions/workflows/release.yml/badge.svg)](https://github.com/RchGrav/HoldOn/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/RchGrav/HoldOn?label=release&color=brightgreen)](https://github.com/RchGrav/HoldOn/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/RchGrav/HoldOn/total?color=blue)](https://github.com/RchGrav/HoldOn/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/RchGrav/HoldOn?style=flat&logo=github)](https://github.com/RchGrav/HoldOn/stargazers)
+
+![Linux](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20arm64%20%C2%B7%20armhf%20%C2%B7%20riscv64%20%C2%B7%20mipsel-FCC624?logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20%C2%B7%20Intel-000000?logo=apple&logoColor=white)
+![Single static binary](https://img.shields.io/badge/single%20static%20binary-no%20dependencies-success)
+![No daemon](https://img.shields.io/badge/daemon-none-success)
+![Written in C11](https://img.shields.io/badge/C11-~12k%20lines-00599C?logo=c&logoColor=white)
+[![Works with AI agents](https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Aider%20%C2%B7%20any%20shell%20agent-8A2BE2)](#give-your-agent-hold)
 
 ![An agent drove vim through hold: it clicked inside "world", changed the word, and saved. The ruler marks the cursor in red and the last click in cyan.](docs/images/vim-driven.png)
 
