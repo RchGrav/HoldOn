@@ -91,7 +91,8 @@ void hold_screen_discard_output(struct hold_screen *s);
  * hold_screen_send_mouse: action is "press", "release", "click" (press then
  * release), "move", "drag", "scroll-up" or "scroll-down"; button 1-3; row and
  * col zero-indexed. Returns 1 if the program has mouse reporting off (nothing
- * was encoded), 0 on success, -1 on a bad action. */
+ * was encoded), 2 if the program's legacy encoding could not express the
+ * position (clamped to cell 222), 0 on success, -1 on a bad action. */
 int hold_screen_send_key(struct hold_screen *s, const char *name);
 void hold_screen_send_paste(struct hold_screen *s, const char *text, size_t n);
 int hold_screen_send_mouse(struct hold_screen *s, const char *action, int button, int row, int col);

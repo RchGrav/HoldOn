@@ -229,12 +229,15 @@ int hold_screen_send_mouse(struct hold_screen *s, const char *action, int button
     if (col < 0) col = 0;
     if (row >= rows) row = rows - 1;
     if (col >= cols) col = cols - 1;
+    /* The legacy byte encoding stops at cell 223 (one byte, offset 33);
+     * libvterm clamps silently, so report it. */
+    bool clamped = s->state->mouse_protocol == MOUSE_X10 && (col > 222 || row > 222);
     if (button < 1 || button > 3) button = 1;
     if (!strcmp(action, "scroll-up") || !strcmp(action, "scroll-down")) {
         vterm_mouse_move(s->vt, row, col, VTERM_MOD_NONE);
         int b = action[7] == 'u' ? 4 : 5;
         vterm_mouse_button(s->vt, b, true, VTERM_MOD_NONE);
-        return 0;
+        return clamped ? 2 : 0;
     }
     vterm_mouse_move(s->vt, row, col, VTERM_MOD_NONE);
     if (!strcmp(action, "press")) vterm_mouse_button(s->vt, button, true, VTERM_MOD_NONE);
@@ -247,7 +250,7 @@ int hold_screen_send_mouse(struct hold_screen *s, const char *action, int button
     } else {
         return -1;
     }
-    return 0;
+    return clamped ? 2 : 0;
 }
 
 /* ---- snapshots ----------------------------------------------------------- */

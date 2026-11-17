@@ -442,6 +442,9 @@ int hold_cmd_send_action(const struct hold_invocation *inv,
             unsigned long long sv = seq ? strtoull(seq + 4, NULL, 10) : 0;
             if (mouse_op && strstr((char *)reply, "mouse=off"))
                 fprintf(stderr, "hold: note: %s has mouse reporting off; the mouse event was not delivered\n", t.label);
+            if (mouse_op && strstr((char *)reply, "mouse=clamped"))
+                fprintf(stderr, "hold: note: %s uses the legacy mouse encoding, which cannot reach past column/row 222; "
+                                "the event landed at the edge\n", t.label);
             if (print_seq) printf("%llu\n", sv);
             if (wait_ms >= 0) {
                 char args[160];

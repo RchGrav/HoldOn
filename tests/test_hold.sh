@@ -404,6 +404,8 @@ print_timeout_diagnostics() {
 
 run_test() {
   local desc="$1" fn="$2" rc="" pid deadline
+  # HOLD_TEST_ONLY=<regex>: run only tests whose function or description match.
+  if [ -n "${HOLD_TEST_ONLY:-}" ] && ! [[ "$fn $desc" =~ $HOLD_TEST_ONLY ]]; then return 0; fi
   echo "RUN: $desc"
   new_env || { fail "$desc"; return; }
   export HOME TEST_ROOT HOLD_BIN HOLD_REAL_BIN HOLD_TEST_SYSTEM_STATE_DIR ROOT_HOME ACTOR_HOME
@@ -3659,6 +3661,97 @@ test_msg_between_calls() {
   "$HOLD_BIN" end lead worker >/dev/null 2>&1 || true
 }
 
+# A TTY call gets a usable TERM when the launcher had none (cron, CI), but an
+# explicit -e TERM=... wins and plain calls are left alone.
+test_tty_call_defaults_term() {
+  # /usr/bin/env directly: some /bin/sh (macOS) set TERM=dumb themselves.
+  env -u TERM "$HOLD_BIN" -dt --name t1 -- /usr/bin/env >/dev/null || return 1
+  TERM=dumb "$HOLD_BIN" -dt --name t2 -- /usr/bin/env >/dev/null || return 1
+  env -u TERM "$HOLD_BIN" -dt -e TERM=vt100 --name t3 -- /usr/bin/env >/dev/null || return 1
+  env -u TERM "$HOLD_BIN" -d --name t4 -- /usr/bin/env >/dev/null || return 1
+  for c in t1 t2 t3 t4; do "$HOLD_BIN" wait "$c" --timeout 5000 >/dev/null || return 1; done
+  # logs, not peek: the environment can scroll past the 24-row screen
+  "$HOLD_BIN" logs t1 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || { "$HOLD_BIN" logs t1 >&2; return 1; }
+  "$HOLD_BIN" logs t2 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || return 1
+  "$HOLD_BIN" logs t3 | tr -d '\r' | grep -qx 'TERM=vt100' || return 1
+  ! "$HOLD_BIN" logs t4 | grep -q '^TERM=' || return 1
+}
+
+# Arrow keys and mouse events move a real program's cursor (vim, mouse=a).
+test_cursor_control_keys_and_mouse() {
+  command -v vim >/dev/null 2>&1 || skip "vim not installed"
+  seq -f 'line %g of a file long enough to click anywhere on it' 1 60 >"$TEST_ROOT/f.txt"
+  "$HOLD_BIN" -dt --name v -- vim -u NONE -N -i NONE -c 'set mouse=a' -c 'set ttymouse=sgr' "$TEST_ROOT/f.txt" >/dev/null || return 1
+  "$HOLD_BIN" wait v --idle 400 --timeout 8000 || return 1
+  "$HOLD_BIN" peek v --json | grep -q '"mouse": "drag"' || { "$HOLD_BIN" peek v --json >&2; return 1; }
+  "$HOLD_BIN" send v -k Down -k Down -k Right -k Right -k Right --wait 200 || return 1
+  "$HOLD_BIN" peek v --json | grep -q '"cursor": {"row": 2, "col": 3,' || { "$HOLD_BIN" peek v --json | grep cursor >&2; return 1; }
+  "$HOLD_BIN" send v --mouse click,20,10 --wait 200 || return 1
+  "$HOLD_BIN" peek v --json | grep -q '"cursor": {"row": 10, "col": 20,' || return 1
+  "$HOLD_BIN" send v --mouse press,5,3 --mouse drag,30,5 --mouse release,30,5 --wait 300 || return 1
+  "$HOLD_BIN" peek v | tail -1 | grep -q -- '-- VISUAL --' || { "$HOLD_BIN" peek v | tail -2 >&2; return 1; }
+  "$HOLD_BIN" send v -k Escape --mouse scroll-down,10,10 --wait 300 || return 1
+  "$HOLD_BIN" peek v | head -1 | grep -qv '^line 1 ' || return 1
+  "$HOLD_BIN" send v ':q!' --enter || return 1
+  "$HOLD_BIN" wait v --timeout 5000 >/dev/null || return 1
+}
+
+# Keys arrive as exact xterm bytes, one write per key, in both cursor modes.
+test_keys_exact_bytes_one_write_each() {
+  cat >"$TEST_ROOT/keybytes.py" <<'PY'
+import os, sys, tty, termios
+fd = sys.stdin.fileno()
+if sys.argv[1] == "app":
+    sys.stdout.write("\033[?1h\033=")
+sys.stdout.write("keys ready\r\n"); sys.stdout.flush()
+tty.setraw(fd)
+while True:
+    chunk = os.read(fd, 64)
+    sys.stdout.write("%s\r\n" % chunk.hex()); sys.stdout.flush()
+    if chunk == b"Q": break
+PY
+  keys="Enter Backspace C-h Tab S-Tab Escape C-a C-c C-z M-x M-Enter Up Home C-Left F1 F12 C-Space"
+  want_normal="0d 7f 08 09 1b5b5a 1b 01 03 1a 1b78 1b0d 1b5b41 1b5b48 1b5b313b3544 1b4f50 1b5b32347e 00"
+  want_app="0d 7f 08 09 1b5b5a 1b 01 03 1a 1b78 1b0d 1b4f41 1b4f48 1b5b313b3544 1b4f50 1b5b32347e 00"
+  for mode in normal app; do
+    "$HOLD_BIN" -dt --name "kb$mode" -- python3 "$TEST_ROOT/keybytes.py" "$mode" >/dev/null || return 1
+    "$HOLD_BIN" wait "kb$mode" --match 'keys ready' --timeout 5000 || return 1
+    for k in $keys; do "$HOLD_BIN" send "kb$mode" -k "$k" || return 1; done
+    "$HOLD_BIN" send "kb$mode" Q || return 1
+    "$HOLD_BIN" wait "kb$mode" --timeout 5000 >/dev/null || return 1
+    got=$("$HOLD_BIN" logs "kb$mode" | tr -d '\r' | sed -n '2,18p' | tr '\n' ' ' | sed 's/ $//')
+    if [ "$mode" = normal ]; then want=$want_normal; else want=$want_app; fi
+    [ "$got" = "$want" ] || { echo "$mode: got  $got" >&2; echo "$mode: want $want" >&2; return 1; }
+  done
+}
+
+# A dialog-style form driven by keyboard only: Down, Space, Tab, Tab,
+# Shift+Tab back to <Ok>, Enter -> the checklist answers "2".
+test_whiptail_form_by_keyboard() {
+  command -v whiptail >/dev/null 2>&1 || skip "whiptail not installed"
+  "$HOLD_BIN" -dt --name wt -- /bin/sh -c 'r=$(whiptail --checklist "Select options:" 15 40 3 1 "Option A" off 2 "Option B" off 3 "Option C" off 3>&1 1>&2 2>&3); echo "rc=$? RESULT:$r"; sleep 20' >/dev/null || return 1
+  "$HOLD_BIN" wait wt --match 'Option C' --timeout 5000 || return 1
+  "$HOLD_BIN" wait wt --idle 300 --timeout 3000 || return 1
+  "$HOLD_BIN" send wt -k Down -k Space --wait 200 || return 1
+  "$HOLD_BIN" send wt -k Tab -k Tab -k S-Tab --wait 200 || return 1
+  "$HOLD_BIN" send wt -k Enter || return 1
+  "$HOLD_BIN" wait wt --match 'RESULT' --timeout 5000 || return 1
+  "$HOLD_BIN" peek wt | grep -qF 'rc=0 RESULT:"2"' || { "$HOLD_BIN" peek wt >&2; return 1; }
+  "$HOLD_BIN" end wt >/dev/null 2>&1 || true
+}
+
+# The legacy byte mouse encoding cannot reach past cell 222: send says so.
+test_send_mouse_legacy_clamp_is_reported() {
+  "$HOLD_BIN" -dt --name lm -- /bin/sh -c 'printf "\033[?1000hready\n"; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait lm --match ready --timeout 5000 || return 1
+  "$HOLD_BIN" resize lm 300 30 || return 1
+  "$HOLD_BIN" send lm --mouse click,100,2 2>"$TEST_ROOT/lm1.err" || return 1
+  ! grep -q 'legacy mouse encoding' "$TEST_ROOT/lm1.err" || return 1
+  "$HOLD_BIN" send lm --mouse click,250,2 2>"$TEST_ROOT/lm2.err" || return 1
+  grep -q 'legacy mouse encoding' "$TEST_ROOT/lm2.err" || { cat "$TEST_ROOT/lm2.err" >&2; return 1; }
+  "$HOLD_BIN" end lm >/dev/null 2>&1 || true
+}
+
 # ---- the screen verbs: peek / send / wait / resize -------------------------
 
 # A TTY call's screen reads back as plain text, with a ruler, and as JSON.
@@ -3983,6 +4076,11 @@ run_test "send --mouse to a program without mouse reporting is reported" test_se
 run_test "calls see HOLD_CALL_ID, HOLD_CALL_NAME, HOLD_CALL_PARENT" test_call_identity_environment
 run_test "attach repaints the live screen" test_attach_repaints_live_screen
 run_test "msg delivers between calls and verifies the sender" test_msg_between_calls
+run_test "TTY calls default TERM when the launcher has none" test_tty_call_defaults_term
+run_test "arrow keys and mouse move a real program's cursor" test_cursor_control_keys_and_mouse
+run_test "keys arrive as exact xterm bytes, one write each" test_keys_exact_bytes_one_write_each
+run_test "a whiptail form is driven by keyboard alone" test_whiptail_form_by_keyboard
+run_test "send reports a clamped legacy mouse event" test_send_mouse_legacy_clamp_is_reported
 
 echo "----------------------------------------------------------------"
 echo "summary: $PASSES passed, $FAILS failed, $SKIPS skipped"

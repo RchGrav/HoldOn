@@ -422,7 +422,7 @@ static void handle_peek(struct broker *b, struct control_client *c) {
 
 static void handle_send(struct broker *b, struct control_client *c, char *ops) {
     uint64_t seq = b->output_seq;
-    bool mouse_off = false;
+    bool mouse_off = false, mouse_clamped = false;
     if (b->target_done) {
         control_replyf(c, "error the call has ended\n");
         return;
@@ -463,6 +463,7 @@ static void handle_send(struct broker *b, struct control_client *c, char *ops) {
                 return;
             }
             if (mr == 1) mouse_off = true;
+            if (mr == 2) mouse_clamped = true;
             b->have_mouse = true;
             b->mouse_row = (uint16_t)(row < 0 ? 0 : row);
             b->mouse_col = (uint16_t)(col < 0 ? 0 : col);
@@ -473,7 +474,8 @@ static void handle_send(struct broker *b, struct control_client *c, char *ops) {
         }
         line = nl ? nl + 1 : NULL;
     }
-    control_replyf(c, "ok seq=%" PRIu64 "%s\n", seq, mouse_off ? " mouse=off" : "");
+    control_replyf(c, "ok seq=%" PRIu64 "%s%s\n", seq, mouse_off ? " mouse=off" : "",
+                   mouse_clamped ? " mouse=clamped" : "");
 }
 
 static void handle_resize(struct broker *b, struct control_client *c, const char *args) {

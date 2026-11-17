@@ -97,6 +97,16 @@ static void test_paste_and_mouse(void) {
     CHECK(hold_screen_send_mouse(s, "click", 1, 2, 5) == 0, "mouse on");
     take(s, out, sizeof(out));
     CHECK(!strcmp(out, "\033[<0;6;3M\033[<0;6;3m"), "SGR click '%s'", out);
+    hold_screen_resize(s, 10, 300);
+    feed(s, "\033[?1006l"); /* back to the legacy byte encoding */
+    CHECK(hold_screen_send_mouse(s, "click", 1, 2, 100) == 0, "legacy encoding fits col 100");
+    take(s, out, sizeof(out));
+    CHECK(hold_screen_send_mouse(s, "click", 1, 2, 250) == 2, "legacy encoding past 222 reports clamping");
+    take(s, out, sizeof(out));
+    feed(s, "\033[?1006h");
+    CHECK(hold_screen_send_mouse(s, "click", 1, 2, 250) == 0, "SGR reaches col 250");
+    take(s, out, sizeof(out));
+    CHECK(!strcmp(out, "\033[<0;251;3M\033[<0;251;3m"), "SGR col 250 '%s'", out);
     struct hold_screen_modes m;
     hold_screen_modes(s, &m);
     CHECK(m.mouse == HOLD_MOUSE_CLICK && m.mouse_sgr && m.bracketed_paste, "modes reported");

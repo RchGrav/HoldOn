@@ -78,9 +78,10 @@ static struct {
     char name[ALIAS_MAX_LEN + 1];
     char parent[ALIAS_MAX_LEN + 1];
     bool set;
+    bool tty;
 } g_child_identity;
 
-static void child_identity_prepare(const char *id, const char *name) {
+static void child_identity_prepare(const char *id, const char *name, bool tty) {
     memset(&g_child_identity, 0, sizeof(g_child_identity));
     snprintf(g_child_identity.id, sizeof(g_child_identity.id), "%s", id ? id : "");
     snprintf(g_child_identity.name, sizeof(g_child_identity.name), "%s", name ? name : "");
@@ -89,6 +90,17 @@ static void child_identity_prepare(const char *id, const char *name) {
     if (parent && strlen(parent) < sizeof(g_child_identity.parent) && strcmp(parent, g_child_identity.name) != 0)
         snprintf(g_child_identity.parent, sizeof(g_child_identity.parent), "%s", parent);
     g_child_identity.set = g_child_identity.id[0] != '\0';
+    g_child_identity.tty = tty;
+}
+
+/* A TTY call runs on Hold's xterm-compatible terminal: when the launcher had
+ * no usable TERM (cron, CI, systemd: unset or "dumb"), say so, as docker run
+ * -t does. Applied before the recipe env, so an explicit -e TERM=... wins. */
+static int apply_default_term(void) {
+    if (!g_child_identity.tty) return 0;
+    const char *term = getenv("TERM");
+    if (term && *term && strcmp(term, "dumb") != 0) return 0;
+    return setenv("TERM", "xterm-256color", 1);
 }
 
 static int apply_child_identity(void) {
@@ -108,6 +120,7 @@ static int apply_child_env(int envc, char **env, bool clean_base) {
         if (clear_process_environment() != 0) return -1;
         if (setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0) return -1;
     }
+    if (apply_default_term() != 0) return -1;
     for (int i = 0; i < envc; i++) {
         const char *entry = env ? env[i] : NULL;
         char key[256];
@@ -624,7 +637,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         launch_die(&u, "hold: pipe failed");
     }
 
-    child_identity_prepare(id, run_name);
+    child_identity_prepare(id, run_name, console_mode);
     pid_t pid = fork();
     if (pid < 0) {
         launch_die(&u, "hold: fork failed");
