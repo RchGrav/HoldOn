@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-HOLD_REAL_BIN="${HOLD_BIN:-./grutty}"
+HOLD_REAL_BIN="${HOLD_BIN:-./hold}"
 case "$HOLD_REAL_BIN" in
   /*) ;;
   *) HOLD_REAL_BIN="$PWD/$HOLD_REAL_BIN" ;;
@@ -235,7 +235,7 @@ as_sudo_from_user() {
 }
 
 write_user_actor_wrapper() {
-  cat > "$TEST_ROOT/user-grutty" <<'SH'
+  cat > "$TEST_ROOT/user-hold" <<'SH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 env_args=(
@@ -260,8 +260,8 @@ if [ "${HOLD_USER_ACTOR_NEEDS_SUDO:-0}" -eq 1 ]; then
 fi
 exec env "${env_args[@]}" "$HOLD_REAL_BIN" "$@"
 SH
-  chmod +x "$TEST_ROOT/user-grutty" || return 1
-  HOLD_BIN="$TEST_ROOT/user-grutty"
+  chmod +x "$TEST_ROOT/user-hold" || return 1
+  HOLD_BIN="$TEST_ROOT/user-hold"
   export HOLD_BIN
 }
 
@@ -297,7 +297,7 @@ new_env() {
 
 cleanup_env() {
   local store ids id sys_store
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   if [ -d "$store" ]; then
     ids=$(find "$store" -maxdepth 1 -type f -name '*.json' -exec basename {} .json \; 2>/dev/null || true)
     for id in $ids; do
@@ -318,8 +318,8 @@ cleanup_env() {
 }
 
 ensure_user_fixture_store() {
-  mkdir -p "$HOME/.local/state/grutty" || return 1
-  chmod 700 "$HOME" "$HOME/.local" "$HOME/.local/state" "$HOME/.local/state/grutty" 2>/dev/null || true
+  mkdir -p "$HOME/.local/state/hold" || return 1
+  chmod 700 "$HOME" "$HOME/.local" "$HOME/.local/state" "$HOME/.local/state/hold" 2>/dev/null || true
   if [ "$USER_ACTOR_NEEDS_SUDO" -eq 1 ]; then
     chown -R "$TEST_UID:$TEST_GID" "$HOME/.local" || return 1
   fi
@@ -455,7 +455,7 @@ setup_suite_actors
 require_tools
 
 extract_id() {
-  sed -n -e '/^[0-9a-f]\{12\}$/p' -e '/^[0-9a-f]\{64\}$/p' -e 's/^grutty: id=\([0-9a-f][0-9a-f]*\).*/\1/p' | head -n1 | cut -c1-12
+  sed -n -e '/^[0-9a-f]\{12\}$/p' -e '/^[0-9a-f]\{64\}$/p' -e 's/^hold: id=\([0-9a-f][0-9a-f]*\).*/\1/p' | head -n1 | cut -c1-12
 }
 
 find_prefixed_artifact() {
@@ -473,21 +473,21 @@ find_prefixed_artifact() {
 }
 
 record_path() {
-  local id="$1" store="${2:-$HOME/.local/state/grutty}"
+  local id="$1" store="${2:-$HOME/.local/state/hold}"
   find_prefixed_artifact "$store" "$id" ".json"
 }
 
 log_path() {
-  local id="$1" store="${2:-$HOME/.local/state/grutty}"
+  local id="$1" store="${2:-$HOME/.local/state/hold}"
   find_prefixed_artifact "$store" "$id" ".log"
 }
 
 record_exists() {
-  record_path "$1" "${2:-$HOME/.local/state/grutty}" >/dev/null 2>&1
+  record_path "$1" "${2:-$HOME/.local/state/hold}" >/dev/null 2>&1
 }
 
 log_exists() {
-  log_path "$1" "${2:-$HOME/.local/state/grutty}" >/dev/null 2>&1
+  log_path "$1" "${2:-$HOME/.local/state/hold}" >/dev/null 2>&1
 }
 
 root_find_prefixed_artifact() {
@@ -524,19 +524,19 @@ root_log_exists() {
 }
 
 record_pgid() {
-  local id="$1" store="${2:-$HOME/.local/state/grutty}" record
+  local id="$1" store="${2:-$HOME/.local/state/hold}" record
   record=$(record_path "$id" "$store") || return 1
   sed -n 's/.*"pgid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$record" | head -n1
 }
 
 record_sid() {
-  local id="$1" store="${2:-$HOME/.local/state/grutty}" record
+  local id="$1" store="${2:-$HOME/.local/state/hold}" record
   record=$(record_path "$id" "$store") || return 1
   sed -n 's/.*"sid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$record" | head -n1
 }
 
 record_name() {
-  local id="$1" store="${2:-$HOME/.local/state/grutty}" record
+  local id="$1" store="${2:-$HOME/.local/state/hold}" record
   record=$(record_path "$id" "$store") || return 1
   sed -n 's/.*"name": "\([^"]*\)".*/\1/p' "$record" | head -n1
 }
@@ -544,7 +544,7 @@ record_name() {
 # Poll until a call's record reports the exited state, so purge/redial (which
 # require an ended call) do not race the supervisor's finish write.
 record_ended_soon() {
-  local id="$1" store="${2:-$HOME/.local/state/grutty}" record tries
+  local id="$1" store="${2:-$HOME/.local/state/hold}" record tries
   for tries in $(seq 1 60); do
     record=$(record_path "$id" "$store") || return 1
     grep -q '"state": "exited"' "$record" && return 0
@@ -640,13 +640,13 @@ test_exec_failure_no_record() {
   rc=$?
   set -e
   [ "$rc" -eq 1 ] || return 1
-  if [ -d "$HOME/.local/state/grutty" ]; then
-    count=$(find "$HOME/.local/state/grutty" -maxdepth 1 -type f -name '*.json' | wc -l)
+  if [ -d "$HOME/.local/state/hold" ]; then
+    count=$(find "$HOME/.local/state/hold" -maxdepth 1 -type f -name '*.json' | wc -l)
   else
     count=0
   fi
   [ "$count" -eq 0 ] || return 1
-  count=$(find "$HOME/.local/state/grutty" -maxdepth 1 -type f 2>/dev/null | wc -l)
+  count=$(find "$HOME/.local/state/hold" -maxdepth 1 -type f 2>/dev/null | wc -l)
   [ "$count" -eq 0 ]
 }
 
@@ -679,13 +679,13 @@ test_exec_replacement_remains_controllable() {
 
 test_corrupt_record_handling() {
   ensure_user_fixture_store || return 1
-  printf 'garbage\n' > "$HOME/.local/state/grutty/badbad00cafe0000000000000000000000000000000000000000000000000000.json" || return 1
+  printf 'garbage\n' > "$HOME/.local/state/hold/badbad00cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^badbad00cafe' "$TEST_ROOT/list.out"
   ! grep -Eq '^0[[:space:]]' "$TEST_ROOT/list.out"
   grep -q 'warning: skipping corrupt record badbad00cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
   "$HOLD_BIN" prune >/dev/null || return 1
-  [ ! -e "$HOME/.local/state/grutty/badbad00cafe0000000000000000000000000000000000000000000000000000.json" ]
+  [ ! -e "$HOME/.local/state/hold/badbad00cafe0000000000000000000000000000000000000000000000000000.json" ]
 }
 
 test_deep_json_record_rejected_not_crashed() {
@@ -696,7 +696,7 @@ test_deep_json_record_rejected_not_crashed() {
   json="${json}0"
   for i in $(seq 1 80); do json="${json}]"; done
   json="${json},\"version\":1,\"id\":\"abc12445cafe\",\"pid\":12345,\"pgid\":12345,\"sid\":12345,\"start_unix_ns\":0,\"argv\":[\"x\"],\"cmdline_display\":\"x\",\"uid\":0,\"gid\":0,\"proc_starttime_ticks\":0,\"exe_dev\":0,\"exe_ino\":0}"
-  printf '%s\n' "$json" > "$HOME/.local/state/grutty/abc12445cafe0000000000000000000000000000000000000000000000000000.json" || return 1
+  printf '%s\n' "$json" > "$HOME/.local/state/hold/abc12445cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^abc12445cafe' "$TEST_ROOT/list.out" || return 1
   grep -q 'warning: skipping corrupt record abc12445cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
@@ -707,7 +707,7 @@ test_symlinked_record_rejected() {
   cat > "$TEST_ROOT/record-target.json" <<'JSON'
 {"version":1,"id":"abc12545cafe0000000000000000000000000000000000000000000000000000","pid":12345,"pgid":12345,"sid":12345,"start_unix_ns":0,"argv":["x"],"cmdline_display":"x","uid":0,"gid":0,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0}
 JSON
-  ln -s "$TEST_ROOT/record-target.json" "$HOME/.local/state/grutty/abc12545cafe0000000000000000000000000000000000000000000000000000.json" || return 1
+  ln -s "$TEST_ROOT/record-target.json" "$HOME/.local/state/hold/abc12545cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^abc12545cafe' "$TEST_ROOT/list.out" || return 1
   grep -q 'warning: skipping corrupt record abc12545cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
@@ -735,7 +735,7 @@ test_symlinked_log_rejected() {
 
 test_invalid_pgid_record() {
   ensure_user_fixture_store || return 1
-  cat > "$HOME/.local/state/grutty/abc12345cafe0000000000000000000000000000000000000000000000000000.json" <<'JSON'
+  cat > "$HOME/.local/state/hold/abc12345cafe0000000000000000000000000000000000000000000000000000.json" <<'JSON'
 {"version":1,"id":"abc12345cafe0000000000000000000000000000000000000000000000000000","pid":12345,"pgid":0,"sid":12345,"start_unix_ns":0,"argv":["x"],"cmdline_display":"x","uid":0,"gid":0,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0}
 JSON
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
@@ -744,10 +744,10 @@ JSON
 
 test_orphan_log_cleanup() {
   ensure_user_fixture_store || return 1
-  : > "$HOME/.local/state/grutty/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" || return 1
-  : > "$HOME/.local/state/grutty/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" || return 1
+  : > "$HOME/.local/state/hold/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" || return 1
+  : > "$HOME/.local/state/hold/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" || return 1
   "$HOLD_BIN" prune >/dev/null || return 1
-  [ ! -e "$HOME/.local/state/grutty/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" ] && [ ! -e "$HOME/.local/state/grutty/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" ]
+  [ ! -e "$HOME/.local/state/hold/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" ] && [ ! -e "$HOME/.local/state/hold/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" ]
 }
 
 test_id_sanitization() {
@@ -838,11 +838,11 @@ test_stop_multiple_ids() {
 test_argument_edges() {
   local rc out
   set +e
-  printf '' | "$HOLD_BIN" >"$TEST_ROOT/bare-grutty.out" 2>"$TEST_ROOT/bare-grutty.err"
+  printf '' | "$HOLD_BIN" >"$TEST_ROOT/bare-hold.out" 2>"$TEST_ROOT/bare-hold.err"
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/bare-grutty.out" "$TEST_ROOT/bare-grutty.err" >&2; return 1; }
-  grep -q 'PLACE A CALL' "$TEST_ROOT/bare-grutty.out" || { cat "$TEST_ROOT/bare-grutty.out" >&2; return 1; }
+  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/bare-hold.out" "$TEST_ROOT/bare-hold.err" >&2; return 1; }
+  grep -q 'PLACE A CALL' "$TEST_ROOT/bare-hold.out" || { cat "$TEST_ROOT/bare-hold.out" >&2; return 1; }
   set +e
   "$HOLD_BIN" purge -all >/dev/null 2>"$TEST_ROOT/prune-flag.err"
   rc=$?
@@ -859,7 +859,7 @@ test_argument_edges() {
   "$HOLD_BIN" help --help >/dev/null || return 1
   "$HOLD_BIN" help targets | grep -q 'call id, leading id prefix, or call name' || return 1
   "$HOLD_BIN" help scripting | grep -q 'Exit codes:' || return 1
-  "$HOLD_BIN" end -h | grep -q 'usage: grutty end' || return 1
+  "$HOLD_BIN" end -h | grep -q 'usage: hold end' || return 1
   out=$("$HOLD_BIN" --version) || return 1
   printf '%s\n' "$out" | grep -Eq '^(dev(-[0-9a-f]{7,40}(-dirty)?)?|[0-9a-f]{7,40}|v?[0-9]+\.[0-9]+\.[0-9]+.*)$'
   set +e
@@ -941,7 +941,7 @@ test_persistent_stale_records() {
   out=$(HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" -d bash -c 'echo stale-line; sleep 0.2' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   stale_log=$(log_path "$id" "$store") || return 1
   [ -f "$stale_log" ] || return 1
   HOLD_BOOT_ID_PATH="$bootfile" "$HOLD_BIN" list >/dev/null || return 1
@@ -1024,7 +1024,7 @@ test_console_does_not_require_external_attach_tool() {
     return 1
   }
   grep -q 'native:ping' "$TEST_ROOT/console-native.out" || { cat "$TEST_ROOT/console-native.out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record=$(record_path "$id" "$store") || return 1
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   [ -n "$sock" ] || { cat "$record" >&2; return 1; }
@@ -1055,7 +1055,7 @@ test_console_round_trip_and_log_tee() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record=$(record_path "$id" "$store") || return 1
   grep -q '"console_sock": "' "$record" || { cat "$record" >&2; return 1; }
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
@@ -1088,7 +1088,7 @@ test_console_exit_code_is_recorded() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record=$(record_path "$id" "$store") || return 1
 
   set +e
@@ -1114,7 +1114,7 @@ test_console_exit_code_is_recorded() {
 }
 
 test_end_console_call_signals_target() {
-  # 'grutty end' on a console call must end the HELD group, not the broker. The
+  # 'hold end' on a console call must end the HELD group, not the broker. The
   # target ignores SIGHUP so an incidental PTY hangup cannot masquerade as the
   # group signal: under the pre-anchoring bug the record named the broker, the
   # group survived, and the record fabricated Exited (0). No red test caught this
@@ -1127,11 +1127,11 @@ test_end_console_call_signals_target() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record=$(record_path "$id" "$store") || return 1
   pgid=$(record_pgid "$id" "$store") || return 1
   [ -n "$pgid" ] || return 1
-  # Target-anchoring: pid==pgid==sid names the held sh/sleep, not a grutty broker.
+  # Target-anchoring: pid==pgid==sid names the held sh/sleep, not a hold broker.
   # Under the bug the recorded group is the broker's and holds no sleep.
   ps -o args= -g "$pgid" >"$TEST_ROOT/end-signal-group.txt" 2>/dev/null || true
   grep -q 'sleep 45' "$TEST_ROOT/end-signal-group.txt" || {
@@ -1174,7 +1174,7 @@ test_end_console_call_escalates_to_kill() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record=$(record_path "$id" "$store") || return 1
   pgid=$(record_pgid "$id" "$store") || return 1
   [ -n "$pgid" ] || return 1
@@ -1191,7 +1191,7 @@ test_end_console_call_escalates_to_kill() {
 }
 
 test_console_broker_term_forwards_to_target() {
-  # A raw SIGTERM to the broker pid itself (not routed through 'grutty end') must
+  # A raw SIGTERM to the broker pid itself (not routed through 'hold end') must
   # forward to the held group and clean up the socket. The record no longer names
   # the broker, so without the forwarder a bare kill would orphan the target.
   local out id store record pgid sock broker ok _
@@ -1201,7 +1201,7 @@ test_console_broker_term_forwards_to_target() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record=$(record_path "$id" "$store") || return 1
   pgid=$(record_pgid "$id" "$store") || return 1
   [ -n "$pgid" ] || return 1
@@ -1234,7 +1234,7 @@ test_console_socket_lives_in_store_dir() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record=$(record_path "$id" "$store") || return 1
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   case "$sock" in
@@ -1287,7 +1287,7 @@ test_console_target_runs_in_caller_cwd() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   logf=$(log_path "$id" "$store") || return 1
   ok=0
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
@@ -1349,7 +1349,7 @@ int main(int argc, char **argv) {
   const char *expect = argv[3];
 
   /* Connect via a short name relative to the socket's directory, mirroring
-   * grutty's own client, so a long store path stays within sun_path. */
+   * hold's own client, so a long store path stays within sun_path. */
   const char *slash = strrchr(sock_path, '/');
   if (!slash || !slash[1]) return 3;
   char dir[4096];
@@ -1438,7 +1438,7 @@ test_console_rejects_unrelated_peer_uid_before_replay() {
   # credential check must still reject it before replaying output or forwarding
   # input.
   chmod 0711 "$ACTOR_HOME" "$ACTOR_HOME/.local" "$ACTOR_HOME/.local/state" \
-    "$HOME/.local/state/grutty" "$HOME/.local/state/grutty/console" || return 1
+    "$HOME/.local/state/hold" "$HOME/.local/state/hold/console" || return 1
   chmod 0666 "$sock" || return 1
 
   helper=$(build_console_protocol_helper) || return 1
@@ -1470,7 +1470,7 @@ test_console_can_reattach_after_detach() {
   }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record=$(record_path "$id" "$store") || return 1
   sock=$(sed -n 's/.*"console_sock":[[:space:]]*"\([^"]*\)".*/\1/p' "$record" | head -n1)
   [ -n "$sock" ] || { cat "$record" >&2; return 1; }
@@ -1509,12 +1509,12 @@ test_save_marks_record_and_is_idempotent() {
   # First save: stdout empty, stderr confirms, record flagged.
   out=$("$HOLD_BIN" save "$id" 2>"$TEST_ROOT/save1.err") || { echo "save rc nonzero" >&2; cat "$TEST_ROOT/save1.err" >&2; return 1; }
   [ -z "$out" ] || { echo "save wrote to stdout: [$out]" >&2; return 1; }
-  grep -qF "grutty: saved $id ($name)" "$TEST_ROOT/save1.err" || { cat "$TEST_ROOT/save1.err" >&2; return 1; }
+  grep -qF "hold: saved $id ($name)" "$TEST_ROOT/save1.err" || { cat "$TEST_ROOT/save1.err" >&2; return 1; }
   grep -q '"saved": true' "$(record_path "$id")" || { echo "record not marked saved" >&2; return 1; }
   # Second save is idempotent: still exit 0, same note, no stdout.
   out=$("$HOLD_BIN" save "$name" 2>"$TEST_ROOT/save2.err") || { echo "idempotent save rc nonzero" >&2; return 1; }
   [ -z "$out" ] || { echo "idempotent save wrote to stdout: [$out]" >&2; return 1; }
-  grep -qF "grutty: saved $id ($name)" "$TEST_ROOT/save2.err" || { cat "$TEST_ROOT/save2.err" >&2; return 1; }
+  grep -qF "hold: saved $id ($name)" "$TEST_ROOT/save2.err" || { cat "$TEST_ROOT/save2.err" >&2; return 1; }
 }
 
 test_purge_sweep_skips_saved() {
@@ -1546,13 +1546,13 @@ test_purge_targeted_refuses_saved_exact_wording() {
   set +e; "$HOLD_BIN" purge "$name" >"$TEST_ROOT/refuse.out" 2>"$TEST_ROOT/refuse.err"; rc=$?; set -e
   [ "$rc" -eq 2 ] || { echo "targeted refusal rc=$rc (want 2)" >&2; cat "$TEST_ROOT/refuse.err" >&2; return 1; }
   [ ! -s "$TEST_ROOT/refuse.out" ] || { echo "refusal wrote to stdout" >&2; return 1; }
-  printf "grutty: '%s' is saved — purging a saved call requires --force\n  grutty purge %s --force\n" "$name" "$name" >"$TEST_ROOT/refuse.want"
+  printf "hold: '%s' is saved — purging a saved call requires --force\n  hold purge %s --force\n" "$name" "$name" >"$TEST_ROOT/refuse.want"
   diff -u "$TEST_ROOT/refuse.want" "$TEST_ROOT/refuse.err" || { echo "refusal wording mismatch (by name)" >&2; return 1; }
   # Refusal by id prefix: line 2 echoes exactly the prefix the user typed.
   pfx=$(printf '%s' "$id" | cut -c1-6)
   set +e; "$HOLD_BIN" purge "$pfx" 2>"$TEST_ROOT/refuse2.err"; rc=$?; set -e
   [ "$rc" -eq 2 ] || { echo "prefix refusal rc=$rc (want 2)" >&2; return 1; }
-  printf "grutty: '%s' is saved — purging a saved call requires --force\n  grutty purge %s --force\n" "$name" "$pfx" >"$TEST_ROOT/refuse2.want"
+  printf "hold: '%s' is saved — purging a saved call requires --force\n  hold purge %s --force\n" "$name" "$pfx" >"$TEST_ROOT/refuse2.want"
   diff -u "$TEST_ROOT/refuse2.want" "$TEST_ROOT/refuse2.err" || { echo "refusal wording mismatch (by prefix)" >&2; return 1; }
   record_exists "$id" || { echo "refused purge still removed the call" >&2; return 1; }
 }
@@ -1605,7 +1605,7 @@ test_rename_of_saved_call_keeps_protection() {
   grep -q '"saved": true' "$(record_path "$id")" || { echo "rename cleared the saved flag" >&2; return 1; }
   set +e; "$HOLD_BIN" purge keptsafe 2>"$TEST_ROOT/rename-refuse.err"; rc=$?; set -e
   [ "$rc" -eq 2 ] || { echo "renamed saved call not protected: rc=$rc" >&2; return 1; }
-  grep -qF "grutty: 'keptsafe' is saved" "$TEST_ROOT/rename-refuse.err" || { cat "$TEST_ROOT/rename-refuse.err" >&2; return 1; }
+  grep -qF "hold: 'keptsafe' is saved" "$TEST_ROOT/rename-refuse.err" || { cat "$TEST_ROOT/rename-refuse.err" >&2; return 1; }
   "$HOLD_BIN" purge keptsafe --force >/dev/null 2>&1 || true
 }
 
@@ -1673,7 +1673,7 @@ test_prune_by_id() {
   id1=$(printf '%s\n' "$out1" | extract_id)
   id2=$(printf '%s\n' "$out2" | extract_id)
   [ -n "$id1" ] && [ -n "$id2" ] || return 1
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   "$HOLD_BIN" prune "$id1" >/dev/null || return 1
   ! record_exists "$id1" "$store" && ! log_exists "$id1" "$store" || return 1
   record_exists "$id2" "$store" && log_exists "$id2" "$store"
@@ -1686,7 +1686,7 @@ test_prune_all_keeps_running() {
   id1=$(printf '%s\n' "$out1" | extract_id)
   id2=$(printf '%s\n' "$out2" | extract_id)
   [ -n "$id1" ] && [ -n "$id2" ] || return 1
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   "$HOLD_BIN" prune all >/dev/null || return 1
   record_exists "$id1" "$store" || return 1
   ! record_exists "$id2" "$store" || return 1
@@ -1757,7 +1757,7 @@ test_cap_flags_are_rejected() {
 
 test_docker_rm_removes_run_artifacts_after_exit() {
   local out id store json log
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   out=$("$HOLD_BIN" -d --rm -- /bin/sh -c 'echo rm-gone; sleep 0.3' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
@@ -1773,7 +1773,7 @@ test_docker_rm_removes_run_artifacts_after_exit() {
 
 test_env_flag_is_recipe_data_only() {
   local out id store fake record log
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   fake="$TEST_ROOT/fake-home"
   mkdir -p "$fake" || return 1
   out=$("$HOLD_BIN" -d -e HOME="$fake" -e HOLD_MARKER=recipe -- /bin/sh -c 'echo "home:$HOME marker:$HOLD_MARKER"' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
@@ -1781,7 +1781,7 @@ test_env_flag_is_recipe_data_only() {
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   record=$(record_path "$id" "$store") || { echo "-e HOME relocated the record store" >&2; return 1; }
   [ -f "$record" ] || { echo "-e HOME relocated the record store" >&2; return 1; }
-  [ ! -d "$fake/.local/state/grutty" ] || { echo "-e HOME leaked into grutty's own environment" >&2; return 1; }
+  [ ! -d "$fake/.local/state/hold" ] || { echo "-e HOME leaked into hold's own environment" >&2; return 1; }
   record_ended_soon "$id" || return 1
   log=$(log_path "$id" "$store") || return 1
   grep -q "home:$fake marker:recipe" "$log" || { cat "$log" >&2; return 1; }
@@ -1836,7 +1836,7 @@ JSON
   ! grep -q 'secret' "$TEST_ROOT/list.out"
 }
 
-# `grutty list` is the ledger: a user's own calls, live and past, by default, with
+# `hold list` is the ledger: a user's own calls, live and past, by default, with
 # a USER column naming the caller; -l/--live narrows it to the running ones.
 test_list_default_is_full_ledger_live_narrows() {
   local live_out ended_out live_id ended_id me
@@ -1862,7 +1862,7 @@ test_list_default_is_full_ledger_live_narrows() {
   "$HOLD_BIN" stop "$live_id" >/dev/null 2>&1 || true
 }
 
-# `grutty list <name>` narrows the ledger to the call whose NAME matches. Regression
+# `hold list <name>` narrows the ledger to the call whose NAME matches. Regression
 # for the filter matching the deleted profile-era alias field, which nothing set,
 # so a named lookup of a real call printed an empty table.
 test_list_name_filter_matches_call_name() {
@@ -1895,7 +1895,7 @@ JSON
   ! grep -q 'secret' "$TEST_ROOT/list.out"
 }
 
-# `grutty list -s/--system` (and the equivalent `--system list`) is exactly the
+# `hold list -s/--system` (and the equivalent `--system list`) is exactly the
 # redacted global view: no personal calls leak into it.
 test_system_list_is_redacted_global_only() {
   local out personal_id gid=beadfeed56780000000000000000000000000000000000000000000000000000 form
@@ -1953,7 +1953,7 @@ JSON
   "$HOLD_BIN" stop "$live_id" >/dev/null 2>&1 || true
 }
 
-# `grutty purge -s` as a normal user re-execs through sudo (so sudo can prompt),
+# `hold purge -s` as a normal user re-execs through sudo (so sudo can prompt),
 # passing exactly `<self> purge --system` (plus any state flags).
 test_purge_system_reexecs_through_sudo() {
   make_fake_sudo || return 1
@@ -1965,7 +1965,7 @@ test_purge_system_reexecs_through_sudo() {
   set -e
   grep -qx 'purge' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv missing 'purge'" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
   grep -qx -- '--system' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv missing '--system'" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
-  grep -q 'grutty' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv missing the self binary path" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
+  grep -q 'hold' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv missing the self binary path" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
   ! grep -qx -- '--all' "$HOLD_FAKE_SUDO_ARGV" || { echo "sudo argv carried an unrequested --all" >&2; cat "$HOLD_FAKE_SUDO_ARGV" >&2; return 1; }
   # -a is forwarded as a state widener when requested.
   : > "$HOLD_FAKE_SUDO_ARGV"
@@ -1984,8 +1984,8 @@ test_root_list_all_labels_owner_and_walks_homes() {
   # A fabricated personal store under a test home root, holding one call owned by
   # the invoking user (so its USER resolves via /etc/passwd). The record shape
   # mirrors the minimal valid record, with a live-looking pgid so it is a row.
-  mkdir -p "$homes/somebody/.local/state/grutty" || return 1
-  cat > "$homes/somebody/.local/state/grutty/aa11bb22cc330000000000000000000000000000000000000000000000000000.json" <<JSON
+  mkdir -p "$homes/somebody/.local/state/hold" || return 1
+  cat > "$homes/somebody/.local/state/hold/aa11bb22cc330000000000000000000000000000000000000000000000000000.json" <<JSON
 {"version":1,"id":"aa11bb22cc330000000000000000000000000000000000000000000000000000","pid":2,"pgid":2,"sid":2,"start_unix_ns":0,"argv":["peer-cmd"],"cmdline_display":"peer-cmd","uid":$uid,"gid":$uid,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0,"name":"peer_call"}
 JSON
   chmod -R 755 "$homes" || return 1
@@ -2107,9 +2107,9 @@ test_native_record_is_readable_when_hand_authored() {
   # renders; unknown/legacy keys are ignored, never fatal.
   local id store record logdir logpath idxpath ps_out
   id=fe4a4b8fbc063e25cd4bcb6798791b1dd03caca62f6a0b4c1304f28940992c52
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   mkdir -p "$store" || return 1
-  logdir="$HOME/.local/state/grutty-logs/$id"
+  logdir="$HOME/.local/state/hold-logs/$id"
   mkdir -p "$logdir" || return 1
   logpath="$logdir/$id.log"
   idxpath="$logpath.idx"
@@ -2165,7 +2165,7 @@ test_root_start_writes_system_store_and_public_unknown() {
   json=$(root_record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
   log=$(root_log_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs") || return 1
   public_json=$(record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public") || return 1
-  ! record_exists "$id" "$ROOT_HOME/.local/state/grutty" || return 1
+  ! record_exists "$id" "$ROOT_HOME/.local/state/hold" || return 1
   mode=$(root_file_mode "$json") || return 1
   [ "$mode" = 600 ] || return 1
   mode=$(root_file_mode "$log") || return 1
@@ -2219,7 +2219,7 @@ test_sudo_start_writes_system_store_with_invoking_metadata() {
   json=$(root_record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
   root_log_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/logs" || return 1
   record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
-  ! record_exists "$id" "$ACTOR_HOME/.local/state/grutty" || return 1
+  ! record_exists "$id" "$ACTOR_HOME/.local/state/hold" || return 1
   root_grep '"invoked_by_uid": '"$TEST_UID" "$json" || return 1
   root_grep '"invoked_by_gid": '"$TEST_GID" "$json" || return 1
   root_grep '"invoked_by_user": "'"$TEST_USER"'"' "$json" || return 1
@@ -2259,8 +2259,8 @@ assert_home_system_start_is_user_local() {
   local out="$1" id json log owner
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  json=$(root_record_path "$id" "$ACTOR_HOME/.local/state/grutty") || return 1
-  log=$(root_log_path "$id" "$ACTOR_HOME/.local/state/grutty") || return 1
+  json=$(root_record_path "$id" "$ACTOR_HOME/.local/state/hold") || return 1
+  log=$(root_log_path "$id" "$ACTOR_HOME/.local/state/hold") || return 1
   root_file_exists "$json" || return 1
   root_file_exists "$log" || return 1
   ! root_record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs" || return 1
@@ -2459,7 +2459,7 @@ test_ps_table_columns_do_not_shear() {
   "$HOLD_BIN" end ps-short ps-long >/dev/null 2>&1 || true
 }
 
-# grutty ports lists the bound listeners of a call's process group, one per line.
+# hold ports lists the bound listeners of a call's process group, one per line.
 test_ports_lists_bound_listener() {
   local out id ports_out tries rc
   [ "$(uname -s)" = Linux ] || skip "process observation (ports) is Linux-only"
@@ -2483,7 +2483,7 @@ s.bind(("127.0.0.1",0)); s.listen(); print(s.getsockname()[1]); time.sleep(30)' 
   "$HOLD_BIN" end ports-smoke >/dev/null 2>&1 || true
 }
 
-# grutty stats --no-stream prints one plain frame with the documented columns.
+# hold stats --no-stream prints one plain frame with the documented columns.
 test_stats_single_shot_shape() {
   local out id stats_out
   out=$("$HOLD_BIN" -d --name stats-smoke -- /bin/sh -c 'sleep 30' 2>&1) || return 1
@@ -2629,7 +2629,7 @@ test_docker_restart_policy_restarts_failures() {
 
 test_purge_never_follows_stored_paths() {
   local out id store json victim
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   victim="$TEST_ROOT/victim.file"
   printf 'victim' >"$victim"
   out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo x' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
@@ -2658,16 +2658,16 @@ test_usage_errors_go_to_stderr_and_help_names_both_views() {
   set -e
   [ "$rc" -eq 5 ] || { echo "flags-only rc=$rc want 5" >&2; return 1; }
   [ -z "$out" ] || { echo "usage error leaked to stdout" >&2; printf '%s\n' "$out" >&2; return 1; }
-  grep -q '^usage: grutty' "$TEST_ROOT/flags-only.err" || { cat "$TEST_ROOT/flags-only.err" >&2; return 1; }
+  grep -q '^usage: hold' "$TEST_ROOT/flags-only.err" || { cat "$TEST_ROOT/flags-only.err" >&2; return 1; }
   out=$("$HOLD_BIN" 2>/dev/null)
-  printf '%s\n' "$out" | grep -q 'grutty ps ' || { echo "help missing a distinct grutty ps line" >&2; return 1; }
+  printf '%s\n' "$out" | grep -q 'hold ps ' || { echo "help missing a distinct hold ps line" >&2; return 1; }
   printf '%s\n' "$out" | grep -q 'ps is an alias' && { echo "help still claims ps is an alias" >&2; return 1; }
   return 0
 }
 
 test_crash_leftover_tmp_does_not_block_rewrites() {
   local out id store
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   out=$("$HOLD_BIN" -d -- sleep 30 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
@@ -2683,7 +2683,7 @@ test_crash_leftover_tmp_does_not_block_rewrites() {
 
 test_purge_sweep_respects_creation_reserve() {
   local store fid
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   ensure_user_fixture_store || return 1
   fid=$(printf '1234567890abcdef%.0s' 1 2 3 4)
   echo orphan >"$store/$fid.log"
@@ -2899,7 +2899,7 @@ PY
   # CALL ID (the Docker-shaped COMMAND column ellipsizes the long temp path).
   id=$("$HOLD_BIN" list | awk 'NR==2 {print $1; exit}')
   [ -n "$id" ] || { "$HOLD_BIN" list >&2; return 1; }
-  record=$(record_path "$id") || { find "$HOME/.local/state/grutty" -maxdepth 1 -type f -print >&2 || true; return 1; }
+  record=$(record_path "$id") || { find "$HOME/.local/state/hold" -maxdepth 1 -type f -print >&2 || true; return 1; }
   grep -q '"console_sock": "' "$record" || { cat "$record" >&2; return 1; }
   "$HOLD_BIN" ps >"$TEST_ROOT/docker-tty-ps.out" || return 1
   grep -Eq "^$id[[:space:]]+.*Up " "$TEST_ROOT/docker-tty-ps.out" || { cat "$TEST_ROOT/docker-tty-ps.out" >&2; return 1; }
@@ -2945,11 +2945,11 @@ PY
 
 test_build_artifact_coexistence() {
   make clean >/dev/null || return 1
-  make grutty grutty STATIC_LDFLAGS= EXTRA_CPPFLAGS=-DHOLD_TESTING >/dev/null || return 1
-  [ -x ./grutty ] && [ -x ./grutty ] || return 1
-  make grutty-dynamic EXTRA_CPPFLAGS=-DHOLD_TESTING >/dev/null || return 1
-  [ -x ./grutty ] && [ -x ./grutty ] && [ -x ./grutty-dynamic ] || return 1
-  [ -e ./grutty ] && [ -e ./grutty ] && [ -e ./grutty-dynamic ]
+  make hold hold STATIC_LDFLAGS= EXTRA_CPPFLAGS=-DHOLD_TESTING >/dev/null || return 1
+  [ -x ./hold ] && [ -x ./hold ] || return 1
+  make hold-dynamic EXTRA_CPPFLAGS=-DHOLD_TESTING >/dev/null || return 1
+  [ -x ./hold ] && [ -x ./hold ] && [ -x ./hold-dynamic ] || return 1
+  [ -e ./hold ] && [ -e ./hold ] && [ -e ./hold-dynamic ]
 }
 
 test_concurrent_unique_ids() {
@@ -3000,7 +3000,7 @@ as_user_spoof_sudo() {
 root_safe_hold_copy() {
   local name="$1" dir path
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || return 1
-  ROOT_SAFE_HOLD_DIR="/usr/local/lib/grutty-test-$$"
+  ROOT_SAFE_HOLD_DIR="/usr/local/lib/hold-test-$$"
   dir="$ROOT_SAFE_HOLD_DIR/$(basename "$TEST_ROOT")"
   path="$dir/$name"
   as_root mkdir -p "$dir" || return 1
@@ -3092,7 +3092,7 @@ test_nonroot_ignores_spoofed_sudo_provenance() {
   out=$(as_user_spoof_sudo "$HOLD_REAL_BIN" -d true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  json=$(record_path "$id" "$ACTOR_HOME/.local/state/grutty") || true
+  json=$(record_path "$id" "$ACTOR_HOME/.local/state/hold") || true
   [ -e "$json" ] || { echo "spoofed-SUDO run did not land in the user store" >&2; return 1; }
   ! root_record_exists "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs" || { echo "spoofed SUDO_* escalated into the system store" >&2; return 1; }
   if grep -q '"invoked_via_sudo": true' "$json" 2>/dev/null; then
@@ -3183,19 +3183,19 @@ test_owned_command_exact_arity() {
   local rc
   set +e; "$HOLD_BIN" tail deadbeef extra >/dev/null 2>"$TEST_ROOT/tail-extra.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "tail extra: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'usage: grutty tail <target>' "$TEST_ROOT/tail-extra.err" || { cat "$TEST_ROOT/tail-extra.err" >&2; return 1; }
+  grep -q 'usage: hold tail <target>' "$TEST_ROOT/tail-extra.err" || { cat "$TEST_ROOT/tail-extra.err" >&2; return 1; }
 
   set +e; "$HOLD_BIN" console deadbeef extra >/dev/null 2>"$TEST_ROOT/console-extra.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "console extra: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'usage: grutty console <target>' "$TEST_ROOT/console-extra.err" || { cat "$TEST_ROOT/console-extra.err" >&2; return 1; }
+  grep -q 'usage: hold console <target>' "$TEST_ROOT/console-extra.err" || { cat "$TEST_ROOT/console-extra.err" >&2; return 1; }
 
   set +e; "$HOLD_BIN" purge deadbeef extra >/dev/null 2>"$TEST_ROOT/prune-extra.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "purge extra: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'usage: grutty purge' "$TEST_ROOT/prune-extra.err" || { cat "$TEST_ROOT/prune-extra.err" >&2; return 1; }
+  grep -q 'usage: hold purge' "$TEST_ROOT/prune-extra.err" || { cat "$TEST_ROOT/prune-extra.err" >&2; return 1; }
 
   set +e; "$HOLD_BIN" tail --all deadbeef >/dev/null 2>"$TEST_ROOT/tail-all.err"; rc=$?; set -e
   [ "$rc" -eq 5 ] || { echo "tail --all: rc=$rc (want 5)" >&2; return 1; }
-  grep -q 'usage: grutty tail <target>' "$TEST_ROOT/tail-all.err" || { cat "$TEST_ROOT/tail-all.err" >&2; return 1; }
+  grep -q 'usage: hold tail <target>' "$TEST_ROOT/tail-all.err" || { cat "$TEST_ROOT/tail-all.err" >&2; return 1; }
 
   "$HOLD_BIN" prune >/dev/null || { echo "prune with zero targets should remain valid" >&2; return 1; }
 }
@@ -3218,10 +3218,10 @@ test_print_over_all_and_multiple() {
 # ---------------------------------------------------------------------------
 
 # G1: --env-file feeds the recipe env (blank/comment lines skipped) without
-# touching grutty's own environment.
+# touching hold's own environment.
 test_env_file_populates_recipe_env() {
   local out id store fake envfile record log
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   fake="$TEST_ROOT/envfile-home"
   mkdir -p "$fake" || return 1
   envfile="$TEST_ROOT/recipe.env"
@@ -3236,7 +3236,7 @@ EOF
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   record=$(record_path "$id" "$store") || { echo "--env-file HOME relocated the record store" >&2; return 1; }
-  [ ! -d "$fake/.local/state/grutty" ] || { echo "--env-file leaked into grutty's own environment" >&2; return 1; }
+  [ ! -d "$fake/.local/state/hold" ] || { echo "--env-file leaked into hold's own environment" >&2; return 1; }
   record_ended_soon "$id" || return 1
   log=$(log_path "$id" "$store") || return 1
   grep -q "ef:alpha:beta home:$fake" "$log" || { cat "$log" >&2; return 1; }
@@ -3250,7 +3250,7 @@ EOF
 # spelling still loads as saved, so sweeps must skip it.
 test_legacy_saved_key_still_protects() {
   local store legacy_id victim_id
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   victim_id=$("$HOLD_BIN" -d true 2>&1 | extract_id) || return 1
   [ -n "$victim_id" ] || return 1
   record_ended_soon "$victim_id" || return 1
@@ -3349,16 +3349,16 @@ test_signal_delivers_to_group_after_leader_exit() {
   done
 }
 
-# G14: identity — `grutty attach <target>` is the primary spelling (console the
+# G14: identity — `hold attach <target>` is the primary spelling (console the
 # alias); it round-trips bytes and tees to the log exactly like console.
 test_attach_verb_matches_console() {
   local out id store logf out2 id2
   "$HOLD_BIN" help attach >"$TEST_ROOT/attach-help.out" || return 1
-  grep -q 'usage: grutty attach <target>' "$TEST_ROOT/attach-help.out" || { cat "$TEST_ROOT/attach-help.out" >&2; return 1; }
+  grep -q 'usage: hold attach <target>' "$TEST_ROOT/attach-help.out" || { cat "$TEST_ROOT/attach-help.out" >&2; return 1; }
   out=$("$HOLD_BIN" --console /bin/sh -c 'read line; echo "attach:$line"' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   printf 'ping\n' | "$HOLD_BIN" attach "$id" >"$TEST_ROOT/attach.out" 2>"$TEST_ROOT/attach.err" || {
     cat "$TEST_ROOT/attach.out" "$TEST_ROOT/attach.err" >&2
     return 1
@@ -3376,7 +3376,7 @@ test_attach_verb_matches_console() {
   "$HOLD_BIN" stop "$id2" >/dev/null || return 1
 }
 
-# G19: identity — 'plain output automatically when not a TTY': bare grutty logs
+# G19: identity — 'plain output automatically when not a TTY': bare hold logs
 # piped away dumps the raw log bytes, no viewer chrome, rc 0.
 test_logs_non_tty_auto_plain() {
   local out id
@@ -3392,7 +3392,7 @@ test_logs_non_tty_auto_plain() {
   diff -u "$TEST_ROOT/auto-plain.want" "$TEST_ROOT/auto-plain.out" || { echo "non-TTY logs output is not the raw log bytes" >&2; return 1; }
 }
 
-# G24: identity — `grutty list -u/--user`: your personal calls only, even under
+# G24: identity — `hold list -u/--user`: your personal calls only, even under
 # sudo (the invoking user's store, never root's), no global/redacted rows.
 test_list_user_scope_only_personal() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "root actor unavailable"
@@ -3429,11 +3429,11 @@ test_drop_alias_matches_prune() {
   id1=$(printf '%s\n' "$out1" | extract_id)
   id2=$(printf '%s\n' "$out2" | extract_id)
   [ -n "$id1" ] && [ -n "$id2" ] || return 1
-  store="$HOME/.local/state/grutty"
+  store="$HOME/.local/state/hold"
   record_ended_soon "$id1" || return 1
   record_ended_soon "$id2" || return 1
   "$HOLD_BIN" help drop >"$TEST_ROOT/drop-help.out" || return 1
-  grep -q 'usage: grutty purge' "$TEST_ROOT/drop-help.out" || { cat "$TEST_ROOT/drop-help.out" >&2; return 1; }
+  grep -q 'usage: hold purge' "$TEST_ROOT/drop-help.out" || { cat "$TEST_ROOT/drop-help.out" >&2; return 1; }
   "$HOLD_BIN" drop "$id1" >/dev/null || return 1
   ! record_exists "$id1" "$store" && ! log_exists "$id1" "$store" || { echo "drop left artifacts of $id1" >&2; return 1; }
   record_exists "$id2" "$store" && log_exists "$id2" "$store" || { echo "targeted drop touched another call" >&2; return 1; }
@@ -3462,13 +3462,13 @@ test_orphan_public_entry_swept() {
   as_root rm -f "$json" || return 1
   [ -f "$public_json" ] || { echo "public entry disappeared before the sweep" >&2; return 1; }
   as_root "$HOLD_REAL_BIN" purge -s >/dev/null 2>&1 || return 1
-  [ ! -e "$public_json" ] || { echo "orphan public entry survived sudo grutty purge" >&2; cat "$public_json" >&2; return 1; }
+  [ ! -e "$public_json" ] || { echo "orphan public entry survived sudo hold purge" >&2; cat "$public_json" >&2; return 1; }
   # No view resurrects it.
   "$HOLD_BIN" list -a >"$TEST_ROOT/orphan-list.out" 2>&1 || return 1
   ! grep -q "^$id" "$TEST_ROOT/orphan-list.out" || { echo "swept orphan still listed" >&2; cat "$TEST_ROOT/orphan-list.out" >&2; return 1; }
 }
 
-# G37: parity — `--restart unless-stopped` restarts crashes, but `grutty end`
+# G37: parity — `--restart unless-stopped` restarts crashes, but `hold end`
 # stops the loop for good and records the term status.
 test_restart_unless_stopped() {
   local out id count record _
@@ -3495,11 +3495,11 @@ test_restart_unless_stopped() {
   sleep 1
   count=$(wc -l <"$HOME/us-count" 2>/dev/null || echo 0)
   count=$((count))
-  [ "$count" -eq 3 ] || { echo "unless-stopped restarted after grutty end: attempts=$count" >&2; return 1; }
+  [ "$count" -eq 3 ] || { echo "unless-stopped restarted after hold end: attempts=$count" >&2; return 1; }
   "$HOLD_BIN" list -a | grep -Eq "^$id[[:space:]].*Exited" || { "$HOLD_BIN" list -a >&2; return 1; }
 }
 
-# grutty msg: a call messages another; the receiver verifies the sender's call,
+# hold msg: a call messages another; the receiver verifies the sender's call,
 # labels impostors, and flattens newlines when there is no bracketed paste.
 test_msg_between_calls() {
   "$HOLD_BIN" -dt --name lead -- /bin/sh -c 'stty -echo; echo lead-ready; while IFS= read -r l; do printf "LEAD GOT: %s\n" "$l"; done' >/dev/null || return 1
@@ -3512,13 +3512,13 @@ test_msg_between_calls() {
     "$HOLD_BIN" -dt --name worker -- /bin/sh -c "\"$HOLD_REAL_BIN\" msg lead 'task done'; sleep 30" >/dev/null || return 1
   fi
   "$HOLD_BIN" wait lead --match 'LEAD GOT' --timeout 10000 || { "$HOLD_BIN" peek lead >&2; return 1; }
-  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg from worker; reply: grutty msg worker "..."] task done' || { "$HOLD_BIN" peek lead >&2; return 1; }
-  GRUTTY_CALL_ID= GRUTTY_CALL_NAME=worker "$HOLD_BIN" msg lead --now 'fake' || return 1
+  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg from worker; reply: hold msg worker "..."] task done' || { "$HOLD_BIN" peek lead >&2; return 1; }
+  HOLD_CALL_ID= HOLD_CALL_NAME=worker "$HOLD_BIN" msg lead --now 'fake' || return 1
   "$HOLD_BIN" wait lead --match 'fake' --timeout 5000 || return 1
   "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg from worker (unverified)] fake' || return 1
-  env -u GRUTTY_CALL_ID -u GRUTTY_CALL_NAME "$HOLD_BIN" msg lead --now "$(printf 'two\nlines')" || return 1
+  env -u HOLD_CALL_ID -u HOLD_CALL_NAME "$HOLD_BIN" msg lead --now "$(printf 'two\nlines')" || return 1
   "$HOLD_BIN" wait lead --match 'two lines' --timeout 5000 || { "$HOLD_BIN" peek lead >&2; return 1; }
-  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg via grutty] two lines' || return 1
+  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg via hold] two lines' || return 1
   "$HOLD_BIN" end lead worker >/dev/null 2>&1 || true
 }
 
@@ -3613,7 +3613,7 @@ test_send_mouse_legacy_clamp_is_reported() {
   "$HOLD_BIN" end lm >/dev/null 2>&1 || true
 }
 
-# tmux under Grutty: prefix chord split, mouse pane focus, prefix detach.
+# tmux under Hold: prefix chord split, mouse pane focus, prefix detach.
 test_tmux_prefix_mouse_and_detach() {
   command -v tmux >/dev/null 2>&1 || skip_tool "tmux not installed"
   local sock="$TEST_ROOT/tmux.sock"
@@ -3903,9 +3903,9 @@ test_peek_after_exit_and_purge() {
   "$HOLD_BIN" wait gone --timeout 5000 >/dev/null || return 1
   "$HOLD_BIN" peek gone | grep -qx 'last words' || return 1
   "$HOLD_BIN" peek gone --json | grep -q '"running": false' || return 1
-  ls "$HOME"/.local/state/grutty/*.screen >/dev/null 2>&1 || return 1
+  ls "$HOME"/.local/state/hold/*.screen >/dev/null 2>&1 || return 1
   "$HOLD_BIN" purge gone >/dev/null 2>&1 || return 1
-  ! ls "$HOME"/.local/state/grutty/*.screen >/dev/null 2>&1 || return 1
+  ! ls "$HOME"/.local/state/hold/*.screen >/dev/null 2>&1 || return 1
 }
 
 # Calls without a TTY have no screen; the verbs say so.
@@ -3932,11 +3932,11 @@ test_send_mouse_off_is_reported() {
 # learns its parent's.
 test_call_identity_environment() {
   # Launched from outside any call (the suite itself may run inside one).
-  out=$(env -u GRUTTY_CALL_NAME -u GRUTTY_CALL_ID -u GRUTTY_CALL_PARENT "$HOLD_BIN" -d --name selfaware -- /bin/sh -c 'echo "name=$GRUTTY_CALL_NAME id=$GRUTTY_CALL_ID parent=${GRUTTY_CALL_PARENT:-none}"') || return 1
+  out=$(env -u HOLD_CALL_NAME -u HOLD_CALL_ID -u HOLD_CALL_PARENT "$HOLD_BIN" -d --name selfaware -- /bin/sh -c 'echo "name=$HOLD_CALL_NAME id=$HOLD_CALL_ID parent=${HOLD_CALL_PARENT:-none}"') || return 1
   id=$(printf '%s\n' "$out" | sed -n '/^[0-9a-f]\{64\}$/p')
   "$HOLD_BIN" wait selfaware --timeout 5000 >/dev/null || return 1
   "$HOLD_BIN" logs selfaware | grep -qx "name=selfaware id=$id parent=none" || { "$HOLD_BIN" logs selfaware >&2; return 1; }
-  GRUTTY_CALL_NAME=lead "$HOLD_BIN" -d --name kid -- /bin/sh -c 'echo "parent=$GRUTTY_CALL_PARENT name=$GRUTTY_CALL_NAME"' >/dev/null || return 1
+  HOLD_CALL_NAME=lead "$HOLD_BIN" -d --name kid -- /bin/sh -c 'echo "parent=$HOLD_CALL_PARENT name=$HOLD_CALL_NAME"' >/dev/null || return 1
   "$HOLD_BIN" wait kid --timeout 5000 >/dev/null || return 1
   "$HOLD_BIN" logs kid | grep -qx 'parent=lead name=kid' || { "$HOLD_BIN" logs kid >&2; return 1; }
 }
@@ -4061,7 +4061,7 @@ run_test "normal run does not self-elevate on local/root ID conflict" test_user_
 run_test "explicit user:<id> targets user-local run" test_explicit_user_target
 run_test "deleted capability flags are rejected honestly" test_cap_flags_are_rejected
 run_test "Docker --rm removes run artifacts after exit" test_docker_rm_removes_run_artifacts_after_exit
-run_test "env flags are recipe data, not grutty's own environment" test_env_flag_is_recipe_data_only
+run_test "env flags are recipe data, not hold's own environment" test_env_flag_is_recipe_data_only
 run_test "tail Ctrl-C detaches from tail and does not stop run" test_tail_ctrl_c_detaches_from_tail_and_keeps_run
 run_test "build artifacts for static and dynamic coexist" test_build_artifact_coexistence
 run_test "concurrent starts produce unique ids" test_concurrent_unique_ids
@@ -4072,7 +4072,7 @@ run_test "end signals the recorded group after the leader is gone" test_signal_d
 run_test "attach is the primary console spelling" test_attach_verb_matches_console
 # DIVERGENCE: identity doc promises `logs -p` -t/--time and --date timestamp
 # flags, but the logs parser (src/runtime/signal.c hold_cmd_view_action) knows
-# neither: `grutty logs <id> -p -t` exits 5 with the usage line. Recorded in
+# neither: `hold logs <id> -p -t` exits 5 with the usage line. Recorded in
 # .agentic/reconstruction/contract-gaps.md; re-register once the flags exist.
 run_test "logs to a non-TTY dumps plain raw bytes automatically" test_logs_non_tty_auto_plain
 run_test "list -u shows only the invoking user's calls, even under sudo" test_list_user_scope_only_personal
@@ -4090,7 +4090,7 @@ run_test "peek --image writes a well-formed PNG" test_peek_image_png
 run_test "peek shows the last screen after exit; purge removes it" test_peek_after_exit_and_purge
 run_test "screen verbs refuse calls without a TTY" test_screen_verbs_need_a_tty
 run_test "send --mouse to a program without mouse reporting is reported" test_send_mouse_off_is_reported
-run_test "calls see GRUTTY_CALL_ID, GRUTTY_CALL_NAME, GRUTTY_CALL_PARENT" test_call_identity_environment
+run_test "calls see HOLD_CALL_ID, HOLD_CALL_NAME, HOLD_CALL_PARENT" test_call_identity_environment
 run_test "attach repaints the live screen" test_attach_repaints_live_screen
 run_test "msg delivers between calls and verifies the sender" test_msg_between_calls
 run_test "TTY calls default TERM when the launcher has none" test_tty_call_defaults_term

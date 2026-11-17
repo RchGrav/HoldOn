@@ -8,15 +8,15 @@ fi
 
 target="$1"
 version="$2"
-binary_path="${3:-grutty}"
+binary_path="${3:-hold}"
 output_dir="${4:-dist}"
 stage_dir="${output_dir}/package-${target}"
-archive_name="grutty-${version}-${target}.tar.gz"
+archive_name="hold-${version}-${target}.tar.gz"
 
 rm -rf "${stage_dir}"
 mkdir -p "${stage_dir}" "${output_dir}"
-cp "${binary_path}" "${stage_dir}/grutty"
-chmod +x "${stage_dir}/grutty"
+cp "${binary_path}" "${stage_dir}/hold"
+chmod +x "${stage_dir}/hold"
 
 shopt -s nullglob
 for file in LICENSE* README*; do

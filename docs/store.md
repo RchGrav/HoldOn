@@ -4,9 +4,9 @@
 
 Outer loop bridge: deep dive for quickstart Step 1, Start One Thing.
 
-The store is where Grutty puts the facts users rely on later: run IDs, logs, profiles, root-public discovery hints, and optional console sockets. If `grutty tail <id>` or `grutty stop <id>` works after the original shell is gone, it is because this state survived on disk.
+The store is where Hold puts the facts users rely on later: run IDs, logs, profiles, root-public discovery hints, and optional console sockets. If `hold tail <id>` or `hold stop <id>` works after the original shell is gone, it is because this state survived on disk.
 
-Grutty has two stores: a user-local store for normal starts and a system-managed store for root, sudo, and `--system` starts.
+Hold has two stores: a user-local store for normal starts and a system-managed store for root, sudo, and `--system` starts.
 
 The store is the replacement for a daemon's memory. Every future command has to recover intent from files, then validate live process state separately.
 
@@ -15,7 +15,7 @@ The store is the replacement for a daemon's memory. Every future command has to 
 User-local state lives under:
 
 ```text
-~/.local/state/grutty
+~/.local/state/hold
 ```
 
 The user store uses the base directory for run records, logs, `profiles.json`, `aliases.json`, and a `console/` subdirectory. `ensure_user_store_for_current_user` creates the base and console directory as `0700`.
@@ -23,8 +23,8 @@ The user store uses the base directory for run records, logs, `profiles.json`, `
 System-managed state lives under:
 
 ```text
-Linux: /var/lib/grutty
-macOS: /var/db/grutty
+Linux: /var/lib/hold
+macOS: /var/db/hold
 ```
 
 In test builds, `HOLD_TEST_SYSTEM_STATE_DIR` can override that path. The production code does not take an arbitrary environment override for the system store.
@@ -97,13 +97,13 @@ flowchart TD
 
 Private run records are written as `.<id>.tmp` and renamed to `<id>.json`. Public index records use the same pattern in the public directory. Profile files and internal profile-map files are also written through temp files and atomic rename, then the containing directory is fsynced where the code can do so.
 
-This pattern matters because Grutty has no daemon to reconstruct partially written state. If a process is recorded, future actions must be able to trust that the record is syntactically complete enough to load and evaluate.
+This pattern matters because Hold has no daemon to reconstruct partially written state. If a process is recorded, future actions must be able to trust that the record is syntactically complete enough to load and evaluate.
 
 ## Public and private authority
 
 Private records are authoritative. Public root indexes exist so normal users can discover that a root-managed run exists and decide whether an action should self-elevate. Normal list output reads both the user-local private store and the system public index, while root/system list reads private system records.
 
-Public root rows carry the latest projected `state_hint` and lifecycle fields written by Grutty. New runs use Grutty-owned supervisor/reaper paths to project final exit state when the child exits. The private record remains authoritative: root actions re-load private state and evaluate live process identity before signaling or pruning.
+Public root rows carry the latest projected `state_hint` and lifecycle fields written by Hold. New runs use Hold-owned supervisor/reaper paths to project final exit state when the child exits. The private record remains authoritative: root actions re-load private state and evaluate live process identity before signaling or pruning.
 
 ## Pruning
 

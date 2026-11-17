@@ -14,7 +14,7 @@ void hold_report_session_escapees(const struct hold_run_record *r) {
     int escaped = hold_count_session_escapees(r->sid, r->pgid);
     if (escaped > 0) {
         fprintf(stderr,
-                "grutty: warning: %d process(es) escaped process-group %ld but remain in session %ld\n",
+                "hold: warning: %d process(es) escaped process-group %ld but remain in session %ld\n",
                 escaped, (long)r->pgid, (long)r->sid);
     }
 }

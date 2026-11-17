@@ -28,7 +28,7 @@ int hold_init_user_store_from_home(const char *home, struct hold_store *store) {
     if (realpath(home, resolved_home)) base_home = resolved_home;
     memset(store, 0, sizeof(*store));
     store->kind = STORE_USER_LOCAL;
-    if (hold_checked_snprintf(store->base, sizeof(store->base), "%s/.local/state/grutty", base_home) != 0 ||
+    if (hold_checked_snprintf(store->base, sizeof(store->base), "%s/.local/state/hold", base_home) != 0 ||
         hold_checked_snprintf(store->record_dir, sizeof(store->record_dir), "%s", store->base) != 0 ||
         hold_checked_snprintf(store->log_dir, sizeof(store->log_dir), "%s", store->base) != 0 ||
         hold_checked_snprintf(store->console_dir, sizeof(store->console_dir), "%s/console", store->base) != 0)
@@ -39,7 +39,7 @@ int hold_init_user_store_from_home(const char *home, struct hold_store *store) {
 int hold_ensure_user_store_for_current_user(struct hold_store *store) {
     const char *home = getenv("HOME");
     if (!home || !*home) {
-        fprintf(stderr, "grutty: error: HOME is not set\n");
+        fprintf(stderr, "hold: error: HOME is not set\n");
         errno = EINVAL;
         return -1;
     }

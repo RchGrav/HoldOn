@@ -126,7 +126,7 @@ static int append_private_run_name_target(struct hold_resolved_target **targets,
     hold_for_each_record(store->record_dir, name_match_cb, &w);
     if (w.matches == 0) return 0;
     if (w.matches > 1) {
-        fprintf(stderr, "grutty: error: call name '%s' is ambiguous\n", name);
+        fprintf(stderr, "hold: error: call name '%s' is ambiguous\n", name);
         return -2;
     }
     return append_resolved_target(targets, count, scope, store, w.matched, false) == 0 ? 1 : -1;
@@ -154,19 +154,19 @@ static int append_public_run_name_target(struct hold_resolved_target **targets,
     closedir(d);
     if (matches == 0) return 0;
     if (matches > 1) {
-        fprintf(stderr, "grutty: error: call name '%s' is ambiguous\n", name);
+        fprintf(stderr, "hold: error: call name '%s' is ambiguous\n", name);
         return -2;
     }
     return append_resolved_target(targets, count, RESOLVE_SYSTEM_MANAGED, system_store, matched, true) == 0 ? 1 : -1;
 }
 
 int hold_report_not_found(const char *token) {
-    fprintf(stderr, "grutty: error: no call matches '%s'\n", token ? token : "");
+    fprintf(stderr, "hold: error: no call matches '%s'\n", token ? token : "");
     return 5;
 }
 
 int hold_report_requires_root(const char *token) {
-    fprintf(stderr, "grutty: error: '%s' is root-managed; operate on it as root\n", token ? token : "");
+    fprintf(stderr, "hold: error: '%s' is root-managed; operate on it as root\n", token ? token : "");
     return 3;
 }
 
@@ -192,7 +192,7 @@ static int build_scope_candidates(const struct hold_invocation *inv,
         if (scope == ID_TOKEN_USER) {
             struct hold_store user_store;
             if (hold_init_invoking_user_store(inv, &user_store) != 0) {
-                fprintf(stderr, "grutty: error: user:%s requires sudo provenance\n", atom);
+                fprintf(stderr, "hold: error: user:%s requires sudo provenance\n", atom);
                 return -1;
             }
             cands[n++] = (struct resolve_candidate){RESOLVE_USER_LOCAL, user_store, false};
@@ -231,7 +231,7 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
     const char *atom = NULL;
     enum id_token_scope scope = hold_parse_id_token(token, &atom);
     if (scope == ID_TOKEN_INVALID || (!hold_valid_id_prefix(atom) && !hold_valid_alias(atom))) {
-        fprintf(stderr, "grutty: error: invalid target '%s'\n", token ? token : "");
+        fprintf(stderr, "hold: error: invalid target '%s'\n", token ? token : "");
         return 5;
     }
 

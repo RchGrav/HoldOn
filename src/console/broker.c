@@ -163,7 +163,7 @@ static bool authorize_client(const struct broker *b, int client) {
          (b->have_allowed_peer_uid && peer_uid == b->allowed_peer_uid))) {
         return true;
     }
-    static const char msg[] = "grutty: console attach denied\n";
+    static const char msg[] = "hold: console attach denied\n";
     (void)hold_write_all(client, msg, sizeof(msg) - 1);
     return false;
 }
@@ -618,7 +618,7 @@ static int match_record_name(const char *id, const char *path, struct hold_run_r
     return 0;
 }
 
-/* Who is speaking: the claimed call (the sender's GRUTTY_CALL_ID, or a name)
+/* Who is speaking: the claimed call (the sender's HOLD_CALL_ID, or a name)
  * is verified when the connecting process belongs to that call's session or
  * descends from its leader. */
 /* 1 verified, 0 not verified, -1 the claimed call has no record (yet: a
@@ -709,10 +709,10 @@ static void handle_msg(struct broker *b, struct control_client *c, const char *a
 /* Type a queued message: bracketed paste when the program asked for it, else
  * newlines flattened so it cannot submit early; then Enter. */
 static void deliver_msg(struct broker *b, struct pending_msg *m, int verdict, const char *label) {
-    char header[320] = "[msg via grutty] ";
+    char header[320] = "[msg via hold] ";
     m->verified = verdict == 1;
     if (m->has_claim && verdict == 1)
-        snprintf(header, sizeof(header), "[msg from %.100s; reply: grutty msg %.100s \"...\"] ", label, label);
+        snprintf(header, sizeof(header), "[msg from %.100s; reply: hold msg %.100s \"...\"] ", label, label);
     else if (m->has_claim)
         snprintf(header, sizeof(header), "[msg from %.100s (unverified)] ", label);
     size_t hl = strlen(header);
@@ -895,7 +895,7 @@ static void sniff_connection(struct broker *b, struct control_client *c, struct 
         return;
     }
     if (cl->fd >= 0) {
-        static const char msg[] = "grutty: console already attached\n";
+        static const char msg[] = "hold: console already attached\n";
         (void)hold_write_all(c->fd, msg, sizeof(msg) - 1);
         drop_control(c);
         return;
@@ -912,7 +912,7 @@ static void sniff_connection(struct broker *b, struct control_client *c, struct 
 static void sniff_timeout(struct control_client *c, struct attach_client *cl, int64_t now) {
     if (c->phase != CTL_SNIFF || now - c->accepted_ms < BROKER_SNIFF_MS) return;
     if (cl->fd >= 0) {
-        static const char msg[] = "grutty: console already attached\n";
+        static const char msg[] = "hold: console already attached\n";
         (void)hold_write_all(c->fd, msg, sizeof(msg) - 1);
         drop_control(c);
         return;

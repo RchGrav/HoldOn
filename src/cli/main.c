@@ -91,7 +91,7 @@ static bool parse_docker_run_flag(const char *arg,
 
 static int parse_restart_policy_arg(const char *arg, char out[64]) {
     if (!arg || !*arg) {
-        fprintf(stderr, "grutty: error: --restart requires a policy\n");
+        fprintf(stderr, "hold: error: --restart requires a policy\n");
         return 5;
     }
     if (!strcmp(arg, "no") || !strcmp(arg, "always") || !strcmp(arg, "unless-stopped")) {
@@ -103,14 +103,14 @@ static int parse_restart_policy_arg(const char *arg, char out[64]) {
             char *end = NULL;
             long n = strtol(arg + 11, &end, 10);
             if (!end || *end || n < 0 || n > INT_MAX) {
-                fprintf(stderr, "grutty: error: invalid --restart on-failure retry count '%s'\n", arg + 11);
+                fprintf(stderr, "hold: error: invalid --restart on-failure retry count '%s'\n", arg + 11);
                 return 5;
             }
         }
         snprintf(out, 64, "%s", arg);
         return 0;
     }
-    fprintf(stderr, "grutty: error: invalid --restart policy '%s'\n", arg);
+    fprintf(stderr, "hold: error: invalid --restart policy '%s'\n", arg);
     return 5;
 }
 
@@ -120,13 +120,13 @@ static bool restart_policy_arg_enabled(const char *arg) {
 
 static int parse_restart_delay_arg(const char *arg, int *out) {
     if (!arg || !*arg) {
-        fprintf(stderr, "grutty: error: --restart-delay requires seconds\n");
+        fprintf(stderr, "hold: error: --restart-delay requires seconds\n");
         return 5;
     }
     char *end = NULL;
     long n = strtol(arg, &end, 10);
     if (!end || *end || n < 0 || n > INT_MAX) {
-        fprintf(stderr, "grutty: error: invalid --restart-delay '%s'\n", arg);
+        fprintf(stderr, "hold: error: invalid --restart-delay '%s'\n", arg);
         return 5;
     }
     *out = (int)n;
@@ -164,7 +164,7 @@ static int detach_key_token_value(const char *token, size_t len, unsigned char *
 
 static int configure_detach_keys_option(const char *value) {
     if (!value || !*value) {
-        fprintf(stderr, "grutty: error: --detach-keys requires a key sequence\n");
+        fprintf(stderr, "hold: error: --detach-keys requires a key sequence\n");
         return 5;
     }
     unsigned char keys[8];
@@ -176,13 +176,13 @@ static int configure_detach_keys_option(const char *value) {
         const char *start = p;
         while (*p && *p != ',' && !isspace((unsigned char)*p)) p++;
         if (nkeys >= sizeof(keys) || detach_key_token_value(start, (size_t)(p - start), &keys[nkeys]) != 0) {
-            fprintf(stderr, "grutty: error: invalid --detach-keys sequence '%s'\n", value);
+            fprintf(stderr, "hold: error: invalid --detach-keys sequence '%s'\n", value);
             return 5;
         }
         nkeys++;
     }
     if (nkeys == 0 || hold_console_set_detach_keys(keys, nkeys) != 0) {
-        fprintf(stderr, "grutty: error: invalid --detach-keys sequence '%s'\n", value);
+        fprintf(stderr, "hold: error: invalid --detach-keys sequence '%s'\n", value);
         return 5;
     }
     return 0;
@@ -191,20 +191,20 @@ static int configure_detach_keys_option(const char *value) {
 static int append_env_assignment(const char *arg, char ***env_out, int *envc_out) {
     const char *eq = arg ? strchr(arg, '=') : NULL;
     if (!arg || !*arg || !eq || eq == arg) {
-        fprintf(stderr, "grutty: error: expected KEY=VALUE after --env/-e\n");
+        fprintf(stderr, "hold: error: expected KEY=VALUE after --env/-e\n");
         return 5;
     }
     size_t key_len = (size_t)(eq - arg);
     char key[256];
     if (key_len >= sizeof(key)) {
-        fprintf(stderr, "grutty: error: environment key is too long\n");
+        fprintf(stderr, "hold: error: environment key is too long\n");
         return 5;
     }
     memcpy(key, arg, key_len);
     key[key_len] = '\0';
     for (size_t i = 0; key[i]; i++) {
         if (key[i] == '=') {
-            fprintf(stderr, "grutty: error: invalid environment key\n");
+            fprintf(stderr, "hold: error: invalid environment key\n");
             return 5;
         }
     }
@@ -223,12 +223,12 @@ static int append_env_assignment(const char *arg, char ***env_out, int *envc_out
 
 static int append_env_file(const char *path, char ***env_out, int *envc_out) {
     if (!path || !*path) {
-        fprintf(stderr, "grutty: error: --env-file requires a path\n");
+        fprintf(stderr, "hold: error: --env-file requires a path\n");
         return 5;
     }
     FILE *f = fopen(path, "r");
     if (!f) {
-        fprintf(stderr, "grutty: error: cannot read env file '%s': %s\n", path, strerror(errno));
+        fprintf(stderr, "hold: error: cannot read env file '%s': %s\n", path, strerror(errno));
         return 5;
     }
     char *line = NULL;
@@ -246,13 +246,13 @@ static int append_env_file(const char *path, char ***env_out, int *envc_out) {
         if (!*p || *p == '#') continue;
         rc = append_env_assignment(p, env_out, envc_out);
         if (rc != 0) {
-            fprintf(stderr, "grutty: error: invalid --env-file entry at %s:%lu\n", path, lineno);
+            fprintf(stderr, "hold: error: invalid --env-file entry at %s:%lu\n", path, lineno);
             break;
         }
     }
     free(line);
     if (ferror(f) && rc == 0) {
-        fprintf(stderr, "grutty: error: failed reading env file '%s': %s\n", path, strerror(errno));
+        fprintf(stderr, "hold: error: failed reading env file '%s': %s\n", path, strerror(errno));
         rc = 5;
     }
     fclose(f);
@@ -322,12 +322,12 @@ static int parse_run_options(int argc,
         !strcmp(arg, "-P") || !strcmp(arg, "--publish-all") ||
         !strncmp(arg, "--publish=", 10)) {
         fprintf(stderr,
-                "grutty: error: Grutty is not containerized and does not publish or forward ports; listening ports are observed automatically and shown in `grutty ps`\n");
+                "hold: error: Hold is not containerized and does not publish or forward ports; listening ports are observed automatically and shown in `hold ps`\n");
         return 5;
     }
     if (!strcmp(arg, "-v") || !strcmp(arg, "--volume") || !strncmp(arg, "--volume=", 9)) {
         fprintf(stderr,
-                "grutty: error: Grutty is not containerized and does not mount or remap volumes; pass host paths directly (prefer absolute paths)\n");
+                "hold: error: Hold is not containerized and does not mount or remap volumes; pass host paths directly (prefer absolute paths)\n");
         return 5;
     }
     if (!strcmp(arg, "--cap-add") || !strncmp(arg, "--cap-add=", 10) ||
@@ -335,7 +335,7 @@ static int parse_run_options(int argc,
         /* Grants-era remnant: capabilities left with that subsystem. Reject
          * honestly like the other substrate flags rather than accept-and-ignore. */
         fprintf(stderr,
-                "grutty: error: %s is not supported; grutty does not manage capabilities.\n"
+                "hold: error: %s is not supported; hold does not manage capabilities.\n"
                 "  Constrain the command itself instead, e.g. via capsh or systemd-run.\n",
                 arg);
         return 5;
@@ -346,7 +346,7 @@ static int parse_run_options(int argc,
         int rc;
         if ((opt->shortf && !strcmp(arg, opt->shortf)) || !strcmp(arg, opt->longf)) {
             if (*index + 1 >= argc) {
-                fprintf(stderr, "usage: grutty [flags] <cmd|id|name> [args...]\n");
+                fprintf(stderr, "usage: hold [flags] <cmd|id|name> [args...]\n");
                 return 5;
             }
             rc = apply_run_value_opt(opt->id, argv[*index + 1], run);
@@ -424,7 +424,7 @@ int hold_cli_main(int argc, char **argv) {
     }
 
     if (argi >= argc) {
-        fprintf(stderr, "usage: grutty [flags] <cmd|id|name> [args...]\n");
+        fprintf(stderr, "usage: hold [flags] <cmd|id|name> [args...]\n");
         return 5;
     }
 
@@ -466,7 +466,7 @@ int hold_cli_main(int argc, char **argv) {
     if (owned && !strcmp(command, "help")) {
         int rc = 0;
         if (cmd_argc > 1) {
-            fprintf(stderr, "usage: grutty help [topic]\n");
+            fprintf(stderr, "usage: hold help [topic]\n");
             rc = 5;
         } else if (cmd_argc == 1 && (!strcmp(cmd_argv[0], "--help") || !strcmp(cmd_argv[0], "-h"))) {
             rc = hold_show_help(NULL);
@@ -482,7 +482,7 @@ int hold_cli_main(int argc, char **argv) {
         return rc;
     }
     if (console_mode && owned) {
-        fprintf(stderr, "grutty: error: -t/--console applies only when launching a call\n");
+        fprintf(stderr, "hold: error: -t/--console applies only when launching a call\n");
         free(cmd_argv);
         return 5;
     }
@@ -494,7 +494,7 @@ int hold_cli_main(int argc, char **argv) {
         }
     }
     if (run.restart_delay_seen && !restart_policy_arg_enabled(run.restart_policy)) {
-        fprintf(stderr, "grutty: error: --restart-delay requires --restart with an active policy\n");
+        fprintf(stderr, "hold: error: --restart-delay requires --restart with an active policy\n");
         if (owned) free(cmd_argv);
         free_run_options(&run);
         return 5;
@@ -502,7 +502,7 @@ int hold_cli_main(int argc, char **argv) {
 
     struct hold_invocation inv;
     if (hold_detect_invocation(&inv, oo.requested_system) != 0) {
-        hold_die_errno("grutty: failed to resolve invocation context");
+        hold_die_errno("hold: failed to resolve invocation context");
     }
     inv.quiet = oo.quiet;
     /* The bare form launches (or redials) a call and speaks Docker's output
@@ -532,7 +532,7 @@ int hold_cli_main(int argc, char **argv) {
      * but only root may act on it. Delegated execution is gone, so requesting it
      * as a normal user is refused rather than re-run under sudo. */
     if (oo.requested_system && !inv.euid_root && !is_read_view && !(owned && !strcmp(canon, "purge"))) {
-        fprintf(stderr, "grutty: error: the root-managed store requires root; re-run as root or with sudo\n");
+        fprintf(stderr, "hold: error: the root-managed store requires root; re-run as root or with sudo\n");
         if (owned) free(cmd_argv);
         free_run_options(&run);
         return 3;
@@ -542,12 +542,12 @@ int hold_cli_main(int argc, char **argv) {
     struct hold_store system_store;
     memset(&user_store, 0, sizeof(user_store));
     if (hold_init_system_store(&system_store) != 0) {
-        hold_die_errno("grutty: failed to resolve system storage");
+        hold_die_errno("hold: failed to resolve system storage");
     }
 
     if (!inv.euid_root) {
         if (hold_ensure_user_store_for_current_user(&user_store) != 0) {
-            hold_die_errno("grutty: failed to init user storage");
+            hold_die_errno("hold: failed to init user storage");
         }
     } else {
         /* Root has no store of its own in the normal flow (its calls are
@@ -566,9 +566,9 @@ int hold_cli_main(int argc, char **argv) {
         if (hold_ensure_start_store_for_command(&inv, oo.requested_system, false, NULL, cmd_argc, cmd_argv, &start_store) != 0) {
             if ((inv.euid_root || oo.requested_system) &&
                 hold_start_target_is_within_invoking_home(&inv, false, NULL, cmd_argc, cmd_argv)) {
-                hold_die_errno("grutty: failed to init invoking-user storage");
+                hold_die_errno("hold: failed to init invoking-user storage");
             }
-            hold_die_errno("grutty: failed to init start storage");
+            hold_die_errno("hold: failed to init start storage");
         }
         /* Redial: a lone token that resolves to a retained call (id then name)
          * restarts it from its recipe. `--`, --name, and multi-token argv all
@@ -603,7 +603,7 @@ int hold_cli_main(int argc, char **argv) {
     } else if (!strcmp(canon, "list") || !strcmp(canon, "ps")) {
         const char *name_filter = cmd_argc == 1 ? cmd_argv[0] : NULL;
         if (name_filter && !hold_valid_alias(name_filter)) {
-            fprintf(stderr, "grutty: error: invalid name '%s'\n", name_filter);
+            fprintf(stderr, "hold: error: invalid name '%s'\n", name_filter);
             rc = 5;
         } else if (!strcmp(canon, "ps")) {
             /* ps is Docker's machine-wide running view: both scopes, no USER
@@ -667,7 +667,7 @@ int hold_cli_main(int argc, char **argv) {
     } else if (!strcmp(canon, "purge")) {
         const char *target = cmd_argc > 0 ? cmd_argv[0] : NULL;
         if (target && target[0] == '-') {
-            fprintf(stderr, "grutty: error: unknown flag '%s'\n", target);
+            fprintf(stderr, "hold: error: unknown flag '%s'\n", target);
             const char *usage = hold_cli_command_usage(command);
             if (usage) fprintf(stderr, "%s\n", usage);
             rc = 1;
@@ -695,7 +695,7 @@ int hold_cli_main(int argc, char **argv) {
                     sudo_argv[k] = NULL;
                     execvp("sudo", sudo_argv);
                 }
-                fprintf(stderr, "grutty: global purge needs root: sudo grutty purge --system\n");
+                fprintf(stderr, "hold: global purge needs root: sudo hold purge --system\n");
                 rc = 3;
             } else {
                 rc = hold_cmd_purge_action(&inv, &user_store, &system_store, target, oo.all, oo.force, purge_system);

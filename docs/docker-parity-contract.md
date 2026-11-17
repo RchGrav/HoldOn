@@ -1,17 +1,17 @@
 # Docker familiarity contract
 
-[Docs index](index.md) | [Grutty identity](grutty-identity.md)
+[Docs index](index.md) | [Hold identity](hold-identity.md)
 
-Status: normative, subordinate to [grutty-identity.md](grutty-identity.md).
-Grutty's verbs are its own; what it borrows from Docker is **flag behavior**
+Status: normative, subordinate to [hold-identity.md](hold-identity.md).
+Hold's verbs are its own; what it borrows from Docker is **flag behavior**
 and **table appearance**, because that muscle memory is worth keeping. When
-Grutty's behavior disagrees with this document, Grutty is wrong. Tests assert the
+Hold's behavior disagrees with this document, Hold is wrong. Tests assert the
 shapes written here.
 
 ## Flags
 
-These flags behave exactly like their `docker run` counterparts, on Grutty's
-bare launch form (`grutty [flags] <cmd> ...`):
+These flags behave exactly like their `docker run` counterparts, on Hold's
+bare launch form (`hold [flags] <cmd> ...`):
 
 ```text
 -d, --detach        detached; stdout is exactly one line: the full 64-hex
@@ -28,7 +28,7 @@ bare launch form (`grutty [flags] <cmd> ...`):
 
 The command is resolved against the invoking environment's `PATH`;
 `-e`/`--env-file` configure the held process's environment only, never
-Grutty's own.
+Hold's own.
 
 Foreground launches print **nothing** of their own — only the process
 output — and exit with the held process's exit status once it ends
@@ -36,14 +36,14 @@ output — and exit with the held process's exit status once it ends
 exits 0. Detach with `Ctrl-P Ctrl-Q`, exactly like Docker.
 
 Flags that would require a container substrate are rejected with an honest
-message, never faked: `-p`/`-P` (Grutty observes real host ports instead;
-see `grutty ports` and the PORTS column) and `-v` (host paths are just paths).
+message, never faked: `-p`/`-P` (Hold observes real host ports instead;
+see `hold ports` and the PORTS column) and `-v` (host paths are just paths).
 Flags that grant or remove privilege are rejected the same way, never
-remapped: `--privileged` and `--cap-add`/`--cap-drop` — Grutty launches
+remapped: `--privileged` and `--cap-add`/`--cap-drop` — Hold launches
 ordinary host processes with the invoker's rights, and store scope is
 selected with `--system`.
 
-One launch flag is Grutty-native rather than Docker-borrowed:
+One launch flag is Hold-native rather than Docker-borrowed:
 
 ```text
     --restart-delay N   seconds between restart attempts (requires --restart)
@@ -52,15 +52,15 @@ One launch flag is Grutty-native rather than Docker-borrowed:
 ## The call table
 
 `ps` and `list` both render Docker's table look, but they are distinct verbs
-(`ps` is no longer an alias of `list`; see grutty-identity.md). `ps` is the
+(`ps` is no longer an alias of `list`; see hold-identity.md). `ps` is the
 Docker mirror — a machine-wide, running-first view with Docker's own columns,
-minus IMAGE (Grutty has no image analogue and does not fake one):
+minus IMAGE (Hold has no image analogue and does not fake one):
 
 ```text
 CALL ID   COMMAND   CREATED   STATUS   PORTS   NAMES
 ```
 
-`list` is Grutty's scoped ledger and adds a USER column in Docker's IMAGE slot:
+`list` is Hold's scoped ledger and adds a USER column in Docker's IMAGE slot:
 
 ```text
 CALL ID   USER   COMMAND   CREATED   STATUS   PORTS   NAMES
@@ -70,7 +70,7 @@ CALL ID   USER   COMMAND   CREATED   STATUS   PORTS   NAMES
 - CREATED is humanized: `Less than a second ago`, `2 minutes ago`,
   `2 days ago`. Never a raw ISO timestamp in the table.
 - STATUS uses Docker phrasing: `Up 2 minutes`, `Exited (0) 2 days ago`,
-  `Created` — plus Grutty's honest extras: `Stale 2 days`, `Exited (?)` for a
+  `Created` — plus Hold's honest extras: `Stale 2 days`, `Exited (?)` for a
   death no waiter witnessed, and a ` (saved)` suffix on protected calls.
 - COMMAND is double-quoted and ellipsized; NAMES is always present for a
   user's calls. A call the caller may not read (a global call in a normal

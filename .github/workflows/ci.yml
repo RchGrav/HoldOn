@@ -23,7 +23,7 @@ jobs:
           make clean
           make CC=${{ matrix.cc }} CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
           make clean
-          make grutty-dynamic CC=${{ matrix.cc }} CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
+          make hold-dynamic CC=${{ matrix.cc }} CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
           make test CC=${{ matrix.cc }} CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
 
   privilege-delegation-test:

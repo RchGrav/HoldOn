@@ -4,9 +4,9 @@
 
 Outer loop bridge: deep dive for quickstart Step 2, Manage It Later.
 
-Grutty records process identity at launch and rechecks it before dangerous actions. This is why `grutty stop <id>` is safer than `kill $PID`: a run ID selects a record, but the record must still match the current process table before Grutty sends a signal.
+Hold records process identity at launch and rechecks it before dangerous actions. This is why `hold stop <id>` is safer than `kill $PID`: a run ID selects a record, but the record must still match the current process table before Hold sends a signal.
 
-If the evidence is stale or inconclusive, Grutty refuses. That refusal is intentional user protection, not a cleanup failure to hide.
+If the evidence is stale or inconclusive, Hold refuses. That refusal is intentional user protection, not a cleanup failure to hide.
 
 ## Recorded identity
 
@@ -19,7 +19,7 @@ A run record stores:
 - `proc_starttime_ticks`: process starttime from platform process metadata when available.
 - `exe_dev` and `exe_ino`: executable device/inode identity when available.
 
-These fields are intentionally redundant. Linux generally provides `/proc/<pid>/stat`, `/proc/<pid>/exe`, and `/proc/sys/kernel/random/boot_id`. macOS uses best-effort process metadata and `kern.boottime`. The code treats some probes as optional because Grutty must remain a small single binary across both platforms.
+These fields are intentionally redundant. Linux generally provides `/proc/<pid>/stat`, `/proc/<pid>/exe`, and `/proc/sys/kernel/random/boot_id`. macOS uses best-effort process metadata and `kern.boottime`. The code treats some probes as optional because Hold must remain a small single binary across both platforms.
 
 ## State evaluation
 
@@ -58,7 +58,7 @@ flowchart TD
     class StateStale,StateUnknown refuse
 ```
 
-`eval_state` first honors an explicit failed launch state. It then rejects invalid PGID/SID values as unknown. If the record has a boot ID and the current boot marker differs, the run is stale. After that, Grutty checks the leader process and same-session group members.
+`eval_state` first honors an explicit failed launch state. It then rejects invalid PGID/SID values as unknown. If the record has a boot ID and the current boot marker differs, the run is stale. After that, Hold checks the leader process and same-session group members.
 
 A zombie leader is not automatically treated as done. If live same-session group members remain, the run is still running for teardown purposes. If the group is empty or zombie-only, the run is exited.
 
@@ -83,21 +83,21 @@ stateDiagram-v2
     class stale,unknown refuse
 ```
 
-Only `running`, `exited`, and `failed` are benign for action decisions. `stale` and `unknown` are safety stops for signaling. If Grutty cannot validate the record, it refuses instead of risking a signal to a reused PID or unrelated process group.
+Only `running`, `exited`, and `failed` are benign for action decisions. `stale` and `unknown` are safety stops for signaling. If Hold cannot validate the record, it refuses instead of risking a signal to a reused PID or unrelated process group.
 
 ## Signal safety
 
 `do_signal_action` loads the private record, checks the stored boot ID against the current boot marker when both are available, calls `eval_state`, and refuses `stale` or `unknown`. If the run has already exited or failed, it reports success with `already_done`. If the run is still running, it signals the whole process group.
 
-For `stop`, Grutty sends `SIGTERM`, waits up to `STOP_TIMEOUT_MS`, then sends `SIGKILL` if the group is still present. For `kill`, it sends `SIGKILL` immediately. After signaling, `report_session_escapees` can warn when live processes remain in the same session but outside the expected process group.
+For `stop`, Hold sends `SIGTERM`, waits up to `STOP_TIMEOUT_MS`, then sends `SIGKILL` if the group is still present. For `kill`, it sends `SIGKILL` immediately. After signaling, `report_session_escapees` can warn when live processes remain in the same session but outside the expected process group.
 
 `do_print_signal_command` follows the same validation rule before printing the equivalent `kill -TERM -- -<pgid>` or `kill -KILL -- -<pgid>` command. Even dry-run output is not produced for stale or unknown records.
 
 ## Why this design works
 
-PID reuse is the core hazard. A daemon could keep richer live state, but Grutty intentionally has no daemon. Its answer is to record enough identity at launch and combine that with live probes before every signal. If the current machine state is ambiguous, the safe result is refusal.
+PID reuse is the core hazard. A daemon could keep richer live state, but Hold intentionally has no daemon. Its answer is to record enough identity at launch and combine that with live probes before every signal. If the current machine state is ambiguous, the safe result is refusal.
 
-The session scan exists because the process group leader can exit while useful descendants remain. That is common in launcher and shell-wrapper workloads. Treating same-session live group members as running lets Grutty clean up the workload it started without pretending the leader PID alone is authoritative.
+The session scan exists because the process group leader can exit while useful descendants remain. That is common in launcher and shell-wrapper workloads. Treating same-session live group members as running lets Hold clean up the workload it started without pretending the leader PID alone is authoritative.
 
 ## Implementation map
 

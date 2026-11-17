@@ -2,7 +2,7 @@
 # Privilege-delegation lane: run the regression suite as a NON-root user that can
 # elevate via passwordless sudo, and let the suite elevate per-test.
 #
-# This mirrors how grutty is actually used and must be tested: you invoke it as
+# This mirrors how hold is actually used and must be tested: you invoke it as
 # yourself, and it sudo-elevates only the operations that need root — and the
 # elevated process must know WHICH non-root user invoked it (the SUDO_UID/
 # SUDO_USER provenance), not merely that it is running as root. Running the whole
@@ -39,11 +39,11 @@ werror="${CFLAGS:--std=c11 -Wall -Wextra -Wpedantic -Werror -O2}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/src"
-# Anchor excludes to repo-root paths: a bare --exclude=grutty would also drop
+# Anchor excludes to repo-root paths: a bare --exclude=hold would also drop
 # the include/hold/ header directory.
-tar --exclude='./.git' --exclude='./grutty' --exclude='./grutty-dynamic' \
+tar --exclude='./.git' --exclude='./hold' --exclude='./hold-dynamic' \
     --exclude='./hash-vector' --exclude='./obj' --exclude='./obj-test' \
-    --exclude='./grutty.dSYM' --exclude='./grutty-dynamic.dSYM' \
+    --exclude='./hold.dSYM' --exclude='./hold-dynamic.dSYM' \
     -C "$src" -cf - . | tar -xf - -C "$tmp/src"
 
 cd "$tmp/src"

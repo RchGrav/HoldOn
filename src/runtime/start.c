@@ -68,9 +68,9 @@ static int clear_process_environment(void) {
 #endif
 }
 
-/* The call's own identity, exported to the held program: GRUTTY_CALL_ID and
- * GRUTTY_CALL_NAME are its address (hold send/peek/wait accept either), and
- * GRUTTY_CALL_PARENT names the call that launched it, when it was launched
+/* The call's own identity, exported to the held program: HOLD_CALL_ID and
+ * HOLD_CALL_NAME are its address (hold send/peek/wait accept either), and
+ * HOLD_CALL_PARENT names the call that launched it, when it was launched
  * from inside one (an agent starting a worker), so the worker can reply.
  * Captured in the launcher before fork; always overrides inherited values. */
 static struct {
@@ -85,8 +85,8 @@ static void child_identity_prepare(const char *id, const char *name, bool tty) {
     memset(&g_child_identity, 0, sizeof(g_child_identity));
     snprintf(g_child_identity.id, sizeof(g_child_identity.id), "%s", id ? id : "");
     snprintf(g_child_identity.name, sizeof(g_child_identity.name), "%s", name ? name : "");
-    const char *parent = getenv("GRUTTY_CALL_NAME");
-    if (!parent || !*parent) parent = getenv("GRUTTY_CALL_ID");
+    const char *parent = getenv("HOLD_CALL_NAME");
+    if (!parent || !*parent) parent = getenv("HOLD_CALL_ID");
     if (parent && strlen(parent) < sizeof(g_child_identity.parent) && strcmp(parent, g_child_identity.name) != 0)
         snprintf(g_child_identity.parent, sizeof(g_child_identity.parent), "%s", parent);
     g_child_identity.set = g_child_identity.id[0] != '\0';
@@ -105,12 +105,12 @@ static int apply_default_term(void) {
 
 static int apply_child_identity(void) {
     if (!g_child_identity.set) return 0;
-    if (setenv("GRUTTY_CALL_ID", g_child_identity.id, 1) != 0) return -1;
-    if (g_child_identity.name[0] ? setenv("GRUTTY_CALL_NAME", g_child_identity.name, 1) != 0
-                                 : unsetenv("GRUTTY_CALL_NAME") != 0)
+    if (setenv("HOLD_CALL_ID", g_child_identity.id, 1) != 0) return -1;
+    if (g_child_identity.name[0] ? setenv("HOLD_CALL_NAME", g_child_identity.name, 1) != 0
+                                 : unsetenv("HOLD_CALL_NAME") != 0)
         return -1;
-    if (g_child_identity.parent[0] ? setenv("GRUTTY_CALL_PARENT", g_child_identity.parent, 1) != 0
-                                   : unsetenv("GRUTTY_CALL_PARENT") != 0)
+    if (g_child_identity.parent[0] ? setenv("HOLD_CALL_PARENT", g_child_identity.parent, 1) != 0
+                                   : unsetenv("HOLD_CALL_PARENT") != 0)
         return -1;
     return 0;
 }
@@ -238,7 +238,7 @@ static void run_restart_supervisor(const struct hold_store *store,
     while (!g_restart_stop) {
         pid_t worker = fork();
         if (worker < 0) {
-            fprintf(stderr, "grutty: restart supervisor failed to fork: %s\n", strerror(errno));
+            fprintf(stderr, "hold: restart supervisor failed to fork: %s\n", strerror(errno));
             mark_finished_with_retry(store, id, 127 << 8);
             _exit(127);
         }
@@ -247,7 +247,7 @@ static void run_restart_supervisor(const struct hold_store *store,
             signal(SIGINT, SIG_DFL);
             signal(SIGHUP, SIG_DFL);
             execv(resolved_exec_path, launch_argv);
-            fprintf(stderr, "grutty: cannot restart '%s': %s\n", resolved_exec_path, strerror(errno));
+            fprintf(stderr, "hold: cannot restart '%s': %s\n", resolved_exec_path, strerror(errno));
             _exit(127);
         }
         while (waitpid(worker, &status, 0) < 0) {
@@ -263,7 +263,7 @@ static void run_restart_supervisor(const struct hold_store *store,
         if (restart_status_failed(status)) failures++;
         else failures = 0;
         if (!restart_should_run_again(restart_policy, status, failures)) break;
-        fprintf(stderr, "grutty: restarting %s after exit status %d\n", resolved_exec_path, status);
+        fprintf(stderr, "hold: restarting %s after exit status %d\n", resolved_exec_path, status);
         sleep_restart_delay(restart_delay_seconds);
     }
     if (have_status) mark_finished_with_retry(store, id, status);
@@ -337,7 +337,7 @@ static int foreground_exit_status(const struct hold_store *store, const char *id
             continue;
         }
     }
-    fprintf(stderr, "grutty: exit status unknown for call %.12s\n", id);
+    fprintf(stderr, "hold: exit status unknown for call %.12s\n", id);
     return 1;
 }
 
@@ -506,7 +506,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     }
     bool restart_enabled = restart_policy_is_enabled(restart_policy);
     if (restart_enabled && console_mode) {
-        fprintf(stderr, "grutty: error: --restart with --tty/-t is not supported yet\n");
+        fprintf(stderr, "hold: error: --restart with --tty/-t is not supported yet\n");
         return 5;
     }
 
@@ -516,9 +516,9 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     const char *path_to_resolve = (opts->exec_path && *opts->exec_path) ? opts->exec_path : argv[0];
     if (hold_find_binary_path(path_to_resolve, resolved_exec_path, sizeof(resolved_exec_path)) != 0) {
         if (errno == ENOENT) {
-            fprintf(stderr, "grutty: cannot start '%s': command not found\n", argv[0]);
+            fprintf(stderr, "hold: cannot start '%s': command not found\n", argv[0]);
         } else {
-            fprintf(stderr, "grutty: cannot start '%s': %s\n", argv[0], strerror(errno));
+            fprintf(stderr, "hold: cannot start '%s': %s\n", argv[0], strerror(errno));
         }
         return 1;
     }
@@ -545,20 +545,20 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         observed_cwd[0] = '\0';
     }
     if (hold_copy_argv(&u.observed_argv, argc, argv) != 0) {
-        hold_die_errno("grutty: failed to prepare observed argv");
+        hold_die_errno("hold: failed to prepare observed argv");
     }
     if (hold_copy_argv(&u.launch_argv, argc, argv) != 0) {
-        launch_die(&u, "grutty: failed to prepare argv");
+        launch_die(&u, "hold: failed to prepare argv");
     }
     char **observed_argv = u.observed_argv;
     char **launch_argv = u.launch_argv;
     free(launch_argv[0]);
     launch_argv[0] = strdup(resolved_exec_path);
     if (!launch_argv[0]) {
-        launch_die(&u, "grutty: failed to prepare argv");
+        launch_die(&u, "hold: failed to prepare argv");
     }
     if (hold_normalize_existing_argv_paths_from_cwd(launch_argv, argc, 1, observed_cwd[0] ? observed_cwd : NULL) != 0) {
-        launch_die(&u, "grutty: failed to normalize argv paths");
+        launch_die(&u, "hold: failed to normalize argv paths");
     }
 
     struct timespec start_ts;
@@ -571,18 +571,18 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     if (restarting_existing) {
         if (!hold_valid_id(existing_id) || !opts->existing_log_path || !*opts->existing_log_path) {
             errno = EINVAL;
-            launch_die(&u, "grutty: invalid restart record");
+            launch_die(&u, "hold: invalid restart record");
         }
-        copy_field(&u, id, sizeof(id), existing_id, "grutty: restart metadata too long");
-        copy_field(&u, log_path, sizeof(log_path), opts->existing_log_path, "grutty: restart metadata too long");
+        copy_field(&u, id, sizeof(id), existing_id, "hold: restart metadata too long");
+        copy_field(&u, log_path, sizeof(log_path), opts->existing_log_path, "hold: restart metadata too long");
         if (opts->existing_run_name && *opts->existing_run_name) {
-            copy_field(&u, run_name, sizeof(run_name), opts->existing_run_name, "grutty: call name too long");
+            copy_field(&u, run_name, sizeof(run_name), opts->existing_run_name, "hold: call name too long");
         }
     } else {
         if (hold_reserve_run_id(store, resolved_exec_path, argc, launch_argv,
                                 observed_cwd[0] ? observed_cwd : NULL,
                                 start_unix_ns, id) != 0) {
-            launch_die(&u, "grutty: failed to generate id");
+            launch_die(&u, "hold: failed to generate id");
         }
         u.reserved = true;
         int name_rc = hold_generate_run_name_for_id(store, id, opts->run_name, run_name);
@@ -591,16 +591,16 @@ int hold_perform_start_options(const struct hold_invocation *inv,
             return name_rc;
         }
         if (hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) != 0) {
-            launch_die(&u, "grutty: log path too long");
+            launch_die(&u, "hold: log path too long");
         }
     }
     if (console_mode && hold_format_console_sock_path(store, id, console_sock, sizeof(console_sock)) != 0) {
         console_sock[0] = '\0';
-        launch_die(&u, "grutty: console socket path too long");
+        launch_die(&u, "hold: console socket path too long");
     }
     int log_preflight_fd = hold_open_append_no_symlink(log_path);
     if (log_preflight_fd < 0) {
-        launch_die(&u, "grutty: failed to open log");
+        launch_die(&u, "hold: failed to open log");
     }
     close(log_preflight_fd);
 
@@ -626,20 +626,20 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     }
 
     if (hold_cloexec_pipe(io + HS_R) != 0) {
-        launch_die(&u, "grutty: pipe failed");
+        launch_die(&u, "hold: pipe failed");
     }
     if (!console_mode &&
         (hold_cloexec_pipe(io + OUT_R) != 0 || hold_cloexec_pipe(io + ERR_R) != 0)) {
-        launch_die(&u, "grutty: pipe failed");
+        launch_die(&u, "hold: pipe failed");
     }
     if (!restart_enabled && hold_cloexec_pipe(io + TP_R) != 0) {
-        launch_die(&u, "grutty: pipe failed");
+        launch_die(&u, "hold: pipe failed");
     }
 
     child_identity_prepare(id, run_name, console_mode);
     pid_t pid = fork();
     if (pid < 0) {
-        launch_die(&u, "grutty: fork failed");
+        launch_die(&u, "hold: fork failed");
     }
     if (pid == 0) {
         close(io[HS_R]);
@@ -742,7 +742,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     io[HS_R] = -1;
     if (handshake < 0) {
         errno = handshake_errno;
-        launch_die(&u, "grutty: exec handshake failed");
+        launch_die(&u, "hold: exec handshake failed");
     }
     if (handshake > 0) {
         int st;
@@ -750,9 +750,9 @@ int hold_perform_start_options(const struct hold_invocation *inv,
             continue;
         }
         if (child_errno == ENOENT) {
-            fprintf(stderr, "grutty: cannot start '%s': command not found\n", launch_argv[0]);
+            fprintf(stderr, "hold: cannot start '%s': command not found\n", launch_argv[0]);
         } else {
-            fprintf(stderr, "grutty: cannot start '%s': %s\n", launch_argv[0], strerror(child_errno));
+            fprintf(stderr, "hold: cannot start '%s': %s\n", launch_argv[0], strerror(child_errno));
         }
         u.group = 0; /* the child exited and is reaped — nothing to roll back */
         launch_undo(&u);
@@ -765,7 +765,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         io[TP_R] = -1;
         if (n != (ssize_t)sizeof(target_pid) || target_pid <= 1) {
             errno = EIO;
-            launch_die(&u, "grutty: failed to read target pid");
+            launch_die(&u, "hold: failed to read target pid");
         }
         pid = target_pid;
         u.reap_pid = pid;
@@ -778,7 +778,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         io[ERR_R] = -1;
         if (logger_rc != 0) {
             u.reap_pid = supervisor_pid;
-            launch_die(&u, "grutty: logger fork failed");
+            launch_die(&u, "hold: logger fork failed");
         }
     }
 
@@ -786,7 +786,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     hold_record_init_running(&r, id, log_path, pid, pid, pid, start_unix_ns,
                              opts->existing_created_unix_ns > 0 ? opts->existing_created_unix_ns : start_unix_ns);
     if (opts->existing_created_at && *opts->existing_created_at) {
-        copy_field(&u, r.created_at, sizeof(r.created_at), opts->existing_created_at, "grutty: created timestamp too long");
+        copy_field(&u, r.created_at, sizeof(r.created_at), opts->existing_created_at, "hold: created timestamp too long");
     }
     if (store->kind == STORE_SYSTEM_MANAGED) {
         r.has_invocation = true;
@@ -795,26 +795,26 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         r.invoked_by_gid = via_sudo ? inv->invoking_gid : 0;
         r.invoked_via_sudo = via_sudo;
         copy_field(&u, r.invoked_by_user, sizeof(r.invoked_by_user),
-                   via_sudo ? inv->invoking_user : "root", "grutty: invoking user too long");
+                   via_sudo ? inv->invoking_user : "root", "hold: invoking user too long");
     }
     if (run_name[0]) {
         r.has_name = true;
-        copy_field(&u, r.name, sizeof(r.name), run_name, "grutty: call name too long");
+        copy_field(&u, r.name, sizeof(r.name), run_name, "hold: call name too long");
     }
     if (console_sock[0]) {
         r.has_console = true;
-        copy_field(&u, r.console_sock, sizeof(r.console_sock), console_sock, "grutty: console socket path too long");
+        copy_field(&u, r.console_sock, sizeof(r.console_sock), console_sock, "hold: console socket path too long");
     }
     r.recipe.mode_interactive = interactive_stdin;
     r.recipe.mode_tty = console_mode;
     r.recipe.mode_detach = !tail && !console_mode;
     r.recipe.allow_multi = false;
     if (envc > 0 && hold_copy_argv(&r.recipe.env, envc, env) != 0) {
-        launch_die(&u, "grutty: failed to copy env metadata");
+        launch_die(&u, "hold: failed to copy env metadata");
     }
     r.recipe.envc = envc;
     if (restart_enabled) {
-        copy_field(&u, r.recipe.restart_policy, sizeof(r.recipe.restart_policy), restart_policy, "grutty: restart policy too long");
+        copy_field(&u, r.recipe.restart_policy, sizeof(r.recipe.restart_policy), restart_policy, "hold: restart policy too long");
         r.recipe.has_restart_policy = true;
     }
     r.recipe.restart_delay_seconds = opts->restart_delay_seconds;
@@ -832,18 +832,18 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     char real_exe[HOLD_PATH_MAX];
     if (hold_resolve_binary_path(resolved_exec_path, real_exe, sizeof(real_exe)) != 0)
         snprintf(real_exe, sizeof(real_exe), "%s", resolved_exec_path);
-    copy_field(&u, r.observed_exe, sizeof(r.observed_exe), real_exe, "grutty: observed executable path too long");
-    copy_field(&u, r.observed_cwd, sizeof(r.observed_cwd), observed_cwd, "grutty: observed cwd too long");
+    copy_field(&u, r.observed_exe, sizeof(r.observed_exe), real_exe, "hold: observed executable path too long");
+    copy_field(&u, r.observed_cwd, sizeof(r.observed_cwd), observed_cwd, "hold: observed cwd too long");
     r.observed_argc = argc;
     r.observed_argv = observed_argv;
 
     char record_path[HOLD_PATH_MAX] = {0};
     if (getenv("HOLD_TEST_FAIL_RECORD_WRITE")) {
         errno = EIO;
-        launch_die(&u, "grutty: failed to write record");
+        launch_die(&u, "hold: failed to write record");
     }
     if (hold_write_record_atomic(store->record_dir, &r, argc, launch_argv, record_path, sizeof(record_path)) != 0) {
-        launch_die(&u, "grutty: failed to write record");
+        launch_die(&u, "hold: failed to write record");
     }
     if (!restarting_existing) {
         u.record_path = record_path;
@@ -865,7 +865,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         }
         if (chown_rc != 0) {
             if (errno == 0) errno = EIO;
-            launch_die(&u, "grutty: failed to set user-local ownership");
+            launch_die(&u, "hold: failed to set user-local ownership");
         }
     }
     if (store->kind == STORE_SYSTEM_MANAGED) {
@@ -883,7 +883,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
                 unlink(public_path);
             }
             errno = saved;
-            launch_die(&u, "grutty: failed to write public index");
+            launch_die(&u, "hold: failed to write public index");
         }
     }
 
@@ -897,16 +897,16 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     } else {
         printf("%s\n", display_id);
         hold_sig_note(inv,
-                 "grutty  started  %s   %s\n"
+                 "hold  started  %s   %s\n"
                  "         log      %s\n"
-                 "         tail     grutty tail %s\n"
+                 "         tail     hold tail %s\n"
                  "%s%s%s"
-                 "         stop     grutty stop %s\n",
+                 "         stop     hold stop %s\n",
                  display_id,
                  r.cmdline[0] ? r.cmdline : "?",
                  r.log_path,
                  display_id,
-                 r.has_console ? "         console  grutty console " : "",
+                 r.has_console ? "         console  hold console " : "",
                  r.has_console ? display_id : "",
                  r.has_console ? "\n" : "",
                  display_id);

@@ -1,10 +1,10 @@
-# Grutty documentation
+# Hold documentation
 
-Grutty is a daemonless host-process manager and a terminal for scripts and
-agents. `nohup` hangs up gracefully; Grutty keeps the line open. It places
+Hold is a daemonless host-process manager and a terminal for scripts and
+agents. `nohup` hangs up gracefully; Hold keeps the line open. It places
 ordinary commands as durable **calls** — recorded, logged, listable,
 reattachable — and later ends, redials, saves, or purges them. TTY calls
-carry a live headless screen that `grutty peek`, `send`, `wait`, `resize`, and
+carry a live headless screen that `hold peek`, `send`, `wait`, `resize`, and
 `msg` read and drive.
 
 This index points to the current documentation. Historical planning, review
@@ -13,7 +13,7 @@ notes, and documentation for removed subsystems live in
 
 ## The contract
 
-- [Grutty — identity and cut plan](grutty-identity.md): what the tool is,
+- [Hold — identity and cut plan](hold-identity.md): what the tool is,
   the full verb surface, and what deliberately does not exist.
 - [Docker familiarity contract](docker-parity-contract.md): the flags and
   table appearance borrowed from Docker, exactly.
@@ -22,7 +22,7 @@ notes, and documentation for removed subsystems live in
 
 | Need | Read |
 | --- | --- |
-| Install Grutty | [Installing Grutty](install.md) |
+| Install Hold | [Installing Hold](install.md) |
 | Learn the workflow | [Repository README](../README.md) |
 | Understand security posture | [Security review notes](archive/security-review-2026-06-28.md) |
 

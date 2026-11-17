@@ -1,19 +1,19 @@
 #!/bin/sh
 set -eu
 
-REPO_OWNER="${GRUTTY_REPO_OWNER:-RchGrav}"
-REPO_NAME="${GRUTTY_REPO_NAME:-HoldOn}"
-GITHUB_BASE="${GRUTTY_GITHUB_BASE:-https://github.com}"
-GITHUB_API="${GRUTTY_GITHUB_API:-https://api.github.com}"
-INSTALLER_VERSION="${GRUTTY_INSTALLER_VERSION:-latest}"
-INSTALL_SYSTEM="${GRUTTY_INSTALL_SYSTEM:-0}"
+REPO_OWNER="${HOLD_REPO_OWNER:-RchGrav}"
+REPO_NAME="${HOLD_REPO_NAME:-HoldOn}"
+GITHUB_BASE="${HOLD_GITHUB_BASE:-https://github.com}"
+GITHUB_API="${HOLD_GITHUB_API:-https://api.github.com}"
+INSTALLER_VERSION="${HOLD_INSTALLER_VERSION:-latest}"
+INSTALL_SYSTEM="${HOLD_INSTALL_SYSTEM:-0}"
 
 note() {
   printf '%s\n' "$*" >&2
 }
 
 die() {
-  note "grutty installer: error: $*"
+  note "hold installer: error: $*"
   exit 1
 }
 
@@ -25,14 +25,14 @@ usage: install.sh [version] [--system]
 Options:
   --system         Install to (or uninstall from) /usr/local/bin, using sudo
                    if needed.
-  -u, --uninstall  Remove the installed grutty binary and the installer's PATH
-                   block. Grutty state (your calls, logs, records) is kept.
+  -u, --uninstall  Remove the installed hold binary and the installer's PATH
+                   block. Hold state (your calls, logs, records) is kept.
   -h, --help       Show this help.
 
 Environment:
-  GRUTTY_VERSION         Version or tag to install.
-  GRUTTY_INSTALL_SYSTEM  Set to 1 to behave like --system.
-  GRUTTY_INSTALL_DIR     Custom install directory.
+  HOLD_VERSION         Version or tag to install.
+  HOLD_INSTALL_SYSTEM  Set to 1 to behave like --system.
+  HOLD_INSTALL_DIR     Custom install directory.
 EOF
 }
 
@@ -89,7 +89,7 @@ normalize_tag() {
 }
 
 normalize_os() {
-  os=${GRUTTY_INSTALL_TEST_OS:-$(uname -s)}
+  os=${HOLD_INSTALL_TEST_OS:-$(uname -s)}
   case "$os" in
     Darwin|darwin) printf '%s\n' macos ;;
     Linux|linux) printf '%s\n' linux ;;
@@ -98,7 +98,7 @@ normalize_os() {
 }
 
 normalize_arch() {
-  arch=${GRUTTY_INSTALL_TEST_ARCH:-$(uname -m)}
+  arch=${HOLD_INSTALL_TEST_ARCH:-$(uname -m)}
   case "$arch" in
     x86_64|amd64) printf '%s\n' amd64 ;;
     arm64|aarch64) printf '%s\n' arm64 ;;
@@ -110,8 +110,8 @@ normalize_arch() {
 }
 
 detect_libc() {
-  if [ "${GRUTTY_INSTALL_TEST_LIBC:-}" ]; then
-    printf '%s\n' "$GRUTTY_INSTALL_TEST_LIBC"
+  if [ "${HOLD_INSTALL_TEST_LIBC:-}" ]; then
+    printf '%s\n' "$HOLD_INSTALL_TEST_LIBC"
     return
   fi
 
@@ -144,8 +144,8 @@ select_artifact() {
 
   if [ "$os" = macos ]; then
     case "$arch" in
-      arm64) printf 'grutty-%s-macos-arm64.tar.gz\n' "$version_no_v" ;;
-      amd64) printf 'grutty-%s-macos-x86_64.tar.gz\n' "$version_no_v" ;;
+      arm64) printf 'hold-%s-macos-arm64.tar.gz\n' "$version_no_v" ;;
+      amd64) printf 'hold-%s-macos-x86_64.tar.gz\n' "$version_no_v" ;;
       *) die "unsupported macOS architecture: $arch" ;;
     esac
     return
@@ -153,25 +153,25 @@ select_artifact() {
 
   case "$arch" in
     amd64|arm64|armhf)
-      case "${GRUTTY_FLAVOR:-}" in
-        gnu-dynamic) printf 'grutty-%s-linux-%s-gnu-dynamic.tar.gz\n' "$version_no_v" "$arch" ;;
-        gnu-static) printf 'grutty-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
-        musl-static) printf 'grutty-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
+      case "${HOLD_FLAVOR:-}" in
+        gnu-dynamic) printf 'hold-%s-linux-%s-gnu-dynamic.tar.gz\n' "$version_no_v" "$arch" ;;
+        gnu-static) printf 'hold-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
+        musl-static) printf 'hold-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
         "")
           case "$libc" in
-            gnu) printf 'grutty-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
-            musl) printf 'grutty-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
-            *) die "could not determine Linux libc; set GRUTTY_FLAVOR=gnu-static or GRUTTY_FLAVOR=musl-static" ;;
+            gnu) printf 'hold-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
+            musl) printf 'hold-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
+            *) die "could not determine Linux libc; set HOLD_FLAVOR=gnu-static or HOLD_FLAVOR=musl-static" ;;
           esac
           ;;
-        *) die "unsupported GRUTTY_FLAVOR: $GRUTTY_FLAVOR" ;;
+        *) die "unsupported HOLD_FLAVOR: $HOLD_FLAVOR" ;;
       esac
       ;;
     mipsel|riscv64)
-      if [ "${GRUTTY_FLAVOR:-}" ] && [ "${GRUTTY_FLAVOR:-}" != musl-static ]; then
-        die "$arch only has a musl-static Grutty artifact"
+      if [ "${HOLD_FLAVOR:-}" ] && [ "${HOLD_FLAVOR:-}" != musl-static ]; then
+        die "$arch only has a musl-static Hold artifact"
       fi
-      printf 'grutty-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch"
+      printf 'hold-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch"
       ;;
     *) die "unsupported Linux architecture: $arch" ;;
   esac
@@ -186,8 +186,8 @@ path_contains_dir() {
 }
 
 current_uid() {
-  if [ "${GRUTTY_INSTALL_TEST_UID:-}" ]; then
-    printf '%s\n' "$GRUTTY_INSTALL_TEST_UID"
+  if [ "${HOLD_INSTALL_TEST_UID:-}" ]; then
+    printf '%s\n' "$HOLD_INSTALL_TEST_UID"
   elif command -v id >/dev/null 2>&1; then
     id -u
   else
@@ -235,7 +235,7 @@ validate_archive_layout() {
         if (parts[i] == "..") bad = 1
       }
       sub(/^\.\//, "", p)
-      if (p == "grutty") found_hold = 1
+      if (p == "hold") found_hold = 1
     }
     END {
       if (bad || !found_hold) exit 1
@@ -254,7 +254,7 @@ default_install_dir() {
   elif can_write_dir /usr/local/bin; then
     printf '%s\n' /usr/local/bin
   else
-    [ -n "${HOME:-}" ] || die "HOME is not set; set GRUTTY_INSTALL_DIR"
+    [ -n "${HOME:-}" ] || die "HOME is not set; set HOLD_INSTALL_DIR"
     printf '%s\n' "$HOME/.local/bin"
   fi
 }
@@ -328,14 +328,14 @@ write_env_file() {
   install_dir=$3
   mkdir -p "$(dirname "$env_file")"
   {
-    printf 'export GRUTTY_BIN=%s\n' "$(shell_quote "$hold_bin_path")"
+    printf 'export HOLD_BIN=%s\n' "$(shell_quote "$hold_bin_path")"
     printf 'export PATH=%s:"$PATH"\n' "$(shell_quote "$install_dir")"
   } >"$env_file"
 }
 
 profile_path() {
-  if [ "${GRUTTY_PROFILE:-}" ]; then
-    printf '%s\n' "$GRUTTY_PROFILE"
+  if [ "${HOLD_PROFILE:-}" ]; then
+    printf '%s\n' "$HOLD_PROFILE"
     return
   fi
   shell_name=$(basename "${SHELL:-sh}")
@@ -348,12 +348,12 @@ profile_path() {
 
 maybe_update_profile() {
   install_dir=$1
-  [ "${GRUTTY_UPDATE_PROFILE:-1}" = 1 ] || return 0
+  [ "${HOLD_UPDATE_PROFILE:-1}" = 1 ] || return 0
   [ "$(current_uid)" -ne 0 ] || return 0
   [ -n "${HOME:-}" ] || return 0
 
   profile=$(profile_path)
-  marker="# grutty installer"
+  marker="# hold installer"
   mkdir -p "$(dirname "$profile")"
   touch "$profile"
   if grep -Fq "$marker" "$profile"; then
@@ -396,13 +396,13 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-if [ "${GRUTTY_INSTALL_DIR:-}" ] && truthy "$INSTALL_SYSTEM"; then
-  die "GRUTTY_INSTALL_DIR cannot be combined with --system or GRUTTY_INSTALL_SYSTEM=1"
+if [ "${HOLD_INSTALL_DIR:-}" ] && truthy "$INSTALL_SYSTEM"; then
+  die "HOLD_INSTALL_DIR cannot be combined with --system or HOLD_INSTALL_SYSTEM=1"
 fi
 
 install_mode=user
-if [ "${GRUTTY_INSTALL_DIR:-}" ]; then
-  install_dir=$GRUTTY_INSTALL_DIR
+if [ "${HOLD_INSTALL_DIR:-}" ]; then
+  install_dir=$HOLD_INSTALL_DIR
   install_mode=custom
 elif truthy "$INSTALL_SYSTEM"; then
   install_dir=/usr/local/bin
@@ -413,7 +413,7 @@ else
     install_mode=system
   fi
 fi
-target="$install_dir/grutty"
+target="$install_dir/hold"
 use_sudo=0
 if [ "$install_mode" = system ] && install_needs_sudo "$install_dir"; then
   use_sudo=1
@@ -426,10 +426,10 @@ fi
 if [ "$UNINSTALL" -eq 1 ]; then
   [ -z "$version_arg" ] || die "--uninstall does not take a version"
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
-    note "grutty is not installed at $target; nothing to remove"
-    for other in /usr/local/bin/grutty "${HOME:-/nonexistent}/.local/bin/grutty"; do
+    note "hold is not installed at $target; nothing to remove"
+    for other in /usr/local/bin/hold "${HOME:-/nonexistent}/.local/bin/hold"; do
       if [ "$other" != "$target" ] && [ -e "$other" ]; then
-        note "note: found grutty at $other (rerun with --system or GRUTTY_INSTALL_DIR to target it)"
+        note "note: found hold at $other (rerun with --system or HOLD_INSTALL_DIR to target it)"
       fi
     done
     exit 0
@@ -442,9 +442,9 @@ if [ "$UNINSTALL" -eq 1 ]; then
   note "removed $target"
   if [ "$(current_uid)" -ne 0 ] && [ -n "${HOME:-}" ]; then
     profile=$(profile_path)
-    marker="# grutty installer"
+    marker="# hold installer"
     if [ -f "$profile" ] && grep -Fq "$marker" "$profile"; then
-      tmp_profile="$profile.grutty-uninstall.$$"
+      tmp_profile="$profile.hold-uninstall.$$"
       awk -v marker="$marker" '
         $0 == marker { skip = 2 }
         skip > 0 { skip--; next }
@@ -453,12 +453,12 @@ if [ "$UNINSTALL" -eq 1 ]; then
       note "removed the installer PATH block from $profile"
     fi
   fi
-  note "kept grutty state (your calls, logs, records); remove manually if you"
-  note "really mean it: ~/.local/state/grutty (user), /var/lib/grutty (system)"
+  note "kept hold state (your calls, logs, records); remove manually if you"
+  note "really mean it: ~/.local/state/hold (user), /var/lib/hold (system)"
   exit 0
 fi
 
-tag=${version_arg:-${GRUTTY_VERSION:-$INSTALLER_VERSION}}
+tag=${version_arg:-${HOLD_VERSION:-$INSTALLER_VERSION}}
 if [ "$tag" = latest ]; then
   tag=$(latest_tag)
   [ -n "$tag" ] || die "could not resolve latest release tag"
@@ -476,14 +476,14 @@ fi
 artifact=$(select_artifact "$version_no_v" "$os" "$arch" "$libc")
 url="$GITHUB_BASE/$REPO_OWNER/$REPO_NAME/releases/download/$tag/$artifact"
 
-note "grutty installer"
+note "hold installer"
 note "  detected: $os $arch${libc:+ $libc}"
 note "  version:  $tag"
 note "  artifact: $artifact"
 note "  mode:     $install_mode$privilege_note"
 note "  install:  $target"
 
-if [ "${GRUTTY_INSTALL_DRY_RUN:-0}" = 1 ]; then
+if [ "${HOLD_INSTALL_DRY_RUN:-0}" = 1 ]; then
   note "dry run: no files changed"
   exit 0
 fi
@@ -495,7 +495,7 @@ need_cmd mktemp
 
 old_umask=$(umask)
 umask 077
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/grutty-install.XXXXXX") || die "could not create temporary directory"
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/hold-install.XXXXXX") || die "could not create temporary directory"
 umask "$old_umask"
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
@@ -517,8 +517,8 @@ validate_archive_layout "$archive" || die "archive layout is invalid for $artifa
 extract="$tmp/extract"
 mkdir -p "$extract"
 tar -xzf "$archive" -C "$extract"
-bin="$extract/grutty"
-[ -f "$bin" ] && [ ! -L "$bin" ] || die "archive did not contain expected root grutty binary"
+bin="$extract/hold"
+[ -f "$bin" ] && [ ! -L "$bin" ] || die "archive did not contain expected root hold binary"
 
 if [ "$use_sudo" -eq 1 ]; then
   install_binary_sudo "$bin" "$target" "$install_dir"
@@ -529,18 +529,18 @@ fi
 version=$("$target" --version 2>/dev/null || true)
 [ -n "$version" ] || die "installed binary did not run: $target --version"
 
-if [ "${GRUTTY_ENV_FILE:-}" ]; then
-  write_env_file "$GRUTTY_ENV_FILE" "$target" "$install_dir"
-  note "wrote environment handoff: $GRUTTY_ENV_FILE"
+if [ "${HOLD_ENV_FILE:-}" ]; then
+  write_env_file "$HOLD_ENV_FILE" "$target" "$install_dir"
+  note "wrote environment handoff: $HOLD_ENV_FILE"
 fi
 
-if ! path_contains_dir "$install_dir" && [ -z "${GRUTTY_ENV_FILE:-}" ]; then
+if ! path_contains_dir "$install_dir" && [ -z "${HOLD_ENV_FILE:-}" ]; then
   maybe_update_profile "$install_dir"
 fi
 
-note "installed grutty $version"
+note "installed hold $version"
 if path_contains_dir "$install_dir"; then
-  note "run: grutty --help"
+  note "run: hold --help"
 else
   note "current shell PATH does not include $install_dir"
   note "run now: $target on"
@@ -549,11 +549,11 @@ fi
 installer_url="$GITHUB_BASE/$REPO_OWNER/$REPO_NAME/releases/latest/download/install.sh"
 case "$install_mode" in
   system) note "uninstall: curl -LsSf $installer_url | sh -s -- --uninstall --system" ;;
-  custom) note "uninstall: curl -LsSf $installer_url | GRUTTY_INSTALL_DIR=$(shell_quote "$install_dir") sh -s -- --uninstall" ;;
+  custom) note "uninstall: curl -LsSf $installer_url | HOLD_INSTALL_DIR=$(shell_quote "$install_dir") sh -s -- --uninstall" ;;
   *)      note "uninstall: curl -LsSf $installer_url | sh -s -- --uninstall" ;;
 esac
 
 # Machine handoff for scripts capturing stdout; humans already saw the path.
 if [ ! -t 1 ]; then
-  printf 'GRUTTY_BIN=%s\n' "$target"
+  printf 'HOLD_BIN=%s\n' "$target"
 fi

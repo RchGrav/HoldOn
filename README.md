@@ -1,31 +1,76 @@
-# grutty
+# hold — the agent TUI tester
+
+**See, drive, and test terminal programs from scripts and AI agents.**
+A headless terminal for every command you run: read its screen as text, JSON,
+or a color screenshot; type keys, paste, and click; wait for it to settle;
+and let AI coding agents message each other. One static binary. No daemon.
 
 [![CI](https://github.com/RchGrav/HoldOn/actions/workflows/ci.yml/badge.svg)](https://github.com/RchGrav/HoldOn/actions/workflows/ci.yml)
 [![Multi-arch Release](https://github.com/RchGrav/HoldOn/actions/workflows/release.yml/badge.svg)](https://github.com/RchGrav/HoldOn/actions/workflows/release.yml)
+![Linux](https://img.shields.io/badge/Linux-x86__64%20%7C%20arm64%20%7C%20armhf%20%7C%20riscv64%20%7C%20mipsel-informational)
+![macOS](https://img.shields.io/badge/macOS-arm64%20%7C%20x86__64-informational)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-**A tty that scripts and agents can see and drive.** grutty runs any command
-as a durable **call** and, for terminal programs, keeps a live headless
-screen you can read as text or as a color image, type into, wait on, and
-resize — so a test script or an AI agent can work a TUI the way a person
-would. Agents running under it can message each other.
+![An agent drove vim through hold: it clicked inside "world", changed the word, and saved. The ruler marks the cursor in red and the last click in cyan.](docs/images/vim-driven.png)
 
-It also keeps host processes alive, visible, and controllable after your
-terminal, script, or agent moves on. A call is one held process group with a
-durable 64-hex ID, a generated `adjective_noun` name, captured logs, and —
-with `-t` — its screen. No daemon, no config server, one static binary.
-
-More than nohup, less than systemd. (Formerly Hold; the name is Grunthos the
-Flatulent's green putty, with a tty hiding in it.)
+*An AI agent edited this file in vim using only `hold send` and `hold peek`:
+it clicked inside `"world"` (cyan), replaced the word, and saved. The rulers
+give exact coordinates; the red marks and ring show the cursor.*
 
 ```sh
-grutty -d python3 -m http.server 8080   # place a call in the background
-grutty -dt --name app htop              # a TUI, held on its own terminal
-grutty peek app                         # its screen, as plain text
-grutty peek app --image app.png         # ...or as a color PNG with a ruler
-grutty send app -k F6 -k Down --wait 300
-grutty wait app --match "Sort by"       # until the screen shows it
-grutty end app                          # end it politely
+hold -dt --name app -- vim notes.txt   # run any TUI on its own headless terminal
+hold peek app                          # its screen, as plain text
+hold peek app --image app.png          # ...or as a color PNG with coordinate rulers
+hold send app i "hello" -k Escape :wq --enter   # type, press keys, in order
+hold wait app                          # until it exits; prints the exit code
 ```
+
+Think of it as **Playwright for the terminal**, or `tmux send-keys` and
+`capture-pane` built for automation: no session to manage, exact key
+encoding, deterministic waits, and screenshots an agent can actually read.
+
+---
+
+## Contents
+
+- [Why hold](#why-hold)
+- [Install](#install)
+- [Drive a TUI in five commands](#drive-a-tui-in-five-commands)
+- [Screenshots agents can read](#screenshots-agents-can-read)
+- [Keys, paste, and mouse — exactly like a real terminal](#keys-paste-and-mouse--exactly-like-a-real-terminal)
+- [Waiting without `sleep`](#waiting-without-sleep)
+- [Agents talking to agents](#agents-talking-to-agents)
+- [Give your agent hold (paste into CLAUDE.md / AGENTS.md)](#give-your-agent-hold)
+- [Testing TUIs in CI](#testing-tuis-in-ci)
+- [Background processes, done right](#background-processes-done-right)
+- [How hold compares](#how-hold-compares)
+- [How it works](#how-it-works)
+- [Command reference](#command-reference)
+- [FAQ](#faq)
+
+## Why hold
+
+**AI coding agents can't see terminal UIs.** Claude Code, Codex, Aider,
+Cursor and friends run shell commands and read their output — but a TUI
+(vim, htop, a curses installer, a Textual or Bubble Tea app, *another agent*)
+is a moving screen, not a stream of lines. hold gives the agent eyes and
+hands: a headless terminal per program, a text or image view of it, and
+input that is encoded exactly as a real xterm would send it.
+
+**TUI apps deserve real end-to-end tests.** If you build a terminal app
+(ncurses, prompt_toolkit, Textual, Bubble Tea, Ratatui, Ink, urwid, dialog),
+hold lets a plain shell script launch it, drive it with keys and mouse,
+assert on the screen, and fail with a screenshot — in CI, on Linux and macOS.
+
+**Agents can supervise agents.** Run several harnesses under hold and they can
+check on each other with `hold peek` and coordinate with `hold msg`, with
+caller ID that the receiver verifies. A lead agent can start workers, watch
+their screens, and get their reports back — no framework, no server.
+
+**And it still does its first job.** hold started as a daemonless process
+keeper: background dev servers, CI helpers, and workers with durable IDs,
+logs, safe teardown, and Docker-style commands. That foundation is why the
+screen features are reliable.
 
 ## Install
 
@@ -33,183 +78,299 @@ grutty end app                          # end it politely
 curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh | sh
 ```
 
-System-wide (installs to `/usr/local/bin` with sudo):
+System-wide (`/usr/local/bin`, with sudo):
 
 ```sh
 curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh | sh -s -- --system
 ```
 
-Or build from source with any C11 compiler:
+Or build from source with any C11 compiler — no dependencies:
 
 ```sh
-make && ./grutty --help
+git clone https://github.com/RchGrav/HoldOn && cd HoldOn && make && ./hold --help
 ```
 
-Details, checksums, and offline installs: [docs/install.md](docs/install.md).
+Prebuilt for Linux (x86_64, arm64, armhf, riscv64, mipsel; glibc and musl
+static) and macOS (Apple Silicon and Intel). On Windows, use WSL. Details,
+checksums, and offline installs: [docs/install.md](docs/install.md).
 
-Grutty does **not** create containers. It does not isolate filesystems, publish
-ports, mount volumes, or pretend a host process has Docker networking. It
-manages ordinary host processes and tells the truth about them. Where the
-output *looks* like Docker — the call table, the flags, `-d`/`-it` — that is
-deliberate familiarity, nothing more.
+## Drive a TUI in five commands
 
-## What Grutty is for
+```sh
+hold -dt --name ed -- vim hello.c                # 1. run it on a headless terminal
+hold wait ed --idle 500                          # 2. wait until it has drawn
+hold peek ed --ruler                             # 3. look at it
+hold send ed --mouse click,29,4                  # 4. click where you want...
+hold send ed ciw agents -k Escape :w --enter --wait 300   # ...and type
+```
 
-Development servers, CI helper processes, temporary workers, integration-test
-dependencies, a qemu you want to walk away from, and interactive programs you
-want to put in the background and come back to.
+`hold peek --ruler` prints the screen with coordinates, so an agent never has
+to count characters:
 
 ```text
-nohup / &   too little state and safety
-Grutty        durable call handle, logs, save/redial, attach/detach
-systemd     machine service supervision and boot policy
-Docker      containers, images, isolation, networking
+   0         1         2         3         4         5         6         7
+   01234567890123456789012345678901234567890123456789012345678901234567890123456789
+ 0|  1 #include <stdio.h>
+ 1|  2
+ 2|  3 /* A tiny program for an agent to edit. */
+ 3|  4 int main(void) {
+ 4|  5     const char *who = "agents";
+ 5|  6     for (int i = 0; i < 3; i++)
 ```
 
-## Placing calls
+`hold peek --json` adds the facts a program can't print: cursor position and
+visibility, alternate screen, mouse tracking mode, bracketed paste, cursor-key
+mode, window title, an output counter, and how long the screen has been idle.
+
+```json
+{ "rows": 24, "cols": 80,
+  "cursor": {"row": 4, "col": 31, "visible": true},
+  "alt_screen": true, "mouse": "drag", "bracketed_paste": true,
+  "cursor_keys": "application", "output_seq": 1873, "idle_ms": 312,
+  "lines": ["  1 #include <stdio.h>", "  2", "..."] }
+```
+
+## Screenshots agents can read
+
+`hold peek <call> --image screen.png` renders the live screen to a PNG with
+true colors, bold/underline/inverse, box drawing, Braille, CJK, and emoji —
+plus overlays designed for vision models:
+
+- **Coordinate rulers** on the top and left (`┬` / `├` ticks, labeled), with a
+  one-cell gutter so they never touch the content.
+- **The cursor's column and row marked in red** on both rulers; `--cursor-ring`
+  circles the cursor cell.
+- **The last mouse event in cyan** (a reticle and ruler marks), to confirm a
+  click landed where intended.
+- **A footer** spelling it out: `CURSOR: col 31, row 4   SIZE: 80x24`.
+
+![A whiptail checklist driven entirely by hold send: Down, Space, Down, Space.](docs/images/whiptail-form.png)
+
+`--scale N`, `--no-ruler`, and `--no-footer` adjust it. After a program exits,
+`hold peek` still shows its **last screen** — a crash is diagnosable at once.
+
+## Keys, paste, and mouse — exactly like a real terminal
+
+`hold send` applies its arguments in order. Keys are encoded by a real
+terminal emulator (libvterm) for the program's **current** modes, so arrows,
+paste, and clicks behave as they would under xterm:
+
+| You send | The program receives |
+| --- | --- |
+| `"text"` (positional) | the text, literally (`--text` for text starting with `-`) |
+| `-k Enter` / `Tab` / `Escape` / `Backspace` | `\r` / `\t` / `\e` / `0x7f` |
+| `-k S-Tab` | `\e[Z` (reverse tab) |
+| `-k Up` | `\e[A`, or `\eOA` once the app enables application cursor keys (DECCKM) |
+| `-k C-c`, `-k C-x`, `-k M-x` | `0x03`, `0x18`, `\ex` |
+| `-k C-Left`, `-k F5`, `-k PageDown` | `\e[1;5D`, `\e[15~`, `\e[6~` |
+| `--paste "multi\nline"` | wrapped in `\e[200~ … \e[201~` only if the app enabled bracketed paste |
+| `--mouse click,COL,ROW[,BUTTON]` | SGR (or legacy) mouse press + release, 0-based coordinates in, 1-based on the wire |
+| `--mouse drag,…` / `scroll-up,…` / `press` / `release` / `move` | the matching motion, wheel, and button events |
+
+Each key arrives in a single write, so a lone Escape is never mistaken for an
+escape sequence. If the program has mouse reporting off, `send` says so instead
+of pretending. Ctrl+C and Ctrl+Z become SIGINT and SIGTSTP through the
+terminal driver — exactly as at a keyboard.
+
+## Waiting without `sleep`
 
 ```sh
-grutty <cmd> [args...]        # foreground: stream its output
-grutty -d <cmd> [args...]     # detached: prints the bare 64-hex call id
-grutty -it <cmd> [args...]    # attached on a PTY (Ctrl-P Ctrl-Q detaches, leaving it running)
-grutty -dt <cmd> [args...]    # on a PTY, detached: drive it with peek/send/wait
-grutty <id|name>              # redial: restart a retained call from its recipe
+hold wait app --match "Ready"          # the text appears on screen (--regex too)
+hold wait app --idle 500               # the program drew something, then went quiet
+hold send app -k Enter --wait 300      # send, then wait for the answer to settle
+seq=$(hold send app q --seq)           # remember the output counter...
+hold wait app --match "Bye" --since "$seq"   # ...and accept only a fresh screen
+hold wait app                          # until it exits; prints the exit code
+```
+
+Exit status: `0` the condition held, `7` timed out, `8` the program ended
+first. Screen conditions time out after 30 s unless `--timeout` says otherwise.
+
+## Agents talking to agents
+
+Every program started with hold knows its own address: hold sets
+`HOLD_CALL_NAME` and `HOLD_CALL_ID` in its environment, and `HOLD_CALL_PARENT`
+when it was launched from inside another call. `hold msg` types a message into
+another agent's prompt — once its screen is quiet, as a bracketed paste,
+followed by Enter:
+
+```sh
+hold -dt --name worker -- claude          # or codex, aider, ...
+hold msg worker "Run the tests in tests/redial and report back with hold msg."
+```
+
+Here one Claude Code session started a second one under hold, asked it a
+question with `hold msg`, and the second answered back the same way — on its
+own, using the reply hint in the header:
+
+![A Claude Code session (helper) receiving a verified message from the Claude Code session that launched it, and replying with hold msg.](docs/images/claude-to-claude.png)
+
+Any program can be on either end; a plain shell loop receiving a worker's
+report looks like this:
+
+![A lead agent receiving a verified message from a worker.](docs/images/agent-message.png)
+
+The header is **verified**: the receiving side checks that the sending process
+really belongs to the call it names (its session, or its process ancestry —
+which works with harnesses like Claude Code that run each tool command in a
+new session). Anything else is marked `(unverified)`. Delivery is capped at 20
+messages a minute per receiver, so two polite agents can't loop forever.
+
+## Give your agent hold
+
+Paste this into your agent's instruction file (`CLAUDE.md`, `AGENTS.md`,
+`.cursorrules`, …):
+
+```markdown
+## Terminal programs (TUIs): use `hold`
+To run, inspect, or test anything interactive (editors, TUIs, REPLs, installers,
+other agents), never run it directly — run it under hold:
+- Start: `hold -dt --name NAME -- CMD ARGS...`
+- Look: `hold peek NAME` (text) · `hold peek NAME --ruler` (coordinates) ·
+  `hold peek NAME --image /tmp/NAME.png` (screenshot, then read the image)
+- Type: `hold send NAME "text" -k Enter` · keys: Enter Tab Escape Up Down
+  Left Right PageUp F1-F24, C-c, M-x · `--paste TEXT` · `--mouse click,COL,ROW`
+- Wait (no sleep): `hold wait NAME --match "text"` · `--idle 500` ·
+  `hold send NAME ... --wait 300`
+- Finish: `hold end NAME` · exit code: `hold wait NAME`
+- Talk to another agent: `hold msg NAME "..."`; your own name is $HOLD_CALL_NAME.
+```
+
+## Testing TUIs in CI
+
+A test is a shell script. Every step returns a meaningful exit code, and a
+failing step can leave a screenshot behind:
+
+```sh
+#!/bin/sh
+set -e
+hold -dt --name ui -- ./my-tui --demo
+hold wait ui --match "Main menu" --timeout 10000
+hold send ui -k Down -k Down -k Enter --wait 300
+hold wait ui --match "Settings saved" || { hold peek ui --image failure.png; exit 1; }
+hold send ui -k C-c
+test "$(hold wait ui)" = 0
+```
+
+```yaml
+# .github/workflows/tui.yml (excerpt)
+- run: curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh | sh
+- run: ./tests/tui-smoke.sh
+- if: failure()
+  uses: actions/upload-artifact@v4
+  with: { name: tui-screens, path: "*.png" }
+```
+
+hold's own test suite drives vim, tmux, micro, whiptail, and ncurses
+programs this way on Linux and macOS; nano, dialog, and Midnight Commander
+have been driven the same way by hand.
+
+## Background processes, done right
+
+The foundation: a **call** is one held process group with a durable 64-hex
+ID, a generated `adjective_noun` name, and captured logs. hold keeps it alive
+after your terminal, script, or CI step moves on.
+
+```sh
+hold -d python3 -m http.server 8080     # background: prints the call id
+hold list                               # your calls, live and past
+hold ps                                 # Docker-style view of what's running
+hold logs web -f                        # follow its output (-n 100: newest lines)
+hold ports web                          # listening sockets in use (Linux)
+hold attach web                         # pick it back up; Ctrl-P Ctrl-Q detaches
+hold end web                            # TERM, then KILL if needed
+hold web                                # redial: start it again from its recipe
+hold save web                           # protect it from cleanup
+hold rename web api                     # give it a better name
+hold purge                              # sweep ended calls
 ```
 
 Flags mirror Docker where they exist (and cluster the same way: `-dit`):
-`-d`, `-i`, `-t`, `-e`, `--env-file`,
-`--name`, `--rm`, `--restart`, `--detach-keys`. Fake substrate flags
-(`-p`, `-P`, `-v`) are honestly rejected. Use `--` when the command could be
-mistaken for a call name.
+`-d`, `-i`, `-t`, `-e`, `--env-file`, `--name`, `--rm`, `--restart`,
+`--detach-keys`. Every call gets its own session and process group; before any
+signal, hold re-checks the boot ID and the leader's identity, so a recycled PID
+is never killed by mistake. Root or `--system` calls live in a separate system
+store. More than nohup, less than systemd.
 
-A redialed call replays its recorded recipe, including its session mode: a
-call placed with `-it` reattaches, one placed with `-d` detaches again.
+## How hold compares
 
-## Driving a TUI: peek, send, wait, resize
+| | hold | tmux `send-keys` + `capture-pane` | expect / pexpect | VHS | nohup / setsid |
+| --- | --- | --- | --- | --- | --- |
+| Read a TUI's screen | ✅ text, JSON, PNG | ✅ text | ⚠️ raw byte stream | ✅ screenshots / GIF | ❌ |
+| Keys encoded for the app's modes | ✅ | ✅ | ❌ you write bytes | ✅ | ❌ |
+| Mouse: click, drag, wheel | ✅ SGR | ⚠️ limited | ❌ | ❌ | ❌ |
+| Wait for the screen to settle or match | ✅ idle / match / since / exit | ⚠️ poll it yourself | ✅ pattern on the stream | ⚠️ `Wait` / `Sleep` | ❌ |
+| Screenshots with coordinates and cursor marks | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Verified agent-to-agent messages | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Durable records, safe teardown | ✅ | ⚠️ sessions | ❌ | ❌ | ⚠️ |
+| Extra moving parts | none (per-call broker) | a tmux server | none | ttyd, ffmpeg, a browser | none |
 
-A call placed with `-t` (`-it` to watch it, `-dt` to leave it running) gets a
-headless terminal that follows every byte the program writes. Anything that
-can run a command can then debug a terminal program end to end — a test
-script, a CI step, or an AI agent.
+tmux is a great terminal multiplexer and VHS is a great tool for recording
+terminal demos; hold is built for the loop an agent or a test runs:
+look → act → wait → check.
 
-```sh
-grutty -dt --name ed -- vim notes.txt
+## How it works
 
-grutty peek ed                  # the visible screen, plain UTF-8, one line per row
-grutty peek ed --ruler          # with column and row numbers
-grutty peek ed --json           # + cursor, modes, title, output counter, idle time
-grutty peek ed --image ed.png   # color PNG: ruler margins, cursor marked in red,
-                              # footer "CURSOR: col 4, row 0   SIZE: 80x24"
-grutty peek ed --image ed.png --cursor-ring
+Each call placed with `-t` gets a **console broker**: a small process born with
+the call and gone with it (hold stays daemonless). The broker owns the
+program's pseudo-terminal, appends every output byte to the call's log, and
+feeds the same bytes to a headless terminal — vendored
+[libvterm](third_party/libvterm/) — so it always knows the exact screen.
+`peek`, `send`, `wait`, `resize`, and `msg` talk to the broker over the
+call's private Unix socket (owner-only, peer UID checked). When the program
+exits, the broker saves its final screen beside the log. The screenshot
+renderer and its PNG encoder are built in; glyphs come from a subset of
+[GNU Unifont](third_party/unifont/). Details:
+[docs/screen.md](docs/screen.md) · [docs/console.md](docs/console.md) ·
+[docs/SPEC.md](docs/SPEC.md).
 
-grutty send ed i "hello" -k Escape ":wq" --enter   # text and keys, in order
-grutty send ed --paste "$(cat snippet.txt)"        # bracketed paste if enabled
-grutty send ed --mouse click,12,4                  # SGR mouse at col 12, row 4
-grutty send ed -k C-c --wait 300                   # then wait until it settles
+## Command reference
 
-grutty wait ed --idle 500                # screen quiet for 500 ms
-grutty wait ed --match "written"         # text appears (--regex for patterns)
-grutty wait ed                           # until it exits; prints the exit code
+| Command | What it does |
+| --- | --- |
+| `hold [-d] [-t] [-i] [--name N] -- CMD…` | place a call (foreground, detached, on a PTY) |
+| `hold peek CALL [--ruler] [--json] [--image F]` | the screen as text, JSON, or PNG |
+| `hold send CALL [TEXT] [-k KEY] [--paste T] [--mouse A,C,R] [--wait MS]` | type, press, paste, click |
+| `hold wait CALL [--idle MS] [--match T \| --regex R] [--since SEQ]` | block until it settles, shows text, or exits |
+| `hold resize CALL COLS ROWS` | resize its terminal (SIGWINCH) |
+| `hold msg CALL TEXT` | message an agent; it can reply the same way |
+| `hold list` · `hold ps` · `hold inspect CALL` | what is running, and everything known about it |
+| `hold logs CALL [-f] [-n N]` | captured output |
+| `hold attach CALL` | interactive attach (Ctrl-P Ctrl-Q detaches) |
+| `hold end CALL` · `hold kill CALL` | stop politely / now |
+| `hold save` · `hold rename` · `hold purge` · `hold ports` · `hold stats` | keep, name, clean up, observe |
 
-grutty resize ed 120 40                  # SIGWINCH and a reflowed screen
-```
+`hold <command> -h` documents each one; `hold help scripting` lists exit codes.
 
-Keys are encoded for the program's current modes — arrows switch to
-application form under DECCKM, paste is bracketed only when the program asked
-for it — so what you send is what a real terminal would send. `wait` exits
-0 when its condition holds, 7 on timeout, 8 if the call ended first. When a
-call ends, its last screen is kept: `grutty peek` still shows how it left
-things.
+## FAQ
 
-## Agents: run harnesses, check on them, message between them
+**Is hold a terminal emulator?** No. It runs programs on a *headless*
+terminal and lets other programs see and drive them. Use it from your
+terminal, a script, CI, or an AI agent.
 
-An agent harness is a TUI like any other. Place one under Grutty and any other
-process — you, a script, another agent — can watch and steer it:
+**Does it need tmux or screen?** No. Nothing runs in the background except
+each call's own broker, which exits with the call.
 
-```sh
-grutty -dt --name worker -- claude      # or codex, aider, ...
-grutty peek worker                      # what is it doing?
-grutty msg worker "Run the tests in tests/redial and report back."
-```
+**Which AI agents does it work with?** Any agent that can run shell commands:
+Claude Code, Codex CLI, Aider, Gemini CLI, Cursor, Goose, OpenHands, your own.
+Running an agent harness *under* hold also makes it observable and messageable.
 
-Every call knows its own address: Grutty sets `GRUTTY_CALL_ID` and
-`GRUTTY_CALL_NAME` in its environment, and `GRUTTY_CALL_PARENT` when it was
-launched from inside another call. `grutty msg` types the text into the
-receiver's prompt — once its screen has been quiet for a second — with a
-header naming the sender and how to reply:
+**Is it safe?** Calls and their sockets are private to your user (root can
+see all); signals are delivered only after identity re-validation; `msg`
+headers say whether the sender was verified. hold never elevates on its own.
 
-```text
-[msg from lead; reply: grutty msg lead "..."] Run the tests in tests/redial and report back.
-```
+**Why "hold"?** `nohup` says *no hang-up*. hold says **hold on**: the line
+stays open. Calls, redial, picking the line back up — and now caller ID
+between agents. (It began life as *sigmund*: signal guardian.)
 
-The receiving call verifies the sender: the header names a call only when the
-sending process really runs inside it; anything else is marked
-`(unverified)`. Delivery is capped at 20 messages a minute per receiver, so two
-polite agents cannot reply to each other forever.
+---
 
-## Managing calls
+Apache-2.0. Vendored: [libvterm](third_party/libvterm/) (MIT),
+[GNU Unifont](third_party/unifont/) subset (SIL OFL 1.1).
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```sh
-grutty list                   # your ledger: your calls, live and past
-grutty ps                     # the Docker view: running calls, machine-wide
-grutty attach <target>        # pick a call back up (Ctrl-P Ctrl-Q detaches)
-grutty end <target>           # end politely: TERM, then KILL (stop is an alias)
-grutty kill <target>          # KILL now, when it won't listen
-grutty logs <target> [-f]     # captured output as plain text
-grutty inspect <target>       # everything visible at your access level, JSON
-grutty ports <target>         # ports in use by the call's process group
-grutty stats <target>         # live CPU/memory/pids stream
-grutty save <target>          # protect a call from purge
-grutty rename <target> <name> # give it a meaningful name
-grutty purge [<target>] [-a] [--force]   # the one removal verb
-                            # (rm, prune, and drop are aliases)
-```
-
-Targets are call IDs, ID prefixes, or names. Ambiguity is refused, never
-guessed. Saved calls survive every purge except a targeted `--force`:
-
-```text
-$ grutty purge web
-grutty: 'web' is saved — purging a saved call requires --force
-  grutty purge web --force
-```
-
-## Logs
-
-A call's output is captured as raw bytes in one plain file, readable by
-anything. `grutty logs` prints it:
-
-```sh
-grutty logs web               # everything captured
-grutty logs -f web            # follow until the call ends
-grutty logs -n 100 web        # the newest 100 lines (pipe to grep to filter)
-```
-
-For a TTY call, the log is the byte stream; `grutty peek` is the screen. Output
-a program sends somewhere else
-on purpose — its own logfile, a redirect — is respected, not captured; `grutty
-inspect` reports where the call's stdio actually points.
-
-## Safety model
-
-Grutty is daemonless: every command reopens recorded state and revalidates
-before acting. A TTY call's screen lives in that call's own console broker —
-born with the call, gone with it — and `peek`, `send`, `wait`, and `msg` talk
-to it directly over the call's private socket. Managed calls get their own process group and session; stop
-and kill are delivered to the group after the recorded identity is
-revalidated, so a recycled PID is never signaled by mistake. stdout carries
-machine data; human notes go to stderr; `--quiet` silences them.
-
-## Build
-
-```sh
-make
-./grutty --help
-```
-
-Requires a C11 compiler and POSIX; Linux and macOS are tested. The design
-contract lives in [docs/grutty-identity.md](docs/grutty-identity.md).
-
-Vendored: [libvterm](third_party/libvterm/) 0.3.3 (MIT) is the headless
-terminal; a subset of [GNU Unifont](third_party/unifont/) (SIL OFL 1.1) draws
-`peek --image`.
+<sub>Keywords: agent TUI tester, TUI testing, terminal UI automation, headless
+terminal, terminal screenshot, AI agent tools, Claude Code, Codex, coding
+agents, multi-agent orchestration, expect alternative, pexpect alternative, tmux
+send-keys alternative, ncurses testing, end-to-end CLI testing, Playwright for
+the terminal, process manager, nohup alternative.</sub>

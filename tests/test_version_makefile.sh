@@ -127,7 +127,7 @@ binary="$3"
 out="$4"
 mkdir -p "$out"
 printf '%s %s %s\n' "$target" "$version" "$binary" >> "$out/packages.log"
-: > "$out/grutty-$version-$target.tar.gz"
+: > "$out/hold-$version-$target.tar.gz"
 SHSTUB
 chmod +x "$releasecase/.github/scripts/package_tarball.sh"
 cat >"$releasecase/bin/git" <<'SHSTUB'
@@ -163,20 +163,20 @@ cat >"$releasecase/bin/make" <<'SHSTUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  clean) rm -f grutty grutty-dynamic ;;
-  grutty\ STATIC_LDFLAGS=-static|grutty\ STATIC_LDFLAGS='-static')
-    cat > grutty <<'BIN'
+  clean) rm -f hold hold-dynamic ;;
+  hold\ STATIC_LDFLAGS=-static|hold\ STATIC_LDFLAGS='-static')
+    cat > hold <<'BIN'
 #!/usr/bin/env bash
 printf '%s\n' v9.8.7
 BIN
-    chmod +x grutty
+    chmod +x hold
     ;;
-  grutty-dynamic\ STATIC_LDFLAGS=*)
-    cat > grutty-dynamic <<'BIN'
+  hold-dynamic\ STATIC_LDFLAGS=*)
+    cat > hold-dynamic <<'BIN'
 #!/usr/bin/env bash
 printf '%s\n' v9.8.7
 BIN
-    chmod +x grutty-dynamic
+    chmod +x hold-dynamic
     ;;
   *) printf 'unexpected fake make args: %s\n' "$*" >&2; exit 2 ;;
 esac
@@ -199,15 +199,15 @@ chmod +x "$releasecase/bin/file"
 (
   cd "$releasecase"
   env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:/usr/bin:/bin" FAKE_GIT_MODE=tag-clean bash scripts/release_build.sh >tag-clean.out 2>tag-clean.err
-  grep -qx 'linux-amd64-gnu-static 9.8.7 grutty' dist/packages.log
-  grep -qx 'linux-amd64-gnu-dynamic 9.8.7 grutty-dynamic' dist/packages.log
+  grep -qx 'linux-amd64-gnu-static 9.8.7 hold' dist/packages.log
+  grep -qx 'linux-amd64-gnu-dynamic 9.8.7 hold-dynamic' dist/packages.log
 )
 (
   cd "$releasecase"
   rm -rf dist
   env -u GITHUB_SHA -u GITHUB_REF_TYPE -u GITHUB_REF_NAME PATH="$releasecase/bin:/usr/bin:/bin" FAKE_GIT_MODE=branch-clean bash scripts/release_build.sh >branch-clean.out 2>branch-clean.err
-  grep -qx 'linux-amd64-gnu-static 9.8.7-abcdef1 grutty' dist/packages.log
-  grep -qx 'linux-amd64-gnu-dynamic 9.8.7-abcdef1 grutty-dynamic' dist/packages.log
+  grep -qx 'linux-amd64-gnu-static 9.8.7-abcdef1 hold' dist/packages.log
+  grep -qx 'linux-amd64-gnu-dynamic 9.8.7-abcdef1 hold-dynamic' dist/packages.log
 )
 (
   cd "$releasecase"

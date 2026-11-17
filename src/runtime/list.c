@@ -144,7 +144,7 @@ static int collect_private_cb(const char *id, const char *path, struct hold_run_
     (void)path;
     struct private_walk *w = vctx;
     if (!r) {
-        fprintf(stderr, "grutty: warning: skipping corrupt record %s.json\n", id);
+        fprintf(stderr, "hold: warning: skipping corrupt record %s.json\n", id);
         return 0;
     }
     if (w->name_filter && (!r->has_name || strcmp(r->name, w->name_filter) != 0)) return 0;
@@ -435,7 +435,7 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
     char log_path[HOLD_PATH_MAX], sock_path[HOLD_PATH_MAX];
     if (hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, r->id) == 0) {
         if (r->has_log && strcmp(r->log_path, log_path) != 0)
-            fprintf(stderr, "grutty: warning: record %s names a log outside the store; left untouched: %s\n", r->id, r->log_path);
+            fprintf(stderr, "hold: warning: record %s names a log outside the store; left untouched: %s\n", r->id, r->log_path);
         unlink(log_path);
     }
     char screen_path[HOLD_PATH_MAX];
@@ -443,7 +443,7 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
         unlink(screen_path);
     if (hold_format_console_sock_path(store, r->id, sock_path, sizeof(sock_path)) == 0) {
         if (r->has_console && strcmp(r->console_sock, sock_path) != 0)
-            fprintf(stderr, "grutty: warning: record %s names a console socket outside the store; left untouched: %s\n", r->id, r->console_sock);
+            fprintf(stderr, "hold: warning: record %s names a console socket outside the store; left untouched: %s\n", r->id, r->console_sock);
         unlink(sock_path);
     }
 }
@@ -454,7 +454,7 @@ int hold_prune_one_run(const struct hold_store *store, const char *id, const cha
     if (hold_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) return 5;
     enum run_state st = hold_eval_state(&r, boot ? boot : NULL);
     if (st != STATE_EXITED && st != STATE_FAILED && !(allow_stale && st == STATE_STALE)) {
-        fprintf(stderr, "grutty: error: call %s is %s and cannot be purged\n", id, hold_state_str(st));
+        fprintf(stderr, "hold: error: call %s is %s and cannot be purged\n", id, hold_state_str(st));
         hold_free_run_record(&r);
         return 2;
     }
@@ -608,10 +608,10 @@ int hold_cmd_purge_action(const struct hold_invocation *inv, const struct hold_s
             format_kept_note(&stats, kept, sizeof(kept));
             const char *hint = stats.kept_stale > 0 ? " (purge -a sweeps stale)" : "";
             if (stats.removed > 0)
-                hold_sig_note(inv, "grutty: purged %d past call%s%s%s\n",
+                hold_sig_note(inv, "hold: purged %d past call%s%s%s\n",
                               stats.removed, stats.removed == 1 ? "" : "s", kept, hint);
             else
-                hold_sig_note(inv, "grutty: nothing to purge%s%s\n", kept, hint);
+                hold_sig_note(inv, "hold: nothing to purge%s%s\n", kept, hint);
         }
         return rc;
     }
@@ -648,8 +648,8 @@ int hold_cmd_purge_action(const struct hold_invocation *inv, const struct hold_s
             hold_run_id_display(r.id, display_id);
             if (r.saved) {
                 fprintf(stderr,
-                        "grutty: '%s' is saved \xe2\x80\x94 purging a saved call requires --force\n"
-                        "  grutty purge %s --force\n",
+                        "hold: '%s' is saved \xe2\x80\x94 purging a saved call requires --force\n"
+                        "  hold purge %s --force\n",
                         r.has_name ? r.name : display_id, target_token);
                 hold_free_run_record(&r);
                 free(targets);
@@ -690,12 +690,12 @@ int hold_cmd_purge_action(const struct hold_invocation *inv, const struct hold_s
             const char *atom = NULL;
             enum id_token_scope token_scope = hold_parse_id_token(target_token, &atom);
             if (token_scope != ID_TOKEN_INVALID && atom && hold_valid_alias(atom) && !hold_valid_id_prefix(atom))
-                hold_sig_note(inv, "grutty: purged %d past call%s for '%s'\n",
+                hold_sig_note(inv, "hold: purged %d past call%s for '%s'\n",
                               removed_count, removed_count == 1 ? "" : "s", atom);
             else
-                hold_sig_note(inv, "grutty: purged %d past call%s\n", removed_count, removed_count == 1 ? "" : "s");
+                hold_sig_note(inv, "hold: purged %d past call%s\n", removed_count, removed_count == 1 ? "" : "s");
         } else {
-            hold_sig_note(inv, "grutty: nothing to purge\n");
+            hold_sig_note(inv, "hold: nothing to purge\n");
         }
     }
     free(targets);

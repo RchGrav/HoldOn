@@ -1,6 +1,6 @@
 # CI parity contract
 
-Grutty's tests are intentionally split by privilege model. Keeping these lanes
+Hold's tests are intentionally split by privilege model. Keeping these lanes
 separate is part of the product contract, not just build hygiene.
 
 ## Normal CI lane
