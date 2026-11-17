@@ -39,7 +39,6 @@ notes, and documentation for removed subsystems live in
 ## Future work
 
 - [Future notes](future/README.md)
-- [Additional log destinations](future/log-destinations.md)
 
 ## Source map
 
@@ -52,4 +51,4 @@ Public headers live under `include/hold/`; implementation is layered under
 - `console/`: attachable PTY handling — the held line
 - `access/`: invocation context (euid, invoking user)
 - `runtime/`: product commands and lifecycle behavior
-- `viewer/`: the built-in full-screen log viewer
+- `screen/`: the headless terminal, snapshots, and PNG rendering

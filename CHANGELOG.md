@@ -62,6 +62,12 @@ for test scripts, CI, and AI agents alike.
 
 - `hold on` / `hold off` / `hold shell` and foreground-program adoption.
 - The full-screen log viewer, playback transport, and attach time-travel.
+- The `HLOGIDX` log index sidecar (with its CRC self-healing and v1/v2
+  formats), the line filter engine, and `logs --filter`, `--similar`,
+  `--replay`, `--debug-stats`. A call's log is one plain file; `hold logs`
+  prints it (`-f`, `-n N`; `-p` still accepted), `grep` filters it, and
+  `peek` shows a TTY call's screen. Viewer-era review and demo scripts went
+  with it.
 
 ### Fixed
 

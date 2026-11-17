@@ -429,11 +429,6 @@ static void unlink_public_index(const struct hold_store *store, const char *id) 
     if (hold_checked_snprintf(path, sizeof(path), "%s/%s.json", store->public_dir, id) == 0) unlink(path);
 }
 
-static void unlink_log_index_for_log(const char *log_path) {
-    char idx[HOLD_PATH_MAX];
-    if (hold_log_idx_path(log_path, idx, sizeof(idx)) == 0) unlink(idx);
-}
-
 /* Purge derives its unlink targets from the store layout and the call id;
  * a path string stored inside a record is never followed for deletion. */
 static void unlink_call_artifacts(const struct hold_store *store, const struct hold_run_record *r) {
@@ -441,7 +436,6 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
     if (hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, r->id) == 0) {
         if (r->has_log && strcmp(r->log_path, log_path) != 0)
             fprintf(stderr, "hold: warning: record %s names a log outside the store; left untouched: %s\n", r->id, r->log_path);
-        unlink_log_index_for_log(log_path);
         unlink(log_path);
     }
     char screen_path[HOLD_PATH_MAX];
@@ -509,10 +503,9 @@ static void sweep_tmp_litter(const char *dir) {
 
 /* One orphan sweep: any artifact in dir with the given suffix whose id has
  * no record left is removed (a public entry, log, or console socket whose
- * record is gone must never resurrect a call). is_log also drops the
- * .log.idx sidecar beside each removed log. */
+ * record is gone must never resurrect a call). */
 static void sweep_orphaned_artifacts(const struct hold_store *store, const char *dir,
-                                     const char *suffix, bool is_log, struct prune_sweep_stats *stats) {
+                                     const char *suffix, struct prune_sweep_stats *stats) {
     DIR *d = opendir(dir);
     if (!d) return;
     const struct dirent *e;
@@ -522,7 +515,6 @@ static void sweep_orphaned_artifacts(const struct hold_store *store, const char 
         if (hold_checked_snprintf(json_path, sizeof(json_path), "%s/%s.json", store->record_dir, id) != 0 ||
             hold_checked_snprintf(artifact_path, sizeof(artifact_path), "%s/%s", dir, e->d_name) != 0) continue;
         if (access(json_path, F_OK) != 0 && !orphan_creation_reserved(store, id)) {
-            if (is_log) unlink_log_index_for_log(artifact_path);
             unlink(artifact_path);
             stats->removed++;
         }
@@ -571,9 +563,10 @@ static int cmd_prune_store_all(const struct hold_store *store, bool include_stal
     char boot[128];
     struct prune_walk w = { store, hold_boot_id_or_null(boot), include_stale, stats };
     hold_for_each_record(store->record_dir, prune_record_cb, &w);
-    sweep_orphaned_artifacts(store, store->log_dir, ".log", true, stats);
-    sweep_orphaned_artifacts(store, store->console_dir, ".sock", false, stats);
-    sweep_orphaned_artifacts(store, store->public_dir, ".json", false, stats);
+    sweep_orphaned_artifacts(store, store->log_dir, ".log", stats);
+    sweep_orphaned_artifacts(store, store->log_dir, ".screen", stats);
+    sweep_orphaned_artifacts(store, store->console_dir, ".sock", stats);
+    sweep_orphaned_artifacts(store, store->public_dir, ".json", stats);
     sweep_tmp_litter(store->record_dir);
     sweep_tmp_litter(store->public_dir);
     return 0;

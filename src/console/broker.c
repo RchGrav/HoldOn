@@ -62,12 +62,10 @@ struct broker {
     int listener;
     int master;
     int logfd;
-    int logidxfd;
     pid_t target; /* >0: our held child (waited, SIGKILLed on cleanup) */
     uid_t owner_uid;
     bool have_allowed_peer_uid;
     uid_t allowed_peer_uid;
-    struct hold_term_tui_detect tui; /* tags the sidecar pty once a TUI shows */
     struct hold_screen *screen;
     uint64_t output_seq;
     int64_t last_output_ms;
@@ -103,7 +101,6 @@ static void broker_cleanup_and_exit(struct broker *b, int exit_code) {
     if (b->parent_pipe >= 0) close(b->parent_pipe);
     if (b->listener >= 0) close(b->listener);
     if (b->master >= 0) close(b->master);
-    if (b->logidxfd >= 0) close(b->logidxfd);
     if (b->logfd >= 0) close(b->logfd);
     if (b->sock_path && *b->sock_path) unlink(b->sock_path);
     hold_screen_free(b->screen);
@@ -1029,7 +1026,7 @@ static void broker_serve(struct broker *b) {
 
         if (pr > 0 && (pfds[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
             char buf[4096];
-            ssize_t n = hold_term_pump_master(b->master, b->logfd, b->logidxfd, &b->tui, buf, sizeof(buf));
+            ssize_t n = hold_term_pump_master(b->master, b->logfd, buf, sizeof(buf));
             if (n > 0) {
                 b->output_seq += (uint64_t)n;
                 b->last_output_ms = now_ms();
@@ -1115,7 +1112,6 @@ void hold_run_console_broker(int parent_pipe,
         .listener = -1,
         .master = -1,
         .logfd = -1,
-        .logidxfd = -1,
         .target = -1,
         .owner_uid = owner_uid,
         .have_allowed_peer_uid = have_allowed_peer_uid,
@@ -1133,7 +1129,6 @@ void hold_run_console_broker(int parent_pipe,
         broker_fail_errno(&b, errno);
     }
     b.logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
-    b.logidxfd = b.logfd >= 0 ? hold_open_log_index_fd(log_path, b.logfd) : -1;
     if (b.logfd < 0) {
         broker_fail_errno(&b, errno);
     }

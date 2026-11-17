@@ -47,7 +47,7 @@ const struct hold_record_field hold_record_fields[] = {
     FH("invoked_via_sudo", RF_BOOL, 0, invoked_via_sudo, has_invocation),
     F("uid", RF_UID, RF_REQ, uid),
     F("gid", RF_GID, RF_REQ, gid),
-    SH("log_path", 0, log_path, has_log),         /* writer derives log_idx_path beside it */
+    SH("log_path", 0, log_path, has_log),
     SH("boot_id", 0, boot_id, has_boot),
     F("proc_starttime_ticks", RF_U64, RF_REQ, proc_starttime_ticks),
     F("exe_dev", RF_U64, RF_REQ, exe_dev),
@@ -157,12 +157,6 @@ static int emit_record_json(FILE *f, void *vctx) {
         if (r->recipe.mode_detach) { fprintf(f, "%s\"detach\": true", sep); sep = ", "; }
         if (r->recipe.allow_multi) { fprintf(f, "%s\"allow_multi\": true", sep); sep = ", "; }
         fprintf(f, "}");
-    }
-    if (r->has_log) {
-        char idx[HOLD_PATH_MAX];
-        if (hold_log_idx_path(r->log_path, idx, sizeof(idx)) == 0) {
-            hold_emit_kv_str(f, &first, "log_idx_path", idx);
-        }
     }
     fprintf(f, "\n}\n");
     return 0;

@@ -271,7 +271,7 @@ static void run_restart_supervisor(const struct hold_store *store,
 }
 
 /* Out-of-process pipe logger: drains the target's stdout/stderr pipes into
- * the indexed log. Closes both read ends in the launcher either way. */
+ * the log. Closes both read ends in the launcher either way. */
 static int spawn_log_capture(int stdout_fd, int stderr_fd, const char *log_path) {
     pid_t logger = fork();
     if (logger != 0) {
@@ -284,9 +284,7 @@ static int spawn_log_capture(int stdout_fd, int stderr_fd, const char *log_path)
     hold_close_stdio_to_devnull();
     int logfd = hold_open_append_no_symlink(log_path);
     if (logfd < 0) _exit(0);
-    int idxfd = hold_open_log_index_fd(log_path, logfd);
     int fds[2] = {stdout_fd, stderr_fd};
-    static const char *const streams[2] = {"stdout", "stderr"};
     while (fds[0] >= 0 || fds[1] >= 0) {
         struct pollfd pfds[2];
         int slot[2] = {-1, -1};
@@ -308,14 +306,13 @@ static int spawn_log_capture(int stdout_fd, int stderr_fd, const char *log_path)
             if (slot[i] < 0 || !(pfds[slot[i]].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) continue;
             ssize_t n = read(fds[i], buf, sizeof(buf));
             if (n > 0) {
-                (void)hold_write_indexed_log_bytes_fd(logfd, idxfd, streams[i], buf, (size_t)n);
+                (void)hold_write_all(logfd, buf, (size_t)n);
             } else {
                 close(fds[i]);
                 fds[i] = -1;
             }
         }
     }
-    if (idxfd >= 0) close(idxfd);
     close(logfd);
     _exit(0);
 }

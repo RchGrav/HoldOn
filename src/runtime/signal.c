@@ -5,7 +5,6 @@
 #include "hold/core.h"
 #include "hold/platform.h"
 #include "hold/store.h"
-#include "hold/log_viewer.h"
 
 static volatile sig_atomic_t g_tail_interrupted = 0;
 
@@ -271,8 +270,9 @@ int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, boo
      * longer decoded); tailing is a straight copy to stdout. */
     char buf[4096];
     int sleep_polls = 0;
+    ssize_t n;
     while (!g_tail_interrupted) {
-        ssize_t n = read(fd, buf, sizeof(buf));
+        n = read(fd, buf, sizeof(buf));
         if (n > 0) {
             if (hold_write_all(STDOUT_FILENO, buf, (size_t)n) != 0)
                 hold_die_errno("hold: failed writing tailed output");
@@ -286,7 +286,13 @@ int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, boo
         struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
         nanosleep(&sl, NULL);
         sleep_polls++;
-        if (sleep_polls % 10 == 0 && hold_eval_state(r, boot_id) != STATE_RUNNING) break;
+        if (sleep_polls % 10 == 0 && hold_eval_state(r, boot_id) != STATE_RUNNING) {
+            /* One final drain: output written between the last read and the
+             * exit still lands. */
+            while ((n = read(fd, buf, sizeof(buf))) > 0)
+                if (hold_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) break;
+            break;
+        }
     }
 
     close(fd);
@@ -312,144 +318,6 @@ int hold_cmd_tail_action(const struct hold_invocation *inv,
     rc = hold_tail_log_until_exit(&r, running, running);
     hold_free_run_record(&r);
     return rc;
-}
-
-/* ---- logs view engine glue --------------------------------------------- */
-
-static int set_view_limit(const char *s, struct hold_log_filter_options *opts, bool *have_limit) {
-    char *end = NULL;
-    errno = 0;
-    unsigned long long v = (s && *s) ? strtoull(s, &end, 10) : 0;
-    if (!s || !*s || end == s || *end != '\0' || errno != 0 || v < 1 || v > 10000) {
-        fprintf(stderr, "hold: error: invalid log line limit\n");
-        return -1;
-    }
-    opts->max_results = (size_t)v;
-    opts->visible_capacity = (size_t)v;
-    *have_limit = true;
-    return 0;
-}
-
-static void print_view_stats(const char *label, size_t bytes, size_t scanned, size_t matches, size_t visible, bool eof) {
-    fprintf(stderr,
-            "hold logs %s: bytes_read=%zu lines_scanned=%zu matches=%zu visible=%zu eof=%s\n",
-            label, bytes, scanned, matches, visible, eof ? "yes" : "no");
-}
-
-static void print_view_result(const struct hold_log_filter_result *result, bool debug_stats) {
-    for (size_t i = 0; i < result->line_count; i++) {
-        size_t n = strlen(result->lines[i]);
-        if (hold_write_all(STDOUT_FILENO, result->lines[i], n) != 0 ||
-            ((n == 0 || result->lines[i][n - 1] != '\n') &&
-             hold_write_all(STDOUT_FILENO, "\n", 1) != 0))
-            hold_die_errno("hold: failed writing viewed output");
-    }
-    if (debug_stats)
-        print_view_stats("viewer", result->bytes_read, result->lines_scanned,
-                         result->match_count, result->line_count, result->reached_eof);
-}
-
-/* Docker --tail semantics: the newest N records. Anchor at EOF and widen the
- * scan window until N lines are in view or the window covers the whole log;
- * the engine's byte-budget semantics stay untouched. */
-static int view_backward_last_n(int fd,
-                                const struct hold_log_filter_options *opts,
-                                bool debug_stats,
-                                off_t *resume_out) {
-    off_t end = lseek(fd, 0, SEEK_END);
-    if (end < 0) return -1;
-    size_t budget = 1u << 20;
-    struct hold_log_filter_result result;
-    for (;;) {
-        if (hold_log_filter_backward_fd(fd, opts, end, budget, &result) != 0) return -1;
-        if (result.line_count >= opts->max_results || (off_t)budget >= end) break;
-        hold_log_filter_result_free(&result);
-        budget *= 4;
-    }
-    print_view_result(&result, debug_stats);
-    if (resume_out) *resume_out = result.line_count > 0 ? result.next_offset : end;
-    hold_log_filter_result_free(&result);
-    return 0;
-}
-
-/* Plain output without a limit dumps the whole log, batch by batch, and
- * keeps the single debug-stats stderr line shape. */
-static int view_forward_full(int fd, const struct hold_log_filter_options *opts, bool debug_stats) {
-    struct hold_log_filter_result result;
-    size_t bytes = 0, scanned = 0, matches = 0, visible = 0;
-    bool eof = false;
-    off_t off = 0;
-    for (;;) {
-        if (lseek(fd, off, SEEK_SET) < 0) return -1;
-        if (hold_log_filter_fd(fd, opts, &result) != 0) return -1;
-        bytes += result.bytes_read;
-        scanned += result.lines_scanned;
-        eof = result.reached_eof;
-        if (result.line_count == 0) {
-            hold_log_filter_result_free(&result);
-            break;
-        }
-        matches += result.match_count;
-        visible += result.line_count;
-        print_view_result(&result, false);
-        off = result.next_offset;
-        hold_log_filter_result_free(&result);
-    }
-    if (debug_stats) print_view_stats("viewer", bytes, scanned, matches, visible, eof);
-    return 0;
-}
-
-static int stream_view_follow_until_exit(int fd,
-                                         const struct hold_run_record *r,
-                                         const struct hold_log_filter_options *opts,
-                                         bool from_end,
-                                         bool follow_until_exit,
-                                         bool debug_stats) {
-    char boot[128] = {0};
-    const char *boot_id = r->has_boot ? hold_boot_id_or_null(boot) : NULL;
-    if (from_end) lseek(fd, 0, SEEK_END);
-
-    struct sigaction sa = {0}, old_sa = {0};
-    sa.sa_handler = handle_tail_sigint;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGINT, &sa, &old_sa);
-    g_tail_interrupted = 0;
-
-    int sleep_polls = 0;
-    while (!g_tail_interrupted) {
-        struct hold_log_filter_result result;
-        if (hold_log_filter_fd(fd, opts, &result) != 0)
-            hold_die_errno("hold: failed while filtering followed log");
-        if (result.line_count > 0) {
-            print_view_result(&result, false);
-            if (result.next_offset > 0) lseek(fd, result.next_offset, SEEK_SET);
-            hold_log_filter_result_free(&result);
-            continue;
-        }
-        bool reached_eof = result.reached_eof;
-        hold_log_filter_result_free(&result);
-        if (!follow_until_exit) break;
-        if (!reached_eof) continue;
-        struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
-        nanosleep(&sl, NULL);
-        sleep_polls++;
-        if (sleep_polls % 10 == 0 && hold_eval_state(r, boot_id) != STATE_RUNNING) {
-            /* One final drain so output written between the last read and the
-             * exit still lands, then the single follow-stats stderr line. */
-            struct hold_log_filter_result final_result;
-            if (hold_log_filter_fd(fd, opts, &final_result) == 0) {
-                if (final_result.line_count > 0) print_view_result(&final_result, false);
-                if (debug_stats)
-                    print_view_stats("follow viewer", final_result.bytes_read,
-                                     final_result.lines_scanned, final_result.match_count,
-                                     final_result.line_count, final_result.reached_eof);
-                hold_log_filter_result_free(&final_result);
-            }
-            break;
-        }
-    }
-    sigaction(SIGINT, &old_sa, NULL);
-    return 0;
 }
 
 /* ---- inspect ------------------------------------------------------------ */
@@ -548,140 +416,107 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
     return 0;
 }
 
-/* ---- linear replay pipe ------------------------------------------------- */
+/* ---- logs ----------------------------------------------------------------- */
 
-/* --replay: walk the sidecar index, sleep the recorded deltas, emit
- * the raw bytes by pread — linear 1x, no transport, script-safe. Only
- * display-stream records are emitted (the capture invariant: input is
- * annotation, never display; replaying an IN record is corruption). */
-static int replay_log_pipe(const char *log_path, int log_fd) {
-    struct hold_logidx_map map;
-    if (hold_logidx_map_load(log_path, &map) != 0) return -1;
-    if (map.synthetic || map.recovered)
-        fprintf(stderr, "hold: replay: timing reconstructed, not recorded\n");
-    int rc = 0;
-    uint64_t prev_ts = 0;
-    bool have_prev = false;
-    char buf[65536];
-    for (size_t i = 0; i < map.count && rc == 0; i++) {
-        const struct hold_logidx_record *rec = &map.records[i];
-        if (hold_logidx_record_stream(rec->meta) == HOLD_LOG_STREAM_STDIN) continue;
-        if (have_prev && rec->ts_us > prev_ts) {
-            uint64_t dt = rec->ts_us - prev_ts;
-            struct timespec sl = {.tv_sec = (time_t)(dt / 1000000ULL),
-                                  .tv_nsec = (long)(dt % 1000000ULL) * 1000L};
-            while (nanosleep(&sl, &sl) != 0 && errno == EINTR) {}
-        }
-        prev_ts = rec->ts_us;
-        have_prev = true;
-        off_t off = rec->offset;
-        uint64_t left = rec->len;
-        while (left > 0) {
-            size_t chunk = left < sizeof(buf) ? (size_t)left : sizeof(buf);
-            ssize_t nr = pread(log_fd, buf, chunk, off);
-            if (nr < 0 && errno == EINTR) continue;
-            if (nr < 0) { rc = -1; break; }
-            if (nr == 0) break; /* index ahead of a torn tail: emit what exists */
-            if (hold_write_all(STDOUT_FILENO, buf, (size_t)nr) != 0) { rc = -1; break; }
-            left -= (uint64_t)nr;
-            off += nr;
+/* Offset where the newest `lines` lines begin (a trailing newline does not
+ * start an empty line). Scans backward in chunks; 0 when the file is shorter. */
+static off_t offset_of_last_lines(int fd, long lines) {
+    off_t end = lseek(fd, 0, SEEK_END);
+    if (end <= 0) return 0;
+    char last = 0;
+    if (pread(fd, &last, 1, end - 1) != 1) return 0;
+    long seen = last == '\n' ? -1 : 0; /* the final newline only ends the last line */
+    char buf[8192];
+    off_t pos = end;
+    while (pos > 0) {
+        size_t chunk = pos < (off_t)sizeof(buf) ? (size_t)pos : sizeof(buf);
+        pos -= (off_t)chunk;
+        ssize_t got = pread(fd, buf, chunk, pos);
+        if (got <= 0) return 0;
+        for (ssize_t i = got - 1; i >= 0; i--) {
+            if (buf[i] == '\n' && ++seen == lines) return pos + i + 1;
         }
     }
-    hold_logidx_map_free(&map);
-    return rc;
+    return 0;
 }
 
-/* ---- logs command entry -------------------------------------------------- */
+static const char logs_usage[] = "usage: hold logs <target> [--follow|-f] [--tail|-n N]\n";
 
-static const char view_usage[] = "usage: hold logs <target> [--follow|-f] [--tail|-n N] [--filter TEXT] [--similar LINE] [--replay]\n";
-
-static int view_usage_err(void) {
-    fputs(view_usage, stderr);
-    return 5;
-}
-
+/* hold logs: the call's captured output as plain bytes. -n N starts at the
+ * newest N lines; -f keeps following until the call ends (Ctrl-C stops). */
 int hold_cmd_view_action(const struct hold_invocation *inv,
-                           const struct hold_store *user_store,
-                           const struct hold_store *system_store,
-                           int argc,
-                           char **argv) {
-    if (argc < 1) return view_usage_err();
-
-    struct hold_log_filter_options opts;
-    hold_log_filter_options_init(&opts);
-    bool debug_stats = false, have_limit = false, follow = false;
-    bool replay = false;
-    const char *target_token = NULL;
+                         const struct hold_store *user_store,
+                         const struct hold_store *system_store,
+                         int argc,
+                         char **argv) {
+    const char *token = NULL;
+    bool follow = false;
+    long tail = -1;
     for (int i = 0; i < argc; i++) {
-        if (!strcmp(argv[i], "--filter")) {
-            if (++i >= argc) return view_usage_err();
-            opts.literal = argv[i];
-        } else if (!strcmp(argv[i], "--similar")) {
-            if (++i >= argc || opts.similar_example_count >= HOLD_LOG_VIEWER_MAX_EXAMPLES)
-                return view_usage_err();
-            opts.similar_examples[opts.similar_example_count++] = argv[i];
-        } else if (!strcmp(argv[i], "--limit") || !strcmp(argv[i], "--tail") || !strcmp(argv[i], "-n")) {
-            if (set_view_limit(++i < argc ? argv[i] : NULL, &opts, &have_limit) != 0) return 5;
-        } else if (!strncmp(argv[i], "--tail=", 7)) {
-            if (set_view_limit(argv[i] + 7, &opts, &have_limit) != 0) return 5;
-        } else if (!strcmp(argv[i], "--debug-stats")) {
-            debug_stats = true;
-        } else if (!strcmp(argv[i], "--plain") || !strcmp(argv[i], "--print") || !strcmp(argv[i], "-p")) {
-            /* Output is always plain; kept so 0.7-era scripts still parse. */
-        } else if (!strcmp(argv[i], "--follow") || !strcmp(argv[i], "-f")) {
+        const char *a = argv[i], *v = NULL;
+        if (!strcmp(a, "--follow") || !strcmp(a, "-f")) {
             follow = true;
-        } else if (!strcmp(argv[i], "--replay")) {
-            replay = true;
-        } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
-            fputs(view_usage, stdout);
+        } else if (!strcmp(a, "--tail") || !strcmp(a, "-n")) {
+            if (++i >= argc) {
+                fputs(logs_usage, stderr);
+                return 5;
+            }
+            v = argv[i];
+        } else if (!strncmp(a, "--tail=", 7)) {
+            v = a + 7;
+        } else if (!strcmp(a, "--plain") || !strcmp(a, "--print") || !strcmp(a, "-p")) {
+            /* output is always plain; accepted for older scripts */
+        } else if (!strcmp(a, "--help") || !strcmp(a, "-h")) {
+            fputs(logs_usage, stdout);
             return 0;
-        } else if (!target_token) {
-            target_token = argv[i];
+        } else if (a[0] == '-' && a[1]) {
+            fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, logs_usage);
+            return 5;
+        } else if (!token) {
+            token = a;
         } else {
-            return view_usage_err();
+            fputs(logs_usage, stderr);
+            return 5;
+        }
+        if (v) {
+            char *end = NULL;
+            errno = 0;
+            tail = strtol(v, &end, 10);
+            if (!*v || *end || errno || tail < 0) {
+                fprintf(stderr, "hold: error: invalid log line limit\n");
+                return 5;
+            }
         }
     }
-    if (!target_token) return view_usage_err();
-
+    if (!token) {
+        fputs(logs_usage, stderr);
+        return 5;
+    }
     struct hold_resolved_target target;
     bool hit = false, ok = false;
-    int rc = hold_resolve_single(inv, user_store, system_store, "view", "log", target_token, &target, &hit);
+    int rc = hold_resolve_single(inv, user_store, system_store, "view", "log", token, &target, &hit);
     if (!hit) return rc;
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
     rc = hold_load_target_record(&target, true, &r, path, sizeof(path), &ok);
     if (!ok) return rc;
-    int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) hold_die_errno("hold: failed to open log");
-    if (replay) {
-        /* The --replay pipe: recorded timing at 1x, script-safe. */
-        if (replay_log_pipe(r.log_path, fd) != 0) hold_die_errno("hold: failed while replaying log");
-        close(fd);
-        hold_free_run_record(&r);
-        return 0;
-    }
-    if (follow) {
-        char boot[128];
-        const char *boot_id = hold_boot_id_or_null(boot);
-        bool running = hold_eval_state(&r, boot_id) == STATE_RUNNING;
-        if (have_limit) {
-            off_t resume = 0;
-            if (view_backward_last_n(fd, &opts, false, &resume) != 0 || lseek(fd, resume, SEEK_SET) < 0)
-                hold_die_errno("hold: failed while filtering log");
-            rc = stream_view_follow_until_exit(fd, &r, &opts, false, running, debug_stats);
-        } else {
-            rc = stream_view_follow_until_exit(fd, &r, &opts, running, running, debug_stats);
+    char boot[128];
+    bool running = hold_eval_state(&r, hold_boot_id_or_null(boot)) == STATE_RUNNING;
+    if (tail >= 0) {
+        int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd < 0) hold_die_errno("hold: failed to open log");
+        off_t from = tail == 0 ? lseek(fd, 0, SEEK_END) : offset_of_last_lines(fd, tail);
+        char buf[8192];
+        ssize_t got;
+        while ((got = pread(fd, buf, sizeof(buf), from)) > 0) {
+            if (hold_write_all(STDOUT_FILENO, buf, (size_t)got) != 0) hold_die_errno("hold: failed writing log");
+            from += got;
         }
-    } else if (have_limit) {
-        if (view_backward_last_n(fd, &opts, debug_stats, NULL) != 0)
-            hold_die_errno("hold: failed while filtering log");
-        rc = 0;
+        close(fd);
+        rc = follow ? hold_tail_log_until_exit(&r, true, running) : 0;
     } else {
-        if (view_forward_full(fd, &opts, debug_stats) != 0)
-            hold_die_errno("hold: failed while filtering log");
-        rc = 0;
+        rc = hold_tail_log_until_exit(&r, false, follow && running);
     }
-    close(fd);
     hold_free_run_record(&r);
     return rc;
 }

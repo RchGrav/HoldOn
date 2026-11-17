@@ -25,7 +25,6 @@ SRCS := $(wildcard src/*.c) \
         $(wildcard src/console/*.c) \
         $(wildcard src/access/*.c) \
         $(wildcard src/runtime/*.c) \
-        $(wildcard src/viewer/*.c) \
         $(wildcard src/screen/*.c) \
         $(wildcard src/cli/*.c)
 
@@ -69,20 +68,10 @@ obj-test/%.o: src/%.c
 test: $(TEST_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o hold $(TEST_OBJS)
 	@bash tests/test_hold.sh
-	@$(MAKE) viewer-filter-test
-	@$(MAKE) logidx-recovery-test
 	@$(MAKE) screen-test
 	@bash tests/test_version_makefile.sh
 	@bash tests/test_release_installer.sh
 	@$(MAKE) test-040
-
-viewer-filter-test:
-	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o viewer-filter-test tests/viewer_filter_test.c src/viewer/filter.c src/core/logidx.c src/core/json.c src/core/util.c src/platform/paths.c
-	@./viewer-filter-test
-
-logidx-recovery-test:
-	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o logidx-recovery-test tests/logidx_recovery_test.c src/core/logidx.c src/core/json.c src/core/util.c src/platform/paths.c
-	@./logidx-recovery-test
 
 screen-test: $(VTERM_OBJS)
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o screen-test tests/screen_test.c src/screen/screen.c $(VTERM_OBJS)
@@ -96,21 +85,6 @@ print-version:
 
 check: test
 
-review-build:
-	@bash scripts/build_review.sh
-
-review-fixture:
-	@bash scripts/create_review_fixture.sh
-
-demo:
-	@bash scripts/demo.sh start
-
-demo-stop:
-	@bash scripts/demo.sh stop
-
-demo-status:
-	@bash scripts/demo.sh status
-
 # Full local CI mirror (one command, same rigor as GitHub CI): static + dynamic
 # -Werror builds, the regression suite + hash-vector, ASan/UBSan, cppcheck, and
 # the layer-dependency lint. Skips (visibly) only what the local toolchain lacks.
@@ -122,7 +96,7 @@ lint:
 	@bash scripts/lint_layers.sh
 
 clean:
-	rm -f hold hold-dynamic viewer-filter-test logidx-recovery-test screen-test
+	rm -f hold hold-dynamic screen-test
 	rm -rf obj obj-test
 
-.PHONY: all clean test test-040 check ci lint viewer-filter-test logidx-recovery-test screen-test print-version review-build review-fixture demo demo-stop demo-status
+.PHONY: all clean test test-040 check ci lint screen-test print-version

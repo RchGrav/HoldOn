@@ -889,110 +889,28 @@ test_log_capture() {
   log=$(log_path "$id") || return 1
   sleep 0.4
   [ -f "$log" ] || return 1
-  [ -f "$log.idx" ] || return 1
-  head -c 7 "$log.idx" | grep -q '^HLOGIDX' || return 1
-  [ "$(wc -c <"$log.idx")" -gt 80 ] || { ls -l "$log.idx" >&2; return 1; }
+  [ ! -e "$log.idx" ] || { echo "a log index sidecar was written" >&2; return 1; }
   ! grep -q '"log"' "$log" || { cat "$log" >&2; return 1; }
   grep -q '^out$' "$log" && grep -q '^err$' "$log" || return 1
-  "$HOLD_BIN" logs "$id" --filter out --limit 1 >"$TEST_ROOT/log-capture-view.out" 2>"$TEST_ROOT/log-capture-view.stats" || return 1
-  grep -qx 'out' "$TEST_ROOT/log-capture-view.out" || { cat "$TEST_ROOT/log-capture-view.out" >&2; return 1; }
+  [ "$("$HOLD_BIN" logs "$id" | wc -l | tr -d ' ')" -eq 2 ] || return 1
+  [ "$("$HOLD_BIN" logs "$id" -n 1 | wc -l | tr -d ' ')" -eq 1 ] || return 1
+  [ -z "$("$HOLD_BIN" logs "$id" -n 0)" ] || return 1
+  set +e; "$HOLD_BIN" logs "$id" --filter out >/dev/null 2>&1; rc=$?; set -e
+  [ "$rc" -eq 5 ] || { echo "removed --filter flag was accepted" >&2; return 1; }
 }
 
-# Reads the sidecar's version (byte 8) and flags (byte 16) fields; flag bit 2
-# is SYNTHETIC, bit 4 is RECOVERED (docs/future/playback.md provenance).
-sidecar_field() {
-  od -An -j "$2" -N1 -tu1 "$1" | tr -d ' \t'
+# logs -n N prints exactly the newest N lines; -f follows to the end and
+# drains the last output written before exit.
+test_logs_tail_and_follow() {
+  "$HOLD_BIN" -d --name lines -- /bin/sh -c 'i=1; while [ $i -le 50 ]; do echo "line $i"; i=$((i+1)); done; printf "no-newline-tail"' >/dev/null || return 1
+  "$HOLD_BIN" wait lines --timeout 5000 >/dev/null || return 1
+  [ "$("$HOLD_BIN" logs lines -n 3)" = "$(printf 'line 49\nline 50\nno-newline-tail')" ] || { "$HOLD_BIN" logs lines -n 3 | od -c | tail -3 >&2; return 1; }
+  [ "$("$HOLD_BIN" logs lines --tail=1)" = "no-newline-tail" ] || return 1
+  [ "$("$HOLD_BIN" logs lines -n 1000 | wc -l | tr -d ' ')" -eq 50 ] || return 1
+  "$HOLD_BIN" -d --name follower -- /bin/sh -c 'echo first; sleep 1; echo last' >/dev/null || return 1
+  out=$("$HOLD_BIN" logs follower -f) || return 1
+  [ "$out" = "$(printf 'first\nlast')" ] || { printf '%s\n' "$out" >&2; return 1; }
 }
-
-# docs/future/playback.md: the plain --replay pipe (non-TTY) plays linearly at
-# 1x with no transport, script-safe — the emitted bytes equal the raw log.
-test_logs_replay_non_tty_is_linear_pipe() {
-  local out id log
-  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo "replay one"; echo "replay two"; echo "replay three"; sleep 0.1' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  log=$(log_path "$id") || return 1
-  record_ended_soon "$id" || return 1
-  "$HOLD_BIN" logs "$id" --replay >"$TEST_ROOT/replay-pipe.out" 2>"$TEST_ROOT/replay-pipe.err" || return 1
-  cmp -s "$TEST_ROOT/replay-pipe.out" "$log" || { cat "$TEST_ROOT/replay-pipe.out" >&2; return 1; }
-  # Recorded timing is not reconstructed timing: no honesty label here.
-  ! grep -q 'timing reconstructed' "$TEST_ROOT/replay-pipe.err" || { cat "$TEST_ROOT/replay-pipe.err" >&2; return 1; }
-}
-
-# A missing sidecar rebuilds synthetically at 50 ms per line: the pipe sleeps
-# those deltas (>= 0.3 s for 8 lines) and labels the timing reconstructed.
-test_logs_replay_synthetic_pipe_sleeps_and_labels() {
-  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
-  local out id log
-  out=$("$HOLD_BIN" -d -- /bin/sh -c 'for i in 1 2 3 4 5 6 7 8; do echo "synth-replay-$i"; done; sleep 0.1' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  log=$(log_path "$id") || return 1
-  record_ended_soon "$id" || return 1
-  rm -f "$log.idx" || return 1
-  python3 - "$HOLD_BIN" "$id" "$TEST_ROOT/replay-synth.out" "$TEST_ROOT/replay-synth.err" <<'PY' || return 1
-import subprocess, sys, time
-t = time.time()
-with open(sys.argv[3], 'wb') as out, open(sys.argv[4], 'wb') as err:
-    rc = subprocess.run([sys.argv[1], 'logs', sys.argv[2], '--replay'], stdout=out, stderr=err).returncode
-d = time.time() - t
-if rc != 0:
-    raise SystemExit(f'replay pipe exited {rc}')
-if d < 0.3:
-    raise SystemExit(f'synthetic replay finished in {d:.2f}s: recorded deltas were not slept')
-PY
-  cmp -s "$TEST_ROOT/replay-synth.out" "$log" || { cat "$TEST_ROOT/replay-synth.out" >&2; return 1; }
-  grep -q 'timing reconstructed' "$TEST_ROOT/replay-synth.err" || { cat "$TEST_ROOT/replay-synth.err" >&2; return 1; }
-}
-
-test_log_view_internal_seed_filters() {
-  local out id viewed stats similar plain
-  out=$("$HOLD_BIN" -d bash -c 'echo alpha; echo "needle one"; echo "warn database connection timeout retrying"; echo omega; sleep 0.1' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  sleep 0.4
-  viewed=$("$HOLD_BIN" logs "$id" --filter needle --limit 1) || return 1
-  [ "$viewed" = "needle one" ] || return 1
-  plain=$("$HOLD_BIN" logs "$id" --plain --filter needle --limit 1) || return 1
-  [ "$plain" = "needle one" ] || return 1
-  similar=$("$HOLD_BIN" logs "$id" --similar "error database connection timeout" --limit 1) || return 1
-  printf '%s\n' "$similar" | grep -q 'database connection timeout' || return 1
-  stats=$("$HOLD_BIN" logs "$id" --filter needle --limit 1 --debug-stats 2>&1 >/dev/null) || return 1
-  printf '%s\n' "$stats" | grep -Eq 'bytes_read=[0-9]+ .*visible=1'
-  set +e
-  "$HOLD_BIN" logs "$id" --interactive >"$TEST_ROOT/view-interactive.out" 2>"$TEST_ROOT/view-interactive.err"
-  [ "$?" -eq 5 ] || { set -e; cat "$TEST_ROOT/view-interactive.out" "$TEST_ROOT/view-interactive.err" >&2; return 1; }
-  set -e
-  grep -q -- 'usage: hold logs' "$TEST_ROOT/view-interactive.err"
-}
-
-test_log_view_follow_filters_live_output() {
-  local out id rc
-  out=$("$HOLD_BIN" -d -- /bin/sh -c 'sleep 0.2; echo ignore-before; sleep 0.2; echo "live-needle one"; sleep 0.2; echo ignore-after; sleep 0.2; echo "live-needle two"' 2>&1) || return 1
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || return 1
-  set +e
-  "$HOLD_BIN" logs "$id" --follow --filter live-needle >"$TEST_ROOT/view-follow.out" 2>"$TEST_ROOT/view-follow.err"
-  rc=$?
-  set -e
-  [ "$rc" -eq 0 ] || { cat "$TEST_ROOT/view-follow.err" >&2; return 1; }
-  grep -q 'live-needle one' "$TEST_ROOT/view-follow.out" || { cat "$TEST_ROOT/view-follow.out" >&2; return 1; }
-  grep -q 'live-needle two' "$TEST_ROOT/view-follow.out" || { cat "$TEST_ROOT/view-follow.out" >&2; return 1; }
-  ! grep -q 'ignore-before' "$TEST_ROOT/view-follow.out" || { cat "$TEST_ROOT/view-follow.out" >&2; return 1; }
-  ! grep -q 'ignore-after' "$TEST_ROOT/view-follow.out" || { cat "$TEST_ROOT/view-follow.out" >&2; return 1; }
-}
-
-
-
-
-
-
-
-
-
-
-
-
 
 test_start_follow_short_form() {
   local out
@@ -1000,7 +918,6 @@ test_start_follow_short_form() {
   out=$("$HOLD_BIN" -f bash -c 'echo follow-short' 2>&1) || return 1
   printf '%s\n' "$out" | grep -q 'follow-short'
 }
-
 
 
 test_tail_verb_existing_id() {
@@ -1816,17 +1733,6 @@ JSON
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
 test_cap_flags_are_rejected() {
   # The grants-era capability flags were deleted; like -p/-v they are
   # rejected honestly rather than accepted and ignored.
@@ -1876,25 +1782,6 @@ test_env_flag_is_recipe_data_only() {
   grep -q "home:$fake marker:recipe" "$log" || { cat "$log" >&2; return 1; }
   out=$("$HOLD_BIN" -d -e PATH=/nonexistent -- sleep 0.1 2>&1) || { echo "-e PATH broke invoking-PATH command resolution" >&2; printf '%s\n' "$out" >&2; return 1; }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 test_raw_start_does_not_steal_trailing_system() {
@@ -2144,7 +2031,6 @@ test_explicit_user_target() {
 }
 
 
-
 test_tail_ctrl_c_detaches_from_tail_and_keeps_run() {
   command -v setsid >/dev/null 2>&1 || skip "setsid not available"
   local out id pgid tail_pid rc
@@ -2196,7 +2082,7 @@ test_normal_start_writes_user_local_state() {
   python3 - "$json" <<'PY' || { cat "$json" >&2; return 1; }
 import json, sys
 obj = json.load(open(sys.argv[1], encoding='utf-8'))
-required_top = {'saved', 'version', 'id', 'run_id', 'pid', 'pgid', 'sid', 'start_unix_ns', 'created_unix_ns', 'argv', 'name', 'state', 'started_at', 'created_at', 'log_path', 'log_idx_path', 'boot_id', 'proc_starttime_ticks', 'exe_dev', 'exe_ino'}
+required_top = {'saved', 'version', 'id', 'run_id', 'pid', 'pgid', 'sid', 'start_unix_ns', 'created_unix_ns', 'argv', 'name', 'state', 'started_at', 'created_at', 'log_path', 'boot_id', 'proc_starttime_ticks', 'exe_dev', 'exe_ino'}
 missing = required_top - set(obj)
 if missing:
     raise SystemExit(f'missing native record fields: {sorted(missing)}')
@@ -2756,7 +2642,6 @@ test_purge_never_follows_stored_paths() {
   "$HOLD_BIN" purge "$id" >/dev/null 2>"$TEST_ROOT/purge-derive.err" || { cat "$TEST_ROOT/purge-derive.err" >&2; return 1; }
   [ -f "$victim" ] || { echo "purge followed a stored path and deleted the victim" >&2; return 1; }
   [ ! -f "$log" ] || { echo "purge left the store-resident log behind" >&2; return 1; }
-  [ ! -f "$log.idx" ] || { echo "purge left the log index sidecar behind" >&2; return 1; }
   grep -q 'outside the store; left untouched' "$TEST_ROOT/purge-derive.err" || { cat "$TEST_ROOT/purge-derive.err" >&2; return 1; }
 }
 
@@ -2912,8 +2797,6 @@ test_docker_restart_validation_and_tty_gate() {
 }
 
 
-
-
 test_start_existing_run_appends_retained_log() {
   local out id log before_count after_count restart_out
   out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo restart-append-marker' 2>&1) || {
@@ -3053,21 +2936,6 @@ PY
   grep -Eq "^$id[[:space:]]+.*Up " "$TEST_ROOT/docker-tty-custom-ps.out" || { cat "$TEST_ROOT/docker-tty-custom-ps.out" >&2; return 1; }
   "$HOLD_BIN" stop "$id" >/dev/null || return 1
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 test_build_artifact_coexistence() {
@@ -3229,7 +3097,6 @@ test_nonroot_ignores_spoofed_sudo_provenance() {
 }
 
 
-
 test_signal_refuses_tampered_pgid() {
   local out id rec rc
   out=$("$HOLD_BIN" -d /bin/sleep 300 2>&1) || return 1
@@ -3327,7 +3194,6 @@ test_owned_command_exact_arity() {
 
   "$HOLD_BIN" prune >/dev/null || { echo "prune with zero targets should remain valid" >&2; return 1; }
 }
-
 
 
 test_print_over_all_and_multiple() {
@@ -3503,24 +3369,6 @@ test_attach_verb_matches_console() {
   "$HOLD_BIN" attach "$id2" >/dev/null 2>"$TEST_ROOT/attach-none.err" || return 1
   grep -q 'has no console' "$TEST_ROOT/attach-none.err" || { cat "$TEST_ROOT/attach-none.err" >&2; return 1; }
   "$HOLD_BIN" stop "$id2" >/dev/null || return 1
-}
-
-# G18: identity — `hold logs <call> -p` with -t/--time prepends times and
-# --date adds date+time, read from the sidecar.
-test_logs_plain_timestamp_flags() {
-  local out id got
-  out=$("$HOLD_BIN" -d -- /bin/sh -c 'echo stamped-line' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
-  id=$(printf '%s\n' "$out" | extract_id)
-  [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
-  record_ended_soon "$id" || return 1
-  got=$("$HOLD_BIN" logs "$id" -p -t) || { echo "logs -p -t failed" >&2; return 1; }
-  printf '%s\n' "$got" | grep -Eq '^[0-9]{2}:[0-9]{2}:[0-9]{2}' || { printf '%s\n' "$got" >&2; return 1; }
-  printf '%s\n' "$got" | grep -q 'stamped-line' || { printf '%s\n' "$got" >&2; return 1; }
-  got=$("$HOLD_BIN" logs "$id" -p --time) || { echo "logs -p --time failed" >&2; return 1; }
-  printf '%s\n' "$got" | grep -Eq '^[0-9]{2}:[0-9]{2}:[0-9]{2}' || { printf '%s\n' "$got" >&2; return 1; }
-  got=$("$HOLD_BIN" logs "$id" -p --date) || { echo "logs -p --date failed" >&2; return 1; }
-  printf '%s\n' "$got" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}' || { printf '%s\n' "$got" >&2; return 1; }
-  printf '%s\n' "$got" | grep -q 'stamped-line' || { printf '%s\n' "$got" >&2; return 1; }
 }
 
 # G19: identity — 'plain output automatically when not a TTY': bare hold logs
@@ -4125,10 +3973,7 @@ run_test "Docker -it foreground attaches and detaches" test_docker_tty_foregroun
 run_test "Docker --detach-keys changes TTY detach sequence" test_docker_tty_custom_detach_keys
 run_test "special characters are preserved in argv JSON" test_special_chars_args
 run_test "logging captures stdout+stderr" test_log_capture
-run_test "logs --replay to a non-TTY is a linear script-safe pipe" test_logs_replay_non_tty_is_linear_pipe
-run_test "synthetic replay pipe sleeps rebuilt deltas and labels them" test_logs_replay_synthetic_pipe_sleeps_and_labels
-run_test "internal viewer harness seeds literal and similarity filters" test_log_view_internal_seed_filters
-run_test "internal viewer follows live logs through filter engine" test_log_view_follow_filters_live_output
+run_test "logs -n prints the newest lines; -f drains to the end" test_logs_tail_and_follow
 run_test "-f starts and follows output" test_start_follow_short_form
 run_test "tail <id> tails an existing run log" test_tail_verb_existing_id
 run_test "persistent stale records remain visible and dumpable" test_persistent_stale_records
@@ -4194,7 +4039,6 @@ run_test "attach is the primary console spelling" test_attach_verb_matches_conso
 # flags, but the logs parser (src/runtime/signal.c hold_cmd_view_action) knows
 # neither: `hold logs <id> -p -t` exits 5 with the usage line. Recorded in
 # .agentic/reconstruction/contract-gaps.md; re-register once the flags exist.
-# run_test "logs -p -t/--time and --date prepend sidecar timestamps" test_logs_plain_timestamp_flags
 run_test "logs to a non-TTY dumps plain raw bytes automatically" test_logs_non_tty_auto_plain
 run_test "list -u shows only the invoking user's calls, even under sudo" test_list_user_scope_only_personal
 run_test "drop removes a call exactly like prune" test_drop_alias_matches_prune

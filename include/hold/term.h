@@ -29,32 +29,12 @@ int hold_term_pty_spawn(const struct hold_term_spawn *spec,
  * fds[0]=read, fds[1]=write, or -1 with errno set and nothing left open. */
 int hold_cloexec_pipe(int fds[2]);
 
-/* ANSI TUI detection (docs/future/playback.md): sticky best-effort
- * recognition of screen-taking escapes in a PTY byte stream — alt-screen
- * switches (CSI ? 47/1047/1049 h) and explicit cursor addressing
- * (CSI row ; col H|f). Plain logs — even colored (SGR-only) ones, even
- * carriage-return progress bars — contain neither, so they never
- * misclassify; a TUI that uses only bare-\033[H homing is the accepted
- * best-effort miss. Feed is resumable across read chunks. */
-struct hold_term_tui_detect {
-    unsigned char st;
-    unsigned param;
-    bool saw_digit;
-    bool tui; /* sticky: the stream has shown itself to be a terminal UI */
-};
-
-void hold_term_tui_feed(struct hold_term_tui_detect *d, const void *buf, size_t n);
-
 /* One drain step of a PTY master: reads once into buf[n], appends the bytes
- * to the indexed log, and returns them for caller fan-out (client, replay
- * ring, tty). tui (optional) accumulates ANSI TUI detection across chunks;
- * once it trips, the sidecar entries are tagged with the pty stream so the
- * log is self-describing as a terminal recording. Returns >0 bytes pumped;
- * 0 when the target side is gone (EOF, or EIO from a failed read after the
- * last slave closed); -1 on a retryable read error (errno preserved). */
-ssize_t hold_term_pump_master(int master, int logfd, int logidxfd,
-                              struct hold_term_tui_detect *tui,
-                              char *buf, size_t n);
+ * to the call's log, and returns them for caller fan-out (screen, client).
+ * Returns >0 bytes pumped; 0 when the target side is gone (EOF, or EIO from
+ * a failed read after the last slave closed); -1 on a retryable read error
+ * (errno preserved). */
+ssize_t hold_term_pump_master(int master, int logfd, char *buf, size_t n);
 
 /* THE detach-key FSM (Ctrl-P Ctrl-Q by default at both call sites): input
  * bytes are fed one at a time; bytes that stop matching a chord are handed

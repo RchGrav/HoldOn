@@ -3,23 +3,16 @@
 #include "hold/term.h"
 
 /* THE PTY-master pump. Every reader of a hold-owned PTY master drains it
- * through this one step so the capture path (indexed log first, then caller
+ * through this one step so the capture path (log first, then caller
  * fan-out) and the end-of-target semantics live in exactly one place.
  *
  * End-of-target: a PTY master reports the last slave closing either as EOF
  * or as read() failing with EIO (Linux). EIO is checked only when the read
  * actually failed — never against a stale errno from a successful read. */
-ssize_t hold_term_pump_master(int master, int logfd, int logidxfd,
-                              struct hold_term_tui_detect *tui,
-                              char *buf, size_t n) {
+ssize_t hold_term_pump_master(int master, int logfd, char *buf, size_t n) {
     ssize_t r = read(master, buf, n);
     if (r > 0) {
-        const char *stream = "stdout";
-        if (tui) {
-            hold_term_tui_feed(tui, buf, (size_t)r);
-            if (tui->tui) stream = "pty";
-        }
-        (void)hold_write_indexed_log_bytes_fd(logfd, logidxfd, stream, buf, (size_t)r);
+        (void)hold_write_all(logfd, buf, (size_t)r);
         return r;
     }
     if (r == 0 || (r < 0 && errno == EIO)) {
@@ -28,80 +21,7 @@ ssize_t hold_term_pump_master(int master, int logfd, int logidxfd,
     return -1;
 }
 
-/* ---- ANSI TUI detection (docs/future/playback.md) ------------------------
- *
- * A tiny resumable scanner for the two escape families only a screen-taking
- * program emits: alt-screen switches (CSI ? 47/1047/1049 h) and explicit
- * cursor addressing (CSI row ; col H|f, both parameters present). SGR
- * colors, \r progress bars, erase-to-EOL, and bare \033[H all fall through,
- * so a plain log can never misclassify (best-effort in the other direction
- * is the accepted trade). */
-
-enum { TUI_GROUND = 0, TUI_ESC, TUI_CSI, TUI_PRIVATE, TUI_PARAM1, TUI_PARAM2 };
-
-void hold_term_tui_feed(struct hold_term_tui_detect *d, const void *buf, size_t n) {
-    const unsigned char *p = (const unsigned char *)buf;
-    if (d->tui) return;
-    for (size_t i = 0; i < n; i++) {
-        unsigned char c = p[i];
-        bool digit = c >= '0' && c <= '9';
-        switch (d->st) {
-        case TUI_ESC:
-            if (c == '[') {
-                d->st = TUI_CSI;
-                continue;
-            }
-            break;
-        case TUI_CSI:
-            if (c == '?') {
-                d->st = TUI_PRIVATE;
-                d->param = 0;
-                d->saw_digit = false;
-                continue;
-            }
-            if (digit) {
-                d->st = TUI_PARAM1;
-                continue;
-            }
-            break;
-        case TUI_PRIVATE:
-            if (digit) {
-                if (d->param < 100000) d->param = d->param * 10 + (unsigned)(c - '0');
-                d->saw_digit = true;
-                continue;
-            }
-            if (c == 'h' && d->saw_digit &&
-                (d->param == 47 || d->param == 1047 || d->param == 1049)) {
-                d->tui = true;
-                return;
-            }
-            break;
-        case TUI_PARAM1:
-            if (digit) continue;
-            if (c == ';') {
-                d->st = TUI_PARAM2;
-                d->saw_digit = false;
-                continue;
-            }
-            break;
-        case TUI_PARAM2:
-            if (digit) {
-                d->saw_digit = true;
-                continue;
-            }
-            if ((c == 'H' || c == 'f') && d->saw_digit) {
-                d->tui = true;
-                return;
-            }
-            break;
-        default:
-            break;
-        }
-        d->st = c == 0x1b ? TUI_ESC : TUI_GROUND;
-    }
-}
-
-/* ---- THE detach-key FSM, shared by console attach and the hold-on shell ----
+/* ---- THE detach-key FSM (console attach) -----------------------------------
  *
  * pending is always a strict prefix of a chord, so feeding a byte either
  * extends the prefix (arming the flush deadline), completes a chord, or

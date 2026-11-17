@@ -20,7 +20,7 @@ root-managed:  /var/lib/hold  (Linux)       /var/db/hold  (macOS)
 ```
 
 User-local layout: call records (`<64hex>.json`, 0600), logs
-(`<64hex>.log` + `.log.idx`, 0600), and a TTY call's final screen
+(`<64hex>.log`, 0600), and a TTY call's final screen
 (`<64hex>.screen`, HSNAP1 — see [screen.md](screen.md)) directly under the base; console sockets
 under `console/` (0700 dir, 0600 sockets).
 
@@ -51,20 +51,11 @@ unique per store, user-renameable (renaming saves).
 
 ## Logs
 
-Raw captured bytes plus the `HLOGIDX` sidecar (offsets, lengths,
-timestamps, stream metadata). The pair is a documented, stable format:
-anything can read a call's log without Hold's help. Plain output never
-requires the sidecar; the viewer's timestamps and source filters come only
-from it.
-
-Writers emit sidecar v2 (24-byte entries with a per-line CRC32 and a
-64-bit ns delta); v1 sidecars stay readable and keep appending v1. The
-sidecar self-heals on read: a corrupt index is realigned against the log
-text by its per-line CRC anchors, a missing one is rebuilt with synthetic
-50 ms timing from the file's birth time, and either path rewrites the
-index as v2. Reconstructed timing is always labeled ("timing
-reconstructed"), never presented as recorded; the raw log stays the sole
-source of truth.
+Raw captured bytes, appended as they arrive: stdout and stderr of a plain
+call (interleaved in arrival order), or the PTY stream of a TTY call. One
+plain file, no index; anything can read it without Hold's help. `hold logs`
+prints it whole, from the newest N lines (`-n`), or followed to the call's
+end (`-f`).
 
 ## Safety invariants
 

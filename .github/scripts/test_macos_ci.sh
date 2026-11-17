@@ -118,7 +118,6 @@ esac
 run_native_smoke
 run_screen_smoke
 
-make viewer-filter-test "${make_args[@]}"
 make screen-test "${make_args[@]}"
 bash tests/test_version_makefile.sh
 bash tests/test_release_installer.sh

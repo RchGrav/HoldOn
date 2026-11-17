@@ -174,21 +174,17 @@ hold: 'web' is saved — purging a saved call requires --force
 
 ## Logs
 
-Captured logs are raw bytes plus an `HLOGIDX` sidecar carrying offsets,
-timestamps, and stream metadata — a documented, stable format anything can
-read without Hold's help. `hold logs` prints plain text, always:
+A call's output is captured as raw bytes in one plain file, readable by
+anything. `hold logs` prints it:
 
 ```sh
 hold logs web               # everything captured
 hold logs -f web            # follow until the call ends
-hold logs -n 100 web        # the newest 100 lines
-hold logs --filter error web
-hold logs --replay web      # re-emit with the recorded timing
+hold logs -n 100 web        # the newest 100 lines (pipe to grep to filter)
 ```
 
-For a TTY call, the log is the byte stream; `hold peek` is the screen. A
-damaged or missing sidecar index heals itself on read; reconstructed timing is
-labeled, never passed off as recorded. Output a program sends somewhere else
+For a TTY call, the log is the byte stream; `hold peek` is the screen. Output
+a program sends somewhere else
 on purpose — its own logfile, a redirect — is respected, not captured; `hold
 inspect` reports where the call's stdio actually points.
 

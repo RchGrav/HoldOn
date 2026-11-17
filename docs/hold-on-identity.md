@@ -20,15 +20,11 @@ worth keeping. "Run" and "container" do not appear in the vocabulary.
 
 ## The shape: one binary
 
-One static binary, small enough to code-review in an afternoon. Target:
-under 10k lines — the lean core (6–8k) plus the built-in log viewer.
-
-The viewer is part of the tool, not an add-on: `hold logs <call>` opens
-the polished full-screen viewer from the before-0.5 design (quiet 80x24
-chrome, center-out filtering, no counters, no flicker), and it is held to
-that design's standard. The on-disk format — raw `.log` plus the
-16-byte-entry `.log.idx` sidecar (v1) — stays a documented, stable format
-so anything else can read Hold's logs without Hold's help.
+One static binary, small enough to code-review in an afternoon: the lean
+core plus the screen layer (vendored libvterm and an embedded font subset
+live in `third_party/`). Logs are one plain file per call, readable without
+Hold's help; `hold logs` prints them, and the screen of a TTY call is what
+`peek` shows.
 
 ## The surface
 
@@ -56,7 +52,6 @@ hold end <target>           # end the call politely: TERM, then KILL
 hold kill <target>          # KILL now, when it won't listen
 hold logs <call> [-f] [-n N]
                             # captured output, plain text, always script-safe
-                            #  (--filter, --similar, --replay for recorded timing)
 hold peek <call>            # a TTY call's screen: text (--ruler), --json, or
                             #  --image a color PNG with ruler, cursor marks, footer
 hold send <call> TEXT -k KEY  # type and press keys, encoded for the program's
@@ -96,7 +91,7 @@ hold: 'happy_tiger' is saved — purging a saved call requires --force
 
 ## ps speaks Docker; list speaks Hold
 
-There are two viewers, and they answer different questions.
+There are two listings, and they answer different questions.
 
 **`ps` is the Docker mirror.** Docker has no user/system split — one daemon,
 one namespace — so a faithful `ps` shows *everything running on the machine*
@@ -176,13 +171,13 @@ screen is inferred: `hold peek` reads it, `hold inspect` reports where fds
 | profiles, alias store, `profile`/`profiles`/`export`/`import`/`commit` | delete — replaced by save/rename on run records |
 | grants, sudoers pinning, elevation, `--cap-add`/`--cap-drop`/`--privileged` launch flags | deleted (executed 2026-07-04) — Hold launches with the invoker's rights; `--system` selects scope; the flags are rejected honestly |
 | captive CLI (`src/runtime/captive.c`) and the `hcli` idea | delete — with profiles gone there is nothing to edit |
-| viewer (`src/viewer/`) | the full-screen viewer and playback transport were removed in the agent-terminal turn (2026-11); `hold logs` is plain text, the filter engine stays |
+| viewer (`src/viewer/`), the `HLOGIDX` sidecar, `logs --filter/--similar/--replay` | removed in the agent-terminal turn (2026-11): logs are one plain file; `hold logs` prints it (`-f`, `-n`), `grep` filters, `peek` shows the screen |
 | `hold shell` / `hold on` / `hold off` | removed in the agent-terminal turn (2026-11), with foreground adoption; `-dt` plus the screen verbs replace watching a program by hand |
 
 ## What stays (the hard-won plumbing)
 
 Hash-derived 64-hex call IDs with generated `adjective_noun` names; the
-raw-log + sidecar capture path; the console broker, now carrying a headless
+raw-log capture path; the console broker, now carrying a headless
 screen (see [screen.md](screen.md)); the call record store with restart-append; stop/kill escalation
 with target revalidation; the test-suite discipline (every surface shape
 asserted).

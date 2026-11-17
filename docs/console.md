@@ -12,9 +12,7 @@ The broker is forked per call and lives exactly as long as the call. It owns
 the PTY master and a private socket under the store's `console/` directory
 (0700 directory, 0600 socket; peers are checked by uid), and it:
 
-- appends every output byte to the call's log and `HLOGIDX` sidecar (the
-  sidecar is tagged `pty` once the stream shows itself to be a full-screen
-  program);
+- appends every output byte to the call's log;
 - feeds the same bytes to a headless terminal, which `hold peek`, `send`,
   `wait`, `resize`, and `msg` use (see [screen.md](screen.md));
 - serves one attach client at a time — a second gets "console already

@@ -6,8 +6,6 @@
 
 # Local release-artifact staging (scripts/release_build.sh, scripts/linux.sh release)
 /dist/
-/review-builds/
-/review-fixtures/
 
 # Local agent/workflow state
 /.omx/
@@ -74,15 +72,11 @@ dkms.conf
 /hash-vector
 
 # Standalone unit-test binaries
-/viewer-filter-test
-/logidx-recovery-test
 /screen-test
 
 # Local scratch/test executable
 /hello
 
-# Local demo run IDs
-/.review-demo-runs.env
 
 # Local handoff scratch (never commit)
 HANDOFF.md

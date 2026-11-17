@@ -48,8 +48,7 @@ full=$(basename "$(ls "$HOME/.local/state/hold/"*.log | head -n1)" .log)
 display=${full:0:12}
 log="$HOME/.local/state/hold/$full.log"
 grep -qx 'smoke-out' "$log" || fail "stdout raw log line missing"
-test -f "$log.idx" || fail "raw log sidecar index missing"
-head -c 7 "$log.idx" | grep -q '^HLOGIDX' || fail "raw log sidecar magic missing"
+test ! -e "$log.idx" || fail "a log index sidecar was written"
 hold logs --plain "$display" | grep -qx 'smoke-out' || fail "logs --plain did not print raw log"
 hold logs -p "$display" | grep -qx 'smoke-out' || fail "logs -p did not print raw log"
 
