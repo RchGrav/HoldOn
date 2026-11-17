@@ -25,7 +25,7 @@
 
 - `hold send --mouse` exits 9 when the program has mouse reporting off, so a
   script can tell the event was not delivered.
-- `peen` is simply an undocumented alias for `peek`.
+- The undocumented `peen` alias (a leftover from a brief rename) is gone.
 
 ### Added
 

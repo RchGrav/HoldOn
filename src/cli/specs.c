@@ -116,9 +116,6 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"stats", NULL, 1, 1, SPEC_NOSTREAM, "usage: hold stats <target> [--no-stream]", NULL, help_stats},
     {"peek", NULL, 1, -1, 0,
      "usage: hold peek <target> [--json] [--ruler] [--last-alt] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]", NULL, help_peek},
-    /* Undocumented alias. */
-    {"peen", "peek", 1, -1, 0,
-     "usage: hold peen <target>", NULL, help_peek},
     {"send", NULL, 1, -1, 0,
      "usage: hold send <target> [TEXT]... [-k KEY]... [--enter] [--paste TEXT] [--mouse ACTION,COL,ROW] [--wait MS]", NULL, help_send},
     {"wait", NULL, 1, -1, 0,

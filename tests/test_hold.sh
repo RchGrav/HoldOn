@@ -3801,16 +3801,6 @@ PY
   "$HOLD_BIN" end glyphs >/dev/null 2>&1 || true
 }
 
-# peen: an undocumented alias for peek.
-test_peen_is_peek() {
-  set +e; "$HOLD_BIN" peen >/dev/null 2>"$TEST_ROOT/peen.err"; rc=$?; set -e
-  [ "$rc" -ne 0 ] && grep -q 'usage: hold peen <target>' "$TEST_ROOT/peen.err" || return 1
-  ! "$HOLD_BIN" --help | grep -q peen || return 1
-  "$HOLD_BIN" -dt --name lump -- /bin/sh -c 'echo green putty; sleep 10' >/dev/null || return 1
-  "$HOLD_BIN" wait lump --match putty --timeout 5000 || return 1
-  "$HOLD_BIN" peen lump | head -1 | grep -qx 'green putty' || return 1
-  "$HOLD_BIN" end lump >/dev/null 2>&1 || true
-}
 # msg --settle (global --quiet owns that word) in both spellings; the value
 # never leaks into the message.
 test_msg_settle_flag() {
@@ -4173,7 +4163,6 @@ run_test "micro: click, double-click, drag select, wheel" test_micro_mouse_editi
 run_test "wait --idle needs first output; symlinked programs keep their name" test_wait_idle_needs_first_output_and_symlink_launch
 run_test "wait --match --since ignores a stale screen" test_wait_match_since_ignores_stale_screen
 run_test "peek --image draws CJK and emoji glyphs" test_peek_image_draws_cjk_and_emoji
-run_test "peen is an alias for peek" test_peen_is_peek
 run_test "msg --settle works in both spellings" test_msg_settle_flag
 run_test "peek --last-alt keeps a full-screen program's last frame" test_peek_last_alt_frame
 
