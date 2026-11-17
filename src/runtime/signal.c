@@ -399,32 +399,6 @@ static int view_forward_full(int fd, const struct hold_log_filter_options *opts,
     return 0;
 }
 
-struct interactive_view_liveness {
-    const struct hold_run_record *record;
-    const char *record_dir;
-    char boot[128];
-    bool have_boot;
-};
-
-static bool interactive_view_run_is_running(void *userdata) {
-    struct interactive_view_liveness *live = userdata;
-    if (!live || !live->record) return false;
-    return hold_eval_state(live->record, live->have_boot ? live->boot : NULL) == STATE_RUNNING;
-}
-
-static bool interactive_view_exit_code(void *userdata, int *code_out) {
-    struct interactive_view_liveness *live = userdata;
-    if (!live || !live->record || !live->record_dir) return false;
-    struct hold_run_record cur;
-    char cur_path[HOLD_PATH_MAX];
-    if (hold_load_record_by_id(live->record_dir, live->record->id, &cur, cur_path, sizeof(cur_path)) != 0)
-        return false;
-    bool have = cur.has_exit_code;
-    if (have && code_out) *code_out = cur.exit_code;
-    hold_free_run_record(&cur);
-    return have;
-}
-
 static int stream_view_follow_until_exit(int fd,
                                          const struct hold_run_record *r,
                                          const struct hold_log_filter_options *opts,
@@ -574,9 +548,9 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
     return 0;
 }
 
-/* ---- linear replay pipe (docs/future/playback.md) ----------------------- */
+/* ---- linear replay pipe ------------------------------------------------- */
 
-/* Non-TTY --replay: walk the sidecar index, sleep the recorded deltas, emit
+/* --replay: walk the sidecar index, sleep the recorded deltas, emit
  * the raw bytes by pread — linear 1x, no transport, script-safe. Only
  * display-stream records are emitted (the capture invariant: input is
  * annotation, never display; replaying an IN record is corruption). */
@@ -619,7 +593,7 @@ static int replay_log_pipe(const char *log_path, int log_fd) {
 
 /* ---- logs command entry -------------------------------------------------- */
 
-static const char view_usage[] = "usage: hold logs <target> [--follow|-f] [--replay] [--tail|-n N] [--plain|-p|--interactive]\n";
+static const char view_usage[] = "usage: hold logs <target> [--follow|-f] [--tail|-n N] [--filter TEXT] [--similar LINE] [--replay]\n";
 
 static int view_usage_err(void) {
     fputs(view_usage, stderr);
@@ -635,7 +609,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
 
     struct hold_log_filter_options opts;
     hold_log_filter_options_init(&opts);
-    bool debug_stats = false, have_limit = false, force_plain = false, force_interactive = false, follow = false;
+    bool debug_stats = false, have_limit = false, follow = false;
     bool replay = false;
     const char *target_token = NULL;
     for (int i = 0; i < argc; i++) {
@@ -653,9 +627,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         } else if (!strcmp(argv[i], "--debug-stats")) {
             debug_stats = true;
         } else if (!strcmp(argv[i], "--plain") || !strcmp(argv[i], "--print") || !strcmp(argv[i], "-p")) {
-            force_plain = true;
-        } else if (!strcmp(argv[i], "--interactive")) {
-            force_interactive = true;
+            /* Output is always plain; kept so 0.7-era scripts still parse. */
         } else if (!strcmp(argv[i], "--follow") || !strcmp(argv[i], "-f")) {
             follow = true;
         } else if (!strcmp(argv[i], "--replay")) {
@@ -669,64 +641,26 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
             return view_usage_err();
         }
     }
-    if (force_plain && force_interactive) {
-        fprintf(stderr, "hold: error: --plain and --interactive cannot be combined\n");
-        return 5;
-    }
     if (!target_token) return view_usage_err();
 
     struct hold_resolved_target target;
     bool hit = false, ok = false;
     int rc = resolve_single(inv, user_store, system_store, "view", "log", target_token, &target, &hit);
     if (!hit) return rc;
-    bool interactive = force_interactive || (!force_plain && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO));
-    if (force_interactive && (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO))) {
-        fprintf(stderr, "hold: error: --interactive requires a TTY\n");
-        return 5;
-    }
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
     rc = load_target_record(&target, true, &r, path, sizeof(path), &ok);
     if (!ok) return rc;
     int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) hold_die_errno("hold: failed to open log");
-    if (replay && !interactive) {
-        /* The plain --replay pipe: linear at 1x, no transport, script-safe. */
+    if (replay) {
+        /* The --replay pipe: recorded timing at 1x, script-safe. */
         if (replay_log_pipe(r.log_path, fd) != 0) hold_die_errno("hold: failed while replaying log");
         close(fd);
         hold_free_run_record(&r);
         return 0;
     }
-    if (interactive) {
-        struct hold_log_viewer_follow follow_opts = {0};
-        struct interactive_view_liveness live = {0};
-        live.record = &r;
-        live.record_dir = target.store.record_dir;
-        live.have_boot = hold_current_boot_id(live.boot, sizeof(live.boot));
-        enum run_state view_state = hold_eval_state(&r, live.have_boot ? live.boot : NULL);
-        /* The full-screen viewer follows live calls by default (the before-0.5
-         * design: open at the newest output, FOLLOWING ACTIVE). Plain non-TTY
-         * output keeps strict -f semantics for scripts. */
-        if (follow || view_state == STATE_RUNNING) {
-            follow_opts.enabled = true;
-            follow_opts.is_running = interactive_view_run_is_running;
-            follow_opts.exit_code = interactive_view_exit_code;
-            follow_opts.userdata = &live;
-            if (view_state == STATE_RUNNING) lseek(fd, 0, SEEK_END);
-        }
-        struct hold_log_viewer_context viewer_context = {
-            .run_id = r.id[0] ? r.id : target.id,
-            .name = r.has_name && r.name[0] ? r.name : NULL,
-            .command = r.cmdline,
-            .log_path = r.log_path,
-            .active = view_state == STATE_RUNNING,
-            .has_exit_code = r.has_exit_code,
-            .exit_code = r.exit_code,
-            .replay = replay,
-        };
-        rc = hold_log_viewer_tty_fd(fd, target_token, &opts, follow_opts.enabled ? &follow_opts : NULL, &viewer_context, debug_stats);
-        if (rc != 0) hold_die_errno("hold: failed while viewing log");
-    } else if (follow) {
+    if (follow) {
         char boot[128];
         const char *boot_id = hold_boot_id_or_null(boot);
         bool running = hold_eval_state(&r, boot_id) == STATE_RUNNING;

@@ -107,9 +107,7 @@ void hold_term_tui_feed(struct hold_term_tui_detect *d, const void *buf, size_t 
  * extends the prefix (arming the flush deadline), completes a chord, or
  * unwinds: the byte that broke the match is popped, the surviving prefix is
  * released through the sink, and the byte is re-fed against the empty state.
- * Two chords may share a prefix (Ctrl-P Ctrl-Q detach beside the Ctrl-P
- * Ctrl-P time-travel double-tap): the pending bytes track both until one
- * completes or both stop matching. */
+ */
 
 static int64_t term_now_usec(void) {
     struct timespec ts;
@@ -122,13 +120,6 @@ void hold_term_detach_init(struct hold_term_detach *d, const unsigned char *keys
     if (!keys || nkeys == 0 || nkeys > HOLD_TERM_DETACH_MAX_KEYS) return;
     memcpy(d->keys, keys, nkeys);
     d->nkeys = nkeys;
-}
-
-void hold_term_detach_set_alt(struct hold_term_detach *d, const unsigned char *keys, size_t nkeys) {
-    d->alt_nkeys = 0;
-    if (!keys || nkeys == 0 || nkeys > HOLD_TERM_DETACH_MAX_KEYS) return;
-    memcpy(d->alt_keys, keys, nkeys);
-    d->alt_nkeys = nkeys;
 }
 
 /* Does pending match the first len bytes of this chord? Reports completion. */
@@ -149,11 +140,9 @@ int hold_term_detach_flush(struct hold_term_detach *d, hold_term_detach_sink sin
 int hold_term_detach_feed(struct hold_term_detach *d, unsigned char c,
                           hold_term_detach_sink sink, void *ctx, int *completed) {
     *completed = 0;
-    if (d->nkeys == 0 && d->alt_nkeys == 0) return sink(ctx, &c, 1) != 0 ? -1 : 0;
+    if (d->nkeys == 0) return sink(ctx, &c, 1) != 0 ? -1 : 0;
     for (;;) {
-        if (d->pending_len == 0 &&
-            !(d->nkeys > 0 && c == d->keys[0]) &&
-            !(d->alt_nkeys > 0 && c == d->alt_keys[0])) {
+        if (d->pending_len == 0 && c != d->keys[0]) {
             return sink(ctx, &c, 1) != 0 ? -1 : 0;
         }
         if (d->pending_len >= HOLD_TERM_DETACH_MAX_KEYS) {
@@ -161,15 +150,14 @@ int hold_term_detach_feed(struct hold_term_detach *d, unsigned char c,
             continue;
         }
         d->pending[d->pending_len++] = c;
-        bool primary_done = false, alt_done = false;
-        bool primary_live = chord_prefix(d->keys, d->nkeys, d->pending, d->pending_len, &primary_done);
-        bool alt_live = chord_prefix(d->alt_keys, d->alt_nkeys, d->pending, d->pending_len, &alt_done);
-        if (primary_done || alt_done) {
+        bool done = false;
+        bool live = chord_prefix(d->keys, d->nkeys, d->pending, d->pending_len, &done);
+        if (done) {
             d->pending_len = 0;
-            *completed = primary_done ? 1 : 2;
+            *completed = 1;
             return 0;
         }
-        if (primary_live || alt_live) {
+        if (live) {
             d->deadline_usec = term_now_usec() + HOLD_TERM_DETACH_FLUSH_USEC;
             return 0;
         }

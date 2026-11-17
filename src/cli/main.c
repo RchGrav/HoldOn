@@ -592,11 +592,7 @@ int hold_cli_main(int argc, char **argv) {
     }
 
     int rc = 0;
-    if (!strcmp(canon, "on")) {
-        rc = hold_cmd_shell_action(&inv, inv.euid_root ? &system_store : &user_store);
-    } else if (!strcmp(canon, "off")) {
-        rc = hold_cmd_off_action();
-    } else if (!strcmp(canon, "save")) {
+    if (!strcmp(canon, "save")) {
         rc = hold_cmd_save_action(&inv, &user_store, &system_store, cmd_argv[0]);
     } else if (!strcmp(canon, "rename")) {
         rc = hold_cmd_rename_action(&inv, &user_store, &system_store, cmd_argv[0], cmd_argv[1]);
@@ -630,7 +626,7 @@ int hold_cli_main(int argc, char **argv) {
         rc = hold_cmd_ports_action(&inv, &user_store, &system_store, cmd_argv[0]);
     } else if (!strcmp(canon, "stats")) {
         rc = hold_cmd_stats_action(&inv, &user_store, &system_store, cmd_argv[0], oo.no_stream);
-    } else if (!strcmp(canon, "__view")) {
+    } else if (!strcmp(canon, "logs")) {
         rc = hold_cmd_view_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
     } else if (!strcmp(canon, "attach")) {
         rc = hold_cmd_console_action(&inv, &user_store, &system_store, cmd_argv[0]);

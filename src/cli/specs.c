@@ -53,10 +53,6 @@ static const char help_ps[] =
     "column (CALL ID, COMMAND, CREATED, STATUS, PORTS, NAMES). Global calls you cannot read\n"
     "show a 'hidden' COMMAND. ps speaks only Docker: it takes no scope flags. For Hold's\n"
     "scoped, past-inclusive ledger with a USER column, use list.\n";
-static const char help_on[] =
-    "Start a guarded shell under Hold's PTY/session wrapper. Hold holds the line: pressing the classic detach sequence Ctrl-P Ctrl-Q puts the current foreground program on hold as a call and returns to the shell. 'hold off' or exit ends the session. (shell is an alias of on.)\n";
-static const char help_off[] =
-    "End the current 'hold on' session cleanly. Only works inside a hold on session.\n";
 static const char help_end[] =
     "End matching calls politely: TERM, then KILL if needed. (stop is an alias.)\n";
 static const char help_kill[] =
@@ -64,11 +60,9 @@ static const char help_kill[] =
 static const char help_tail[] =
     "Follow a call's live output. Shorthand for hold logs <target> -f.\n";
 static const char help_logs[] =
-    "Open the log viewer for a call. In a TTY, type directly in the full-screen viewer to filter dynamically; Backspace relaxes the filter, Space excludes lines like the highlighted line, and Ctrl-R resets filters. --replay plays the log back with its recorded timing (Space pause/resume, . fast-forward, , rewind); to a non-TTY it is a plain linear pipe. Non-TTY output stays script-friendly; -p/--print/--plain always dumps plain text.\n";
+    "Print a call's captured output as plain text. -f follows a running call until it ends; -n N prints the newest N lines; --filter TEXT keeps lines containing TEXT; --similar LINE keeps lines shaped like LINE; --replay re-emits the output with its recorded timing. For the live screen of a TTY call, use hold peek.\n";
 static const char help_attach[] =
-    "Pick a running console/TTY call back up. Detach again with Ctrl-P Ctrl-Q. Tap Ctrl-P twice to time-travel: the log viewer opens over the live console (pause, rewind, replay everything recorded) and Esc or another double-tap returns to real time — the console is never released. Start attachable calls with hold -it <cmd>. (console is an alias of attach.)\n";
-static const char help_view[] =
-    "Internal regression/debug entrypoint for the log viewer engine. The product UX is hold logs <target>, then type inside the full-screen viewer to filter dynamically.\n";
+    "Pick a running console/TTY call back up. Detach again with Ctrl-P Ctrl-Q. Start attachable calls with hold -it <cmd>. (console is an alias of attach.)\n";
 static const char help_purge[] =
     "The one removal verb. With no target it sweeps ended calls; -a includes stale (a state\n"
     "widener, not a scope one). Scope: -u/--user sweeps your personal calls (the default);\n"
@@ -91,7 +85,6 @@ static const char usage_purge_help[] =
     "usage: hold purge [<target>] [-a|--all] [-s|--system] [-u|--user] [--force]";
 static const char usage_end[] = "usage: hold end [--print] [--all] <target>...";
 static const char usage_attach[] = "usage: hold attach <target>";
-static const char usage_on[] = "usage: hold on";
 
 #define SPEC_PURGE_FLAGS (SPEC_ALL | SPEC_SCOPE | SPEC_FORCE)
 
@@ -100,22 +93,17 @@ static const struct hold_cli_command_spec command_specs[] = {
      "usage: hold list [-a|--all] [-s|--system] [-u|--user] [-l|--live] [name]", NULL, help_list},
     {"ps", NULL, 0, 1, SPEC_ALL | SPEC_STRICT | SPEC_PS_DOCKER,
      "usage: hold ps [-a|--all] [name]", NULL, help_ps},
-    {"on", NULL, 0, 0, 0, usage_on, NULL, help_on},
-    {"off", NULL, 0, 0, 0, "usage: hold off", NULL, help_off},
-    {"shell", "on", 0, 0, 0, "usage: hold shell", usage_on, help_on},
     {"end", NULL, 1, -1, SPEC_ALL | SPEC_PRINT, usage_end, NULL, help_end},
     {"stop", "end", 1, -1, SPEC_ALL | SPEC_PRINT,
      "usage: hold stop [--print] [--all] <target>...", usage_end, help_end},
     {"kill", NULL, 1, -1, SPEC_ALL | SPEC_PRINT,
      "usage: hold kill [--print] [--all] <target>...", NULL, help_kill},
     {"tail", NULL, 1, 1, 0, "usage: hold tail <target>", NULL, help_tail},
-    {"logs", "__view", 1, -1, 0,
-     "usage: hold logs <target> [--follow|-f] [--replay] [--tail|-n N] [--plain|-p|--interactive]", NULL, help_logs},
+    {"logs", NULL, 1, -1, 0,
+     "usage: hold logs <target> [--follow|-f] [--tail|-n N] [--filter TEXT] [--similar LINE] [--replay]", NULL, help_logs},
     {"inspect", NULL, 1, 1, 0, "usage: hold inspect <target>", NULL, help_inspect},
     {"ports", NULL, 1, 1, 0, "usage: hold ports <target>", NULL, help_ports},
     {"stats", NULL, 1, 1, SPEC_NOSTREAM, "usage: hold stats <target> [--no-stream]", NULL, help_stats},
-    {"__view", NULL, 1, -1, 0,
-     "usage: hold __view <target> [internal viewer test options]", NULL, help_view},
     {"attach", NULL, 1, 1, 0, usage_attach, NULL, help_attach},
     {"console", "attach", 1, 1, 0, "usage: hold console <target>", usage_attach, help_attach},
     {"purge", NULL, 0, 1, SPEC_PURGE_FLAGS,

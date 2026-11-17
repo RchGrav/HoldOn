@@ -28,16 +28,13 @@ static void hash_field(struct sha256_ctx *ctx, const char *key, const char *valu
     hold_sha256_update_nul_field(ctx, value ? value : "-");
 }
 
-/* The launch and adoption id materials, kept byte-for-byte distinct: the
- * scope tag ("hold-run-v1" vs "hold-run-adopt-v1") guarantees a launched and
- * an adopted id can never collide by construction. */
+/* The launch id material: version tag, executable, cwd, timestamp, launcher
+ * pid, argv, and a collision counter. */
 struct run_hash_material {
-    const char *scope;   /* NULL = launch layout, else adoption layout */
     const char *exe;
     const char *cwd;
     int argc;
     char **argv;
-    pid_t pid, pgid;     /* adoption: the adopted leader and group */
     int64_t start_unix_ns;
 };
 
@@ -47,31 +44,21 @@ static void compute_run_hash(const struct run_hash_material *m, unsigned long co
     unsigned char digest[32];
     char buf[64];
     hold_sha256_init(&ctx);
-    if (m->scope) hash_field(&ctx, "scope", m->scope);
-    else hash_field(&ctx, "version", "hold-run-v1");
+    hash_field(&ctx, "version", "hold-run-v1");
     hash_field(&ctx, "exe", m->exe);
     hash_field(&ctx, "cwd", m->cwd && *m->cwd ? m->cwd : "-");
     snprintf(buf, sizeof(buf), "%" PRId64, m->start_unix_ns);
-    hash_field(&ctx, m->scope ? "created_ns" : "timestamp_ns", buf);
-    snprintf(buf, sizeof(buf), "%ld", (long)(m->scope ? m->pid : getpid()));
-    hash_field(&ctx, m->scope ? "pid" : "launcher_pid", buf);
-    if (m->scope) {
-        snprintf(buf, sizeof(buf), "%ld", (long)m->pgid);
-        hash_field(&ctx, "pgid", buf);
-    }
+    hash_field(&ctx, "timestamp_ns", buf);
+    snprintf(buf, sizeof(buf), "%ld", (long)getpid());
+    hash_field(&ctx, "launcher_pid", buf);
     snprintf(buf, sizeof(buf), "%d", m->argc);
     hash_field(&ctx, "argc", buf);
     for (int i = 0; i < m->argc; i++) {
         snprintf(buf, sizeof(buf), "argv[%d]", i);
-        hash_field(&ctx, buf, m->argv && m->argv[i] ? m->argv[i] : (m->scope ? NULL : ""));
+        hash_field(&ctx, buf, m->argv && m->argv[i] ? m->argv[i] : "");
     }
-    if (!m->scope) {
-        snprintf(buf, sizeof(buf), "%lu", counter);
-        hash_field(&ctx, "counter", buf);
-    } else if (counter > 0) {
-        snprintf(buf, sizeof(buf), "%lu", counter);
-        hash_field(&ctx, "collision", buf);
-    }
+    snprintf(buf, sizeof(buf), "%lu", counter);
+    hash_field(&ctx, "counter", buf);
     hold_sha256_final(&ctx, digest);
     hold_hex_encode(digest, sizeof(digest), out, ID_STR_LEN);
 }
@@ -111,22 +98,6 @@ int hold_reserve_run_id(const struct hold_store *store,
         .start_unix_ns = start_unix_ns,
     };
     return reserve_hashed_id(store, NULL, &m, out_id);
-}
-
-int hold_reserve_adopted_run_id(const struct hold_store *store,
-                                const struct hold_store *avoid_public_store,
-                                const char *observed_exe,
-                                int argc, char **argv,
-                                const char *cwd,
-                                pid_t pid, pid_t pgid,
-                                int64_t start_unix_ns,
-                                char out_id[ID_STR_LEN]) {
-    struct run_hash_material m = {
-        .scope = "hold-run-adopt-v1", .exe = observed_exe, .cwd = cwd,
-        .argc = argc, .argv = argv, .pid = pid, .pgid = pgid,
-        .start_unix_ns = start_unix_ns,
-    };
-    return reserve_hashed_id(store, avoid_public_store, &m, out_id);
 }
 
 void hold_abort_run_reservation(const struct hold_store *store, const char *id) {

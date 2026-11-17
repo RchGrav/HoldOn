@@ -98,9 +98,6 @@ int hold_cmd_purge_action(const struct hold_invocation *inv,
                             bool all,
                             bool force,
                             bool system_scope);
-int hold_cmd_shell_action(const struct hold_invocation *inv,
-                            const struct hold_store *store);
-int hold_cmd_off_action(void);
 /* Call-record operations (src/runtime/call.c): redial a retained recipe, save or
  * rename a call, and assign a generated adjective_noun name. */
 int hold_cmd_rename_action(const struct hold_invocation *inv,

@@ -23,8 +23,7 @@ static int attach_console_record(const struct hold_invocation *inv,
         hold_sig_note(inv, "hold: %s has no console (start with -it)\n", r->id);
         return 0;
     }
-    return hold_run_native_console(r->console_sock, r->log_path, r->id,
-                                   r->has_name && r->name[0] ? r->name : NULL);
+    return hold_run_native_console(r->console_sock);
 }
 
 int hold_cmd_console_action(const struct hold_invocation *inv,
@@ -73,14 +72,11 @@ void hold_usage(void) {
            "  hold -it <cmd> [args...]     attached on a PTY (Ctrl-P Ctrl-Q holds it)\n"
            "  hold <id|name>               redial: restart a retained call from its recipe\n"
            "  hold --name web -d <cmd>...  name the call and place it in the background\n\n"
-           "SESSION\n"
-           "  hold on                      guarded shell; Ctrl-P Ctrl-Q holds a program\n"
-           "  hold off                     end the current hold on session\n\n"
            "MANAGE YOUR CALLS\n"
            "  hold list                    your ledger: your calls, live and past\n"
            "  hold ps                      the Docker view: running calls, machine-wide\n"
            "  hold attach <target>         pick the call back up (Ctrl-P Ctrl-Q detaches)\n"
-           "  hold logs <target> [-f]      open the log viewer (-p dumps plain text)\n"
+           "  hold logs <target> [-f]      print captured output (-n N newest lines)\n"
            "  hold inspect <target>        structured JSON details\n"
            "  hold ports <target>          listening sockets in use by the call\n"
            "  hold stats <target>          live CPU, memory, and pid usage\n"

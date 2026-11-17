@@ -62,17 +62,13 @@ ssize_t hold_term_pump_master(int master, int logfd, int logidxfd,
  * through *completed without forwarding, and a pending prefix left hanging
  * is flushed after HOLD_TERM_DETACH_FLUSH_USEC (drive it from poll via
  * hold_term_detach_timeout_ms: -1 = nothing pending, 0 = flush now).
- * An optional alternate chord (the attach client's Ctrl-P Ctrl-P time-travel
- * double-tap, docs/future/playback.md) may share a prefix with the primary;
- * *completed reports 1 for the primary chord, 2 for the alternate. */
+ * *completed reports 1 when the chord completes. */
 #define HOLD_TERM_DETACH_MAX_KEYS 8
 #define HOLD_TERM_DETACH_FLUSH_USEC 500000
 
 struct hold_term_detach {
     unsigned char keys[HOLD_TERM_DETACH_MAX_KEYS];
     size_t nkeys;
-    unsigned char alt_keys[HOLD_TERM_DETACH_MAX_KEYS];
-    size_t alt_nkeys;
     unsigned char pending[HOLD_TERM_DETACH_MAX_KEYS];
     size_t pending_len;
     int64_t deadline_usec;
@@ -82,7 +78,6 @@ struct hold_term_detach {
 typedef int (*hold_term_detach_sink)(void *ctx, const unsigned char *bytes, size_t n);
 
 void hold_term_detach_init(struct hold_term_detach *d, const unsigned char *keys, size_t nkeys);
-void hold_term_detach_set_alt(struct hold_term_detach *d, const unsigned char *keys, size_t nkeys);
 int hold_term_detach_feed(struct hold_term_detach *d, unsigned char c,
                           hold_term_detach_sink sink, void *ctx, int *completed);
 int hold_term_detach_flush(struct hold_term_detach *d, hold_term_detach_sink sink, void *ctx);

@@ -12,8 +12,7 @@
 /* The child-mode broker's forked target group, set right after the pid is
  * reported and cleared at every reap site. The SIGTERM forwarder reads it so a
  * TERM aimed at the broker (e.g. a raw kill of the broker pid) reaches the held
- * group instead of orphaning it. Never set by the adopted entry, which must
- * never signal its adopted group. */
+ * group instead of orphaning it. */
 static volatile pid_t g_broker_forward_target = 0;
 
 static void broker_forward_term(int signo) {
@@ -31,7 +30,7 @@ struct broker {
     const char *run_id;
     const char *sock_path; /* NULL/"" = nothing to unlink */
     int parent_pipe;
-    int listener; /* -1 in the adopted log-only fallback: no clients */
+    int listener;
     int master;
     int logfd;
     int logidxfd;
@@ -39,9 +38,6 @@ struct broker {
     uid_t owner_uid;
     bool have_allowed_peer_uid;
     uid_t allowed_peer_uid;
-    pid_t adopted_pgid; /* adopted mode: group/session liveness probe */
-    pid_t adopted_sid;
-    pid_t hup_pid; /* adopted mode: HUP the wrapper shell on exit */
     struct hold_term_tui_detect tui; /* tags the sidecar pty once a TUI shows */
 };
 
@@ -245,12 +241,8 @@ static int process_client_input(struct client *c, int master, const unsigned cha
 
 /* ---- the one serve loop ------------------------------------------------- */
 
-/* b->target > 0 means the target is our child (waitpid lifecycle, killed on
- * cleanup); otherwise the target is an adopted foreground group we must never
- * kill, whose exit shows as PTY EOF or dead group/session. b->listener < 0 is
- * the adopted log-only fallback: same loop, no clients. Never returns. */
+/* b->target is our child: waitpid lifecycle, killed on cleanup. Never returns. */
 static void broker_serve(struct broker *b) {
-    bool adopted = b->target <= 0;
     /* The serve loop always ends in _exit, so no handler save/restore. */
     signal(SIGPIPE, SIG_IGN);
 
@@ -263,7 +255,7 @@ static void broker_serve(struct broker *b) {
     bool target_marked = false;
     int target_status = 0;
     while (1) {
-        if (!adopted && !target_done) {
+        if (!target_done) {
             int st = 0;
             if (waitpid(b->target, &st, WNOHANG) == b->target) {
                 target_done = true;
@@ -277,10 +269,6 @@ static void broker_serve(struct broker *b) {
                 b->target = -1;
                 g_broker_forward_target = 0;
             }
-        }
-        if (adopted && !target_done && b->adopted_pgid > 1 && b->adopted_sid > 0 &&
-            hold_group_session_liveness(b->adopted_pgid, b->adopted_sid) != GROUP_LIVE) {
-            target_done = true;
         }
 
         struct pollfd pfds[3];
@@ -298,7 +286,7 @@ static void broker_serve(struct broker *b) {
             pfds[nfds++] = (struct pollfd){.fd = cl.fd, .events = POLLIN};
         }
 
-        int pr = poll(pfds, nfds, adopted ? 200 : 1000);
+        int pr = poll(pfds, nfds, 1000);
         if (pr < 0) {
             if (errno == EINTR) {
                 continue;
@@ -364,7 +352,7 @@ static void broker_serve(struct broker *b) {
         }
     }
 
-    if (!adopted && !target_done && b->target > 0) {
+    if (!target_done && b->target > 0) {
         int st = 0;
         pid_t got;
         do {
@@ -379,7 +367,7 @@ static void broker_serve(struct broker *b) {
             g_broker_forward_target = 0;
         }
     }
-    if (!adopted && target_done && !target_marked && b->store && b->run_id && *b->run_id) {
+    if (target_done && !target_marked && b->store && b->run_id && *b->run_id) {
         /* The exit stamp must not be lost to the launch race: retry until the
          * parent's record exists. rc 1 means the record was purged while the
          * call was exiting — that removal is final, do not resurrect it. */
@@ -391,9 +379,6 @@ static void broker_serve(struct broker *b) {
                 continue;
             }
         }
-    }
-    if (adopted && b->hup_pid > 0) {
-        kill(b->hup_pid, SIGHUP);
     }
     if (cl.fd >= 0) close(cl.fd);
     broker_cleanup_and_exit(b, 0);
@@ -428,7 +413,6 @@ void hold_run_console_broker(int parent_pipe,
         .owner_uid = owner_uid,
         .have_allowed_peer_uid = have_allowed_peer_uid,
         .allowed_peer_uid = allowed_peer_uid,
-        .hup_pid = -1,
     };
     if (argc <= 0 || !argv || !argv[0]) {
         broker_fail_errno(&b, EINVAL);
@@ -480,69 +464,4 @@ void hold_run_console_broker(int parent_pipe,
     (void)sigaction(SIGTERM, &term_sa, NULL);
 
     broker_serve(&b);
-}
-
-pid_t hold_spawn_adopted_console_server(const struct hold_store *store,
-                                          const char *run_id,
-                                          const char *log_path,
-                                          int master,
-                                          pid_t adopted_pgid,
-                                          pid_t adopted_sid,
-                                          pid_t hup_pid,
-                                          char *console_sock_out,
-                                          size_t console_sock_n) {
-    /* Prefer serving the adopted PTY through a broker so the run stays
-     * reattachable; every fd is opened here so the child has no failure path.
-     * If listener setup fails the same serve loop runs as a log-only capture
-     * (listener -1), and a failed log open forks a child that just exits. */
-    char console_sock[HOLD_PATH_MAX];
-    console_sock[0] = '\0';
-    struct broker b = {
-        .store = store,
-        .run_id = run_id,
-        .sock_path = console_sock,
-        .parent_pipe = -1,
-        .listener = -1,
-        .master = master,
-        .logfd = -1,
-        .logidxfd = -1,
-        .target = -1,
-        .owner_uid = geteuid(),
-        .adopted_pgid = adopted_pgid,
-        .adopted_sid = adopted_sid,
-        .hup_pid = hup_pid,
-    };
-    b.logfd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600);
-    b.logidxfd = b.logfd >= 0 ? hold_open_log_index_fd(log_path, b.logfd) : -1;
-    if (b.logfd >= 0 &&
-        hold_format_console_sock_path(store, run_id, console_sock, sizeof(console_sock)) == 0) {
-        b.listener = hold_make_console_listener(console_sock);
-    }
-    if (b.listener < 0) {
-        console_sock[0] = '\0';
-    }
-
-    pid_t server = fork();
-    if (server < 0) {
-        int saved = errno;
-        if (b.listener >= 0) close(b.listener);
-        if (b.logidxfd >= 0) close(b.logidxfd);
-        if (b.logfd >= 0) close(b.logfd);
-        if (console_sock[0]) unlink(console_sock);
-        errno = saved;
-        return -1;
-    }
-    if (server == 0) {
-        signal(SIGHUP, SIG_IGN);
-        hold_close_stdio_to_devnull();
-        if (b.logfd < 0) _exit(1);
-        broker_serve(&b); /* never returns */
-    }
-    if (b.listener >= 0) close(b.listener);
-    if (b.logidxfd >= 0) close(b.logidxfd);
-    if (b.logfd >= 0) close(b.logfd);
-    if (hold_checked_snprintf(console_sock_out, console_sock_n, "%s", console_sock) != 0) {
-        console_sock_out[0] = '\0';
-    }
-    return server;
 }
