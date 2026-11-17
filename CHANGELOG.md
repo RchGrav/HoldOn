@@ -12,7 +12,11 @@
   looked like three bars); each dot now sits centered in its column.
 - Running the test suite as root: the screen tests wrote into root-owned
   scratch folders as the unprivileged test user. They now use a folder that
-  user owns, and CI gains a root-runner lane.
+  user owns; as root, the harness runs a world-readable copy of the binary
+  and passes `HOLD_CALL_*` and `TERM` through to the test user. CI gains a
+  root-runner lane.
+- A TTY call launched with `TERM=unknown` (what `sudo` sets without a
+  terminal) now gets `xterm-256color` too, like an unset or `dumb` TERM.
 - A static glibc build no longer links `getpwuid` (it cannot load NSS and the
   linker warned); it reads `/etc/passwd`. Dynamic builds and macOS still use
   the system account database.

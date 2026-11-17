@@ -182,7 +182,11 @@ as_user() {
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
-    HOLD_FAKE_SUDO_RC; do
+    HOLD_FAKE_SUDO_RC \
+    HOLD_CALL_ID \
+    HOLD_CALL_NAME \
+    HOLD_CALL_PARENT \
+    TERM; do
     if [ "${!name+x}" = x ]; then
       env_args+=("$name=${!name}")
     fi
@@ -268,7 +272,11 @@ for name in \
   HOLD_TEST_FAIL_RECORD_WRITE \
   HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
   HOLD_FAKE_SUDO_ARGV \
-  HOLD_FAKE_SUDO_RC; do
+  HOLD_FAKE_SUDO_RC \
+  HOLD_CALL_ID \
+  HOLD_CALL_NAME \
+  HOLD_CALL_PARENT \
+  TERM; do
   if [ "${!name+x}" = x ]; then
     env_args+=("$name=${!name}")
   fi
@@ -1858,7 +1866,7 @@ JSON
 # a USER column naming the caller; -l/--live narrows it to the running ones.
 test_list_default_is_full_ledger_live_narrows() {
   local live_out ended_out live_id ended_id me
-  me=$(id -un)
+  me="$TEST_USER" # the acting user (as root, the suite acts as a test user)
   live_out=$("$HOLD_BIN" -d --name ledger_live sleep 300 2>&1) || return 1
   live_id=$(printf '%s\n' "$live_out" | extract_id); [ -n "$live_id" ] || return 1
   ended_out=$("$HOLD_BIN" -d --name ledger_past /bin/sh -c 'exit 4' 2>&1) || return 1
@@ -2163,6 +2171,8 @@ test_native_record_is_readable_when_hand_authored() {
 }
 JSON
   chmod 600 "$record" || return 1
+  # As root the suite acts as a test user, who must own what it reads.
+  if [ "${USER_ACTOR_NEEDS_SUDO:-0}" -eq 1 ]; then chown -R "$TEST_UID:$TEST_GID" "$HOME/.local" || return 1; fi
   ps_out=$("$HOLD_BIN" ps -a 2>"$TEST_ROOT/native-reader.err") || {
     cat "$TEST_ROOT/native-reader.err" >&2
     return 1
@@ -2521,7 +2531,7 @@ test_stats_single_shot_shape() {
 test_inspect_reports_stdio_targets() {
   [ "$(uname -s)" = Linux ] || skip "process observation (stdio fd targets) is Linux-only"
   local redir out id
-  redir="$TEST_ROOT/inspect-stdio.out"
+  redir="$(actor_dir)/inspect-stdio.out" || return 1
   out=$("$HOLD_BIN" -d --name stdio-smoke -- /bin/sh -c "exec >\"$redir\"; sleep 30" 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
@@ -3546,14 +3556,17 @@ test_tty_call_defaults_term() {
   # /usr/bin/env directly: some /bin/sh (macOS) set TERM=dumb themselves.
   env -u TERM "$HOLD_BIN" -dt --name t1 -- /usr/bin/env >/dev/null || return 1
   TERM=dumb "$HOLD_BIN" -dt --name t2 -- /usr/bin/env >/dev/null || return 1
+  TERM=unknown "$HOLD_BIN" -dt --name t5 -- /usr/bin/env >/dev/null || return 1
   env -u TERM "$HOLD_BIN" -dt -e TERM=vt100 --name t3 -- /usr/bin/env >/dev/null || return 1
   env -u TERM "$HOLD_BIN" -d --name t4 -- /usr/bin/env >/dev/null || return 1
-  for c in t1 t2 t3 t4; do "$HOLD_BIN" wait "$c" --timeout 5000 >/dev/null || return 1; done
+  for c in t1 t2 t3 t4 t5; do "$HOLD_BIN" wait "$c" --timeout 5000 >/dev/null || return 1; done
+  "$HOLD_BIN" logs t5 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || return 1
   # logs, not peek: the environment can scroll past the 24-row screen
   "$HOLD_BIN" logs t1 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || { "$HOLD_BIN" logs t1 >&2; return 1; }
   "$HOLD_BIN" logs t2 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || return 1
   "$HOLD_BIN" logs t3 | tr -d '\r' | grep -qx 'TERM=vt100' || return 1
-  ! "$HOLD_BIN" logs t4 | grep -q '^TERM=' || return 1
+  # A plain (non -t) call is left alone: hold injects nothing.
+  ! "$HOLD_BIN" logs t4 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || return 1
 }
 
 # Arrow keys and mouse events move a real program's cursor (vim, mouse=a).

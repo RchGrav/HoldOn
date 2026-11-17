@@ -94,12 +94,13 @@ static void child_identity_prepare(const char *id, const char *name, bool tty) {
 }
 
 /* A TTY call runs on Hold's xterm-compatible terminal: when the launcher had
- * no usable TERM (cron, CI, systemd: unset or "dumb"), say so, as docker run
+ * no usable TERM (cron, CI, systemd, sudo: unset, "dumb", or "unknown"), say so, as docker run
  * -t does. Applied before the recipe env, so an explicit -e TERM=... wins. */
 static int apply_default_term(void) {
     if (!g_child_identity.tty) return 0;
     const char *term = getenv("TERM");
-    if (term && *term && strcmp(term, "dumb") != 0) return 0;
+    /* "unknown" is what sudo and login set when there is no terminal type. */
+    if (term && *term && strcmp(term, "dumb") != 0 && strcmp(term, "unknown") != 0) return 0;
     return setenv("TERM", "xterm-256color", 1);
 }
 
