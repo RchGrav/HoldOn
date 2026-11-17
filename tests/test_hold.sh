@@ -144,6 +144,15 @@ setup_suite_actors() {
     TEST_GID="$(id -g "$TEST_USER")"
     chown "$TEST_UID:$TEST_GID" "$ACTOR_HOME" || return 1
     chmod 700 "$ACTOR_HOME" || return 1
+    # The test user must be able to execute the binary under test, but the
+    # checkout may sit in a home it cannot traverse (/home/runner is 0750 on
+    # GitHub runners): run a world-readable copy instead.
+    if ! sudo -n -u "$TEST_USER" test -x "$HOLD_REAL_BIN" 2>/dev/null &&
+       ! su -s /bin/sh "$TEST_USER" -c "test -x '$HOLD_REAL_BIN'" 2>/dev/null; then
+      cp "$HOLD_REAL_BIN" "$SUITE_ROOT/hold-under-test" || return 1
+      chmod 755 "$SUITE_ROOT/hold-under-test" || return 1
+      HOLD_REAL_BIN="$SUITE_ROOT/hold-under-test"
+    fi
   else
     USER_ACTOR_NEEDS_SUDO=0
     TEST_USER="$(id -un)"
