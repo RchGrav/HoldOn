@@ -66,14 +66,14 @@ wait_for_url() {
   return 1
 }
 
-ROOT=$(abs_path "${HOLD_DEMO_ROOT:-$PWD/.hold-demo}")
+ROOT=$(abs_path "${HOLD_DEMO_ROOT:-$PWD/.grutty-demo}")
 TOOLS_DIR="$ROOT/tools"
 SITE_DIR="$ROOT/site"
 OTHER_DIR="$ROOT/from-another-directory"
-HOLD_ENV="$ROOT/hold.env"
+HOLD_ENV="$ROOT/grutty.env"
 PORT=${HOLD_DEMO_PORT:-8765}
 PROFILE=${HOLD_DEMO_PROFILE:-uv-web-demo}
-HOLD_INSTALL_URL=${HOLD_INSTALL_URL:-https://github.com/RchGrav/hold/releases/latest/download/install.sh}
+GRUTTY_INSTALL_URL=${GRUTTY_INSTALL_URL:-https://github.com/RchGrav/hold/releases/latest/download/install.sh}
 UV_INSTALL_URL=${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}
 ACTIVE_RUNS=""
 
@@ -94,8 +94,8 @@ mkdir -p "$TOOLS_DIR" "$SITE_DIR" "$OTHER_DIR"
 cat >"$SITE_DIR/index.html" <<'HTML'
 <!doctype html>
 <html>
-  <head><meta charset="utf-8"><title>On Hold uv demo</title></head>
-  <body>On Hold started this uv-backed server.</body>
+  <head><meta charset="utf-8"><title>Grutty uv demo</title></head>
+  <body>Grutty started this uv-backed server.</body>
 </html>
 HTML
 
@@ -104,13 +104,13 @@ if [ -n "${HOLD_BIN:-}" ]; then
     */*) HOLD_BIN=$(abs_path "$HOLD_BIN") ;;
     *) HOLD_BIN=$(find_on_path "$HOLD_BIN") ;;
   esac
-elif HOLD_BIN=$(find_on_path hold); then
+elif HOLD_BIN=$(find_on_path grutty); then
   :
 else
-  installer="$ROOT/install-hold.sh"
-  say_err "Installing On Hold into $TOOLS_DIR"
-  download "$HOLD_INSTALL_URL" "$installer"
-  HOLD_INSTALL_DIR="$TOOLS_DIR" HOLD_ENV_FILE="$HOLD_ENV" sh "$installer"
+  installer="$ROOT/install-grutty.sh"
+  say_err "Installing Grutty into $TOOLS_DIR"
+  download "$GRUTTY_INSTALL_URL" "$installer"
+  GRUTTY_INSTALL_DIR="$TOOLS_DIR" HOLD_ENV_FILE="$HOLD_ENV" sh "$installer"
   . "$HOLD_ENV"
 fi
 [ -x "$HOLD_BIN" ] || die "HOLD_BIN is not executable: $HOLD_BIN"
@@ -134,7 +134,7 @@ need_cmd curl
 
 URL="http://127.0.0.1:$PORT/"
 
-say_err "Starting initial server through On Hold"
+say_err "Starting initial server through Grutty"
 RUN_ID=$("$HOLD_BIN" "$UV_BIN" run --python 3 python -m http.server "$PORT" --bind 127.0.0.1 --directory "$SITE_DIR")
 ACTIVE_RUNS="$ACTIVE_RUNS $RUN_ID"
 wait_for_url "$URL" 60 || die "server did not become reachable at $URL"
@@ -155,12 +155,12 @@ wait_for_url "$URL" 60 || die "profile-backed server did not become reachable at
 trap - EXIT HUP INT TERM
 
 cat <<EOF
-On Hold + uv demo is running.
+Grutty + uv demo is running.
 
 URL:         $URL
 profile:     $PROFILE
 run ID:      $PROFILE_RUN_ID
-On Hold bin: $HOLD_BIN
+Grutty bin: $HOLD_BIN
 uv bin:      $UV_BIN
 
 Inspect:

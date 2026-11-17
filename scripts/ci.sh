@@ -46,7 +46,7 @@ mark_ok "static-build"
 
 step "dynamic, -Werror"
 must make clean
-must make hold-dynamic CC="$CC_BIN" CFLAGS="$WERROR"
+must make grutty-dynamic CC="$CC_BIN" CFLAGS="$WERROR"
 mark_ok "dynamic-build"
 
 step "regression suite + profile-hash vector"

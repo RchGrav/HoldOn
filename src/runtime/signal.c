@@ -18,7 +18,7 @@ static void handle_tail_sigint(int signo) {
 enum signal_validation_state { SIGNAL_TARGET_RUNNING, SIGNAL_TARGET_EXITED };
 
 static int refuse_signal(const char *id, const char *why) {
-    fprintf(stderr, "hold: error: call %s %s\n", id, why);
+    fprintf(stderr, "grutty: error: call %s %s\n", id, why);
     return 2;
 }
 
@@ -31,11 +31,11 @@ static int validate_signal_target(const char *id,
                                   enum signal_validation_state *state_out) {
     if (state_out) *state_out = SIGNAL_TARGET_RUNNING;
     if (r->pgid <= 1) {
-        fprintf(stderr, "hold: error: invalid pgid %ld in record file\n", (long)r->pgid);
+        fprintf(stderr, "grutty: error: invalid pgid %ld in record file\n", (long)r->pgid);
         return 5;
     }
     if (r->sid <= 0) {
-        fprintf(stderr, "hold: error: invalid sid %ld in record file\n", (long)r->sid);
+        fprintf(stderr, "grutty: error: invalid sid %ld in record file\n", (long)r->sid);
         return 5;
     }
 
@@ -148,7 +148,7 @@ int hold_cmd_signal_action(const struct hold_invocation *inv,
                              bool all,
                              bool print_cmd) {
     if (argc <= 0) {
-        fprintf(stderr, "usage: hold %s <target>...\n", command);
+        fprintf(stderr, "usage: grutty %s <target>...\n", command);
         return 5;
     }
     struct hold_resolved_target *targets = NULL;
@@ -177,7 +177,7 @@ int hold_cmd_signal_action(const struct hold_invocation *inv,
     }
     if (ntargets == 0) {
         free(targets);
-        hold_sig_note(inv, "hold: nothing to %s\n", command);
+        hold_sig_note(inv, "grutty: nothing to %s\n", command);
         return 0;
     }
     for (int i = 0; i < ntargets; i++) {
@@ -193,9 +193,9 @@ int hold_cmd_signal_action(const struct hold_invocation *inv,
         int rc = signal_one(&targets[i].store, targets[i].id, sig, graceful, print_cmd, &already_done);
         if (!print_cmd && rc == 0) {
             if (already_done) {
-                hold_sig_note(inv, "hold: %s already exited\n", targets[i].id);
+                hold_sig_note(inv, "grutty: %s already exited\n", targets[i].id);
             } else {
-                hold_sig_note(inv, "hold: %s %s\n", !strcmp(command, "kill") ? "killed" : "stopped", targets[i].id);
+                hold_sig_note(inv, "grutty: %s %s\n", !strcmp(command, "kill") ? "killed" : "stopped", targets[i].id);
             }
         }
         if (rc > worst) worst = rc;
@@ -222,7 +222,7 @@ int hold_resolve_single(const struct hold_invocation *inv,
     *hit = false;
     int rc = hold_resolve_action_token(inv, user_store, system_store, command, token, false, &targets, &ntargets);
     if (rc == 0 && ntargets == 0) {
-        hold_sig_note(inv, "hold: nothing to %s\n", verb);
+        hold_sig_note(inv, "grutty: nothing to %s\n", verb);
     } else if (rc == 0) {
         *out = targets[0];
         *hit = true;
@@ -242,7 +242,7 @@ int hold_load_target_record(const struct hold_resolved_target *target,
     if (target->requires_root) return hold_report_requires_root(target->id);
     if (hold_load_record_by_id(target->store.record_dir, target->id, r, path, path_len) != 0) return 5;
     if (need_log && !r->has_log) {
-        fprintf(stderr, "hold: record has no log path: %s\n", target->id);
+        fprintf(stderr, "grutty: record has no log path: %s\n", target->id);
         hold_free_run_record(r);
         return 5;
     }
@@ -254,7 +254,7 @@ int hold_load_target_record(const struct hold_resolved_target *target,
 
 int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, bool follow_until_exit) {
     int fd = open(r->log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) hold_die_errno("hold: failed to open log for tail");
+    if (fd < 0) hold_die_errno("grutty: failed to open log for tail");
 
     char boot[128] = {0};
     const char *boot_id = r->has_boot ? hold_boot_id_or_null(boot) : NULL;
@@ -275,12 +275,12 @@ int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, boo
         n = read(fd, buf, sizeof(buf));
         if (n > 0) {
             if (hold_write_all(STDOUT_FILENO, buf, (size_t)n) != 0)
-                hold_die_errno("hold: failed writing tailed output");
+                hold_die_errno("grutty: failed writing tailed output");
             continue;
         }
         if (n < 0) {
             if (errno == EINTR) continue;
-            hold_die_errno("hold: failed while tailing log");
+            hold_die_errno("grutty: failed while tailing log");
         }
         if (!follow_until_exit) break;
         struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
@@ -412,7 +412,7 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
     rc = write_inspect(path, stdio_obj);
     free(stdio_obj);
     hold_free_run_record(&r);
-    if (rc != 0) hold_die_errno("hold: failed to inspect run record");
+    if (rc != 0) hold_die_errno("grutty: failed to inspect run record");
     return 0;
 }
 
@@ -440,7 +440,7 @@ static off_t offset_of_last_lines(int fd, long lines) {
     return 0;
 }
 
-static const char logs_usage[] = "usage: hold logs <target> [--follow|-f] [--tail|-n N]\n";
+static const char logs_usage[] = "usage: grutty logs <target> [--follow|-f] [--tail|-n N]\n";
 
 /* hold logs: the call's captured output as plain bytes. -n N starts at the
  * newest N lines; -f keeps following until the call ends (Ctrl-C stops). */
@@ -470,7 +470,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
             fputs(logs_usage, stdout);
             return 0;
         } else if (a[0] == '-' && a[1]) {
-            fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, logs_usage);
+            fprintf(stderr, "grutty: error: unknown flag '%s'\n%s", a, logs_usage);
             return 5;
         } else if (!token) {
             token = a;
@@ -483,7 +483,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
             errno = 0;
             tail = strtol(v, &end, 10);
             if (!*v || *end || errno || tail < 0) {
-                fprintf(stderr, "hold: error: invalid log line limit\n");
+                fprintf(stderr, "grutty: error: invalid log line limit\n");
                 return 5;
             }
         }
@@ -504,12 +504,12 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
     bool running = hold_eval_state(&r, hold_boot_id_or_null(boot)) == STATE_RUNNING;
     if (tail >= 0) {
         int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-        if (fd < 0) hold_die_errno("hold: failed to open log");
+        if (fd < 0) hold_die_errno("grutty: failed to open log");
         off_t from = tail == 0 ? lseek(fd, 0, SEEK_END) : offset_of_last_lines(fd, tail);
         char buf[8192];
         ssize_t got;
         while ((got = pread(fd, buf, sizeof(buf), from)) > 0) {
-            if (hold_write_all(STDOUT_FILENO, buf, (size_t)got) != 0) hold_die_errno("hold: failed writing log");
+            if (hold_write_all(STDOUT_FILENO, buf, (size_t)got) != 0) hold_die_errno("grutty: failed writing log");
             from += got;
         }
         close(fd);

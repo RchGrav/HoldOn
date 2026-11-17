@@ -73,9 +73,9 @@
 #define JSON_MAX_DEPTH 64
 #ifndef HOLD_SYSTEM_STATE_DIR
 #if defined(__APPLE__)
-#define HOLD_SYSTEM_STATE_DIR "/var/db/hold"
+#define HOLD_SYSTEM_STATE_DIR "/var/db/grutty"
 #else
-#define HOLD_SYSTEM_STATE_DIR "/var/lib/hold"
+#define HOLD_SYSTEM_STATE_DIR "/var/lib/grutty"
 #endif
 #endif
 

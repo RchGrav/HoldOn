@@ -3,7 +3,7 @@
 [Docs index](index.md) | [Repository README](../README.md) | Related: [Console](console.md), [Implementation invariants](SPEC.md)
 
 A call placed with `-t` runs on a PTY owned by its **console broker**, a
-process born with the call and gone with it (Hold stays daemonless). The
+process born with the call and gone with it (Grutty stays daemonless). The
 broker writes every output byte to the call's log, and also feeds it to a
 headless terminal — vendored [libvterm](../third_party/libvterm/) 0.3.3 —
 so it always knows the call's screen: every cell's characters, colors and
@@ -17,7 +17,7 @@ attributes, the cursor, and the program's input modes.
 | `src/screen/render.c` | Snapshot to PNG: 8x16 cells (GNU Unifont subset, procedural box drawing/blocks/Braille), ruler, cursor ring, mouse reticle, footer, and a small deflate encoder. |
 | `src/console/broker.c` | Owns the PTY; one attach client plus up to 16 control clients; waits, queued messages, the final screen. |
 | `src/console/control.c` | The client side of a control request. |
-| `src/runtime/screen_cmds.c` | `hold peek / send / wait / resize / msg`. |
+| `src/runtime/screen_cmds.c` | `grutty peek / send / wait / resize / msg`. |
 
 ## The control protocol
 
@@ -40,8 +40,8 @@ msg [from=<hex>] [quiet=MS] [timeout=MS] [submit=0]\n <hex text>
                                          -> ok delivered verified=0|1
 ```
 
-`seq` is the count of output bytes the broker has seen; `hold send --seq`
-prints it and `hold wait --since SEQ` requires output beyond it, which
+`seq` is the count of output bytes the broker has seen; `grutty send --seq`
+prints it and `grutty wait --since SEQ` requires output beyond it, which
 closes the send-then-wait race completely. Without `--since`, `--idle`
 counts silence from the moment the wait began.
 
@@ -68,16 +68,16 @@ a wide character), u8 attributes, u8 default-color flags, RGB foreground,
 RGB background.
 
 When the target exits, the broker writes the final snapshot to
-`<id>.screen` beside `<id>.log`; `hold peek` reads it for ended calls and
+`<id>.screen` beside `<id>.log`; `grutty peek` reads it for ended calls and
 purge removes it with the other call artifacts.
 
 ## Messages between calls
 
-`hold msg` queues text in the *receiver's* broker, which types it in once
+`grutty msg` queues text in the *receiver's* broker, which types it in once
 the screen has been quiet for the quiet period (default 1 s) or the timeout
 passes, as a bracketed paste when the program enabled mode 2004 (otherwise
 with newlines flattened so it cannot submit early), then presses Enter. The
-sender claims its call by `HOLD_CALL_ID`; the receiver reads the connecting
+sender claims its call by `GRUTTY_CALL_ID`; the receiver reads the connecting
 process's pid from the socket, and the claim is **verified** only if that
 process's session is the claimed call's recorded session. The header then
 names the call and how to reply; an unverifiable claim is marked

@@ -1,6 +1,6 @@
-# Contributing to hold
+# Contributing to grutty
 
-hold is a small, security-sensitive C11 tool. The bar is: a change can be
+grutty is a small, security-sensitive C11 tool. The bar is: a change can be
 extended later **without** a weak test letting a regression through. To that end
 there is **one command that runs the same rigor everywhere**, and the security
 invariants are enforced by tests that fail on regression.

@@ -50,7 +50,7 @@ static void close_screen_target(struct screen_target *t) {
 }
 
 static int no_screen(const struct screen_target *t) {
-    fprintf(stderr, "hold: %s has no terminal screen; place TTY calls with -t (e.g. hold -dt <cmd>)\n", t->label);
+    fprintf(stderr, "grutty: %s has no terminal screen; place TTY calls with -t (e.g. grutty -dt <cmd>)\n", t->label);
     return 5;
 }
 
@@ -58,7 +58,7 @@ static int no_screen(const struct screen_target *t) {
  * broker answered, else a nonzero exit status (message printed). */
 static int control(const struct screen_target *t, const char *req, size_t len, unsigned char **reply, size_t *reply_len) {
     if (hold_console_request(t->r.console_sock, req, len, reply, reply_len) != 0) {
-        fprintf(stderr, "hold: cannot reach %s's console: %s\n", t->label, strerror(errno));
+        fprintf(stderr, "grutty: cannot reach %s's console: %s\n", t->label, strerror(errno));
         return 3;
     }
     return 0;
@@ -67,7 +67,7 @@ static int control(const struct screen_target *t, const char *req, size_t len, u
 static int reply_error(const struct screen_target *t, const unsigned char *reply) {
     const char *msg = (const char *)reply;
     if (!strncmp(msg, "error ", 6)) msg += 6;
-    fprintf(stderr, "hold: %s: %.*s\n", t->label, (int)strcspn(msg, "\n"), msg);
+    fprintf(stderr, "grutty: %s: %.*s\n", t->label, (int)strcspn(msg, "\n"), msg);
     return 1;
 }
 
@@ -93,7 +93,7 @@ static int load_snapshot(const struct screen_target *t, struct hold_snapshot *sn
             int rc = 0;
             if (len >= 3 && !memcmp(reply, "ok\n", 3)) {
                 if (hold_snapshot_parse(reply + 3, len - 3, snap) != 0) {
-                    fprintf(stderr, "hold: %s: malformed screen snapshot\n", t->label);
+                    fprintf(stderr, "grutty: %s: malformed screen snapshot\n", t->label);
                     rc = 3;
                 }
             } else {
@@ -105,7 +105,7 @@ static int load_snapshot(const struct screen_target *t, struct hold_snapshot *sn
         /* The call may have just ended: fall through to the saved frame. */
     }
     if (read_saved_screen(t, snap) == 0) return 0;
-    fprintf(stderr, "hold: %s has ended and left no saved screen - see 'hold logs %s'\n", t->label, t->label);
+    fprintf(stderr, "grutty: %s has ended and left no saved screen - see 'grutty logs %s'\n", t->label, t->label);
     return 5;
 }
 
@@ -126,7 +126,7 @@ static long parse_duration_ms(const char *s) {
 
 static int need_value(int i, int argc, const char *flag) {
     if (i + 1 >= argc) {
-        fprintf(stderr, "hold: error: %s needs a value\n", flag);
+        fprintf(stderr, "grutty: error: %s needs a value\n", flag);
         return -1;
     }
     return 0;
@@ -187,7 +187,7 @@ static void write_peek_json(const struct screen_target *t, const struct hold_sna
 }
 
 static const char peek_usage[] =
-    "usage: hold peek <target> [--json] [--ruler] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]\n";
+    "usage: grutty peek <target> [--json] [--ruler] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]\n";
 
 int hold_cmd_peek_action(const struct hold_invocation *inv,
                          const struct hold_store *user_store,
@@ -214,14 +214,14 @@ int hold_cmd_peek_action(const struct hold_invocation *inv,
             if (need_value(i, argc, a) != 0) return 1;
             ro.scale = atoi(argv[++i]);
             if (ro.scale < 1 || ro.scale > 4) {
-                fprintf(stderr, "hold: error: --scale must be 1-4\n");
+                fprintf(stderr, "grutty: error: --scale must be 1-4\n");
                 return 1;
             }
         } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
             fputs(peek_usage, stdout);
             return 0;
         } else if (a[0] == '-' && a[1]) {
-            fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, peek_usage);
+            fprintf(stderr, "grutty: error: unknown flag '%s'\n%s", a, peek_usage);
             return 1;
         } else if (!token) token = a;
         else {
@@ -245,7 +245,7 @@ int hold_cmd_peek_action(const struct hold_invocation *inv,
     if (image) {
         FILE *f = !strcmp(image, "-") ? stdout : fopen(image, "wb");
         if (!f || hold_snapshot_write_png(&snap, &ro, f) != 0 || (f != stdout && fclose(f) != 0)) {
-            fprintf(stderr, "hold: failed to write image %s: %s\n", image, strerror(errno));
+            fprintf(stderr, "grutty: failed to write image %s: %s\n", image, strerror(errno));
             rc = 3;
         }
     }
@@ -307,7 +307,7 @@ static char *slurp_stdin(size_t *n) {
 
 static int add_key(struct reqbuf *b, struct hold_screen *probe, const char *name) {
     if (hold_screen_send_key(probe, name) != 0) {
-        fprintf(stderr, "hold: error: unknown key '%s' (try Enter, Tab, Escape, Up, F5, C-c, M-x)\n", name);
+        fprintf(stderr, "grutty: error: unknown key '%s' (try Enter, Tab, Escape, Up, F5, C-c, M-x)\n", name);
         return -1;
     }
     hold_screen_discard_output(probe);
@@ -315,7 +315,7 @@ static int add_key(struct reqbuf *b, struct hold_screen *probe, const char *name
 }
 
 static const char send_usage[] =
-    "usage: hold send <target> [TEXT]... [--text TEXT] [-k KEY]... [--keys \"K1 K2\"] [--enter] [--paste TEXT|-]\n"
+    "usage: grutty send <target> [TEXT]... [--text TEXT] [-k KEY]... [--keys \"K1 K2\"] [--enter] [--paste TEXT|-]\n"
     "                 [--mouse ACTION,COL,ROW[,BUTTON]] [--stdin] [--wait MS [--timeout MS]] [--seq]\n";
 
 static int run_wait(const struct screen_target *t, const char *args, bool print_exit);
@@ -392,7 +392,7 @@ int hold_cmd_send_action(const struct hold_invocation *inv,
             int col = -1, row = -1, button = 1;
             int got = sscanf(argv[++i], "%31[^,],%d,%d,%d", action, &col, &row, &button);
             if (got < 3 || col < 0 || row < 0) {
-                fprintf(stderr, "hold: error: --mouse wants ACTION,COL,ROW[,BUTTON] (e.g. click,10,4)\n");
+                fprintf(stderr, "grutty: error: --mouse wants ACTION,COL,ROW[,BUTTON] (e.g. click,10,4)\n");
                 goto out;
             }
             char line[96];
@@ -403,7 +403,7 @@ int hold_cmd_send_action(const struct hold_invocation *inv,
             if (need_value(i, argc, a) != 0) goto out;
             long v = parse_duration_ms(argv[++i]);
             if (v < 0) {
-                fprintf(stderr, "hold: error: bad duration '%s'\n", argv[i]);
+                fprintf(stderr, "grutty: error: bad duration '%s'\n", argv[i]);
                 goto out;
             }
             if (a[2] == 'w') wait_ms = v;
@@ -415,7 +415,7 @@ int hold_cmd_send_action(const struct hold_invocation *inv,
             rc = 0;
             goto out;
         } else {
-            fprintf(stderr, "hold: error: unknown flag '%s' (send text starting with - via --text)\n%s", a, send_usage);
+            fprintf(stderr, "grutty: error: unknown flag '%s' (send text starting with - via --text)\n%s", a, send_usage);
             goto out;
         }
     }
@@ -429,7 +429,7 @@ int hold_cmd_send_action(const struct hold_invocation *inv,
     if (!t.r.has_console) {
         rc = no_screen(&t);
     } else if (t.st != STATE_RUNNING) {
-        fprintf(stderr, "hold: %s has ended - see 'hold peek %s'\n", t.label, t.label);
+        fprintf(stderr, "grutty: %s has ended - see 'grutty peek %s'\n", t.label, t.label);
         rc = WAIT_EXIT_ENDED;
     } else {
         unsigned char *reply = NULL;
@@ -441,9 +441,9 @@ int hold_cmd_send_action(const struct hold_invocation *inv,
             const char *seq = strstr((char *)reply, "seq=");
             unsigned long long sv = seq ? strtoull(seq + 4, NULL, 10) : 0;
             if (mouse_op && strstr((char *)reply, "mouse=off"))
-                fprintf(stderr, "hold: note: %s has mouse reporting off; the mouse event was not delivered\n", t.label);
+                fprintf(stderr, "grutty: note: %s has mouse reporting off; the mouse event was not delivered\n", t.label);
             if (mouse_op && strstr((char *)reply, "mouse=clamped"))
-                fprintf(stderr, "hold: note: %s uses the legacy mouse encoding, which cannot reach past column/row 222; "
+                fprintf(stderr, "grutty: note: %s uses the legacy mouse encoding, which cannot reach past column/row 222; "
                                 "the event landed at the edge\n", t.label);
             if (print_seq) printf("%llu\n", sv);
             if (wait_ms >= 0) {
@@ -476,10 +476,10 @@ static int run_wait(const struct screen_target *t, const char *args, bool print_
         if (print_exit && strstr(r, "reason=exit")) printf("%d\n", code);
         rc = 0;
     } else if (!strncmp(r, "timeout", 7)) {
-        fprintf(stderr, "hold: %s: wait timed out\n", t->label);
+        fprintf(stderr, "grutty: %s: wait timed out\n", t->label);
         rc = WAIT_EXIT_TIMEOUT;
     } else if (!strncmp(r, "ended", 5)) {
-        fprintf(stderr, "hold: %s ended (exit code %d) before the wait condition held\n", t->label, code);
+        fprintf(stderr, "grutty: %s ended (exit code %d) before the wait condition held\n", t->label, code);
         rc = WAIT_EXIT_ENDED;
     } else {
         rc = reply_error(t, reply);
@@ -496,7 +496,7 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
         struct hold_run_record cur;
         char path[HOLD_PATH_MAX];
         if (hold_load_record_by_id(t->target.store.record_dir, t->r.id, &cur, path, sizeof(path)) != 0) {
-            fprintf(stderr, "hold: %s was removed while waiting\n", t->label);
+            fprintf(stderr, "grutty: %s was removed while waiting\n", t->label);
             return 5;
         }
         char boot[128];
@@ -512,7 +512,7 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
         clock_gettime(CLOCK_MONOTONIC, &now);
         long elapsed = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
         if (timeout_ms > 0 && elapsed >= timeout_ms) {
-            fprintf(stderr, "hold: %s: wait timed out\n", t->label);
+            fprintf(stderr, "grutty: %s: wait timed out\n", t->label);
             return WAIT_EXIT_TIMEOUT;
         }
         struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
@@ -521,7 +521,7 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
 }
 
 static const char wait_usage[] =
-    "usage: hold wait <target> [--idle MS] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]\n";
+    "usage: grutty wait <target> [--idle MS] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]\n";
 
 int hold_cmd_wait_action(const struct hold_invocation *inv,
                          const struct hold_store *user_store,
@@ -537,7 +537,7 @@ int hold_cmd_wait_action(const struct hold_invocation *inv,
             if (need_value(i, argc, a) != 0) return 1;
             long v = parse_duration_ms(argv[++i]);
             if (v < 0) {
-                fprintf(stderr, "hold: error: bad duration '%s'\n", argv[i]);
+                fprintf(stderr, "grutty: error: bad duration '%s'\n", argv[i]);
                 return 1;
             }
             if (a[2] == 'i') idle = v;
@@ -550,7 +550,7 @@ int hold_cmd_wait_action(const struct hold_invocation *inv,
             if (need_value(i, argc, a) != 0) return 1;
             since = argv[++i];
             if (strspn(since, "0123456789") != strlen(since) || !*since) {
-                fprintf(stderr, "hold: error: --since wants the number hold send --seq printed\n");
+                fprintf(stderr, "grutty: error: --since wants the number grutty send --seq printed\n");
                 return 1;
             }
         } else if (!strcmp(a, "--exit")) {
@@ -559,7 +559,7 @@ int hold_cmd_wait_action(const struct hold_invocation *inv,
             fputs(wait_usage, stdout);
             return 0;
         } else if (a[0] == '-' && a[1]) {
-            fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, wait_usage);
+            fprintf(stderr, "grutty: error: unknown flag '%s'\n%s", a, wait_usage);
             return 1;
         } else if (!token) token = a;
         else {
@@ -614,7 +614,7 @@ int hold_cmd_wait_action(const struct hold_invocation *inv,
             free(text);
             hold_snapshot_free(&snap);
         }
-        if (rc != 0) fprintf(stderr, "hold: %s has already ended\n", t.label);
+        if (rc != 0) fprintf(stderr, "grutty: %s has already ended\n", t.label);
         close_screen_target(&t);
         return rc;
     }
@@ -641,7 +641,7 @@ int hold_cmd_wait_action(const struct hold_invocation *inv,
 
 /* ---- resize --------------------------------------------------------------- */
 
-static const char resize_usage[] = "usage: hold resize <target> <cols> <rows>   (or <cols>x<rows>)\n";
+static const char resize_usage[] = "usage: grutty resize <target> <cols> <rows>   (or <cols>x<rows>)\n";
 
 int hold_cmd_resize_action(const struct hold_invocation *inv,
                            const struct hold_store *user_store,
@@ -663,7 +663,7 @@ int hold_cmd_resize_action(const struct hold_invocation *inv,
         return 1;
     }
     if (cols < 1 || rows < 1 || cols > 1000 || rows > 1000) {
-        fprintf(stderr, "hold: error: size must be 1-1000 columns and rows\n");
+        fprintf(stderr, "grutty: error: size must be 1-1000 columns and rows\n");
         return 1;
     }
     struct screen_target t;
@@ -672,7 +672,7 @@ int hold_cmd_resize_action(const struct hold_invocation *inv,
     if (!t.r.has_console) {
         rc = no_screen(&t);
     } else if (t.st != STATE_RUNNING) {
-        fprintf(stderr, "hold: %s has ended\n", t.label);
+        fprintf(stderr, "grutty: %s has ended\n", t.label);
         rc = WAIT_EXIT_ENDED;
     } else {
         char req[64];
@@ -690,12 +690,12 @@ int hold_cmd_resize_action(const struct hold_invocation *inv,
 /* ---- msg ------------------------------------------------------------------ */
 
 static const char msg_usage[] =
-    "usage: hold msg <target> TEXT... [--stdin] [--now] [--quiet MS] [--timeout MS] [--no-enter]\n";
+    "usage: grutty msg <target> TEXT... [--stdin] [--now] [--quiet MS] [--timeout MS] [--no-enter]\n";
 
 /* Agent-to-agent messaging: the text is typed into the target's prompt with a
  * "[msg from <sender>; reply: ...]" header, once the target's screen has been
  * quiet for --quiet (default 1s; --now skips the wait). The sender is this
- * process's own call ($HOLD_CALL_NAME), verified by the receiving broker. */
+ * process's own call ($GRUTTY_CALL_NAME), verified by the receiving broker. */
 int hold_cmd_msg_action(const struct hold_invocation *inv,
                         const struct hold_store *user_store,
                         const struct hold_store *system_store,
@@ -714,7 +714,7 @@ int hold_cmd_msg_action(const struct hold_invocation *inv,
             if (need_value(i, argc, a) != 0) goto out;
             long v = parse_duration_ms(argv[++i]);
             if (v < 0) {
-                fprintf(stderr, "hold: error: bad duration '%s'\n", argv[i]);
+                fprintf(stderr, "grutty: error: bad duration '%s'\n", argv[i]);
                 goto out;
             }
             if (a[2] == 'q') quiet = v;
@@ -728,7 +728,7 @@ int hold_cmd_msg_action(const struct hold_invocation *inv,
             rc = 0;
             goto out;
         } else if (a[0] == '-' && a[1]) {
-            fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, msg_usage);
+            fprintf(stderr, "grutty: error: unknown flag '%s'\n%s", a, msg_usage);
             goto out;
         } else if (!token) {
             token = a;
@@ -755,7 +755,7 @@ int hold_cmd_msg_action(const struct hold_invocation *inv,
     if (!t.r.has_console) {
         rc = no_screen(&t);
     } else if (t.st != STATE_RUNNING) {
-        fprintf(stderr, "hold: %s has ended\n", t.label);
+        fprintf(stderr, "grutty: %s has ended\n", t.label);
         rc = WAIT_EXIT_ENDED;
     } else {
         struct reqbuf req = {0};
@@ -763,8 +763,8 @@ int hold_cmd_msg_action(const struct hold_invocation *inv,
         snprintf(num, sizeof(num), "msg quiet=%ld timeout=%ld%s", quiet, timeout, submit ? "" : " submit=0");
         int bad = rb_str(&req, num);
         /* The exact id verifies unambiguously; the receiver shows the name. */
-        const char *from = getenv("HOLD_CALL_ID");
-        if (!from || !*from) from = getenv("HOLD_CALL_NAME");
+        const char *from = getenv("GRUTTY_CALL_ID");
+        if (!from || !*from) from = getenv("GRUTTY_CALL_NAME");
         if (from && *from) bad |= rb_str(&req, " from=") | rb_hex(&req, from, strlen(from));
         bad |= rb_str(&req, "\n") | rb_hex(&req, text.p, text.len);
         unsigned char *reply = NULL;

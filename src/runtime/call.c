@@ -56,7 +56,7 @@ static int find_restart_record(const struct hold_store *store, const char *token
     if (hold_for_each_record(store->record_dir, restart_match_cb, &w) != 0) return -1;
     if (w.matches == 0) return 0;
     if (w.matches > 1) {
-        fprintf(stderr, "hold: error: call '%s' is ambiguous\n", token);
+        fprintf(stderr, "grutty: error: call '%s' is ambiguous\n", token);
         return -2;
     }
     return 1;
@@ -91,12 +91,12 @@ static int restart_existing_run(const struct hold_invocation *inv,
     if (st == STATE_RUNNING) {
         char display[ID_DISPLAY_HEX_LEN + 1];
         hold_run_id_display(old.id, display);
-        fprintf(stderr, "hold: error: call %s is already running\n", display);
+        fprintf(stderr, "grutty: error: call %s is already running\n", display);
         hold_free_run_record(&old);
         return 6;
     }
     if (!old.has_log || !old.log_path[0]) {
-        fprintf(stderr, "hold: error: call %s has no retained log path\n", id);
+        fprintf(stderr, "grutty: error: call %s has no retained log path\n", id);
         hold_free_run_record(&old);
         return 5;
     }
@@ -106,12 +106,12 @@ static int restart_existing_run(const struct hold_invocation *inv,
     int rc = 0;
     if (hold_read_owned_file_no_symlink(record_path, &j) != 0 ||
         hold_json_get_argv_alloc(j, &argv, &argc) != 0) {
-        fprintf(stderr, "hold: error: failed to load restart argv for %s\n", id);
+        fprintf(stderr, "grutty: error: failed to load restart argv for %s\n", id);
         rc = 5;
         goto out;
     }
     if (argc <= 0 || !argv || !argv[0]) {
-        fprintf(stderr, "hold: error: failed to load restart argv for %s\n", id);
+        fprintf(stderr, "grutty: error: failed to load restart argv for %s\n", id);
         rc = 5;
         goto out;
     }
@@ -210,7 +210,7 @@ static int protect_record_action(const struct hold_invocation *inv,
         return hold_report_requires_root(target.id);
     }
     if (new_name && run_name_exists_in_store(&target.store, new_name, target.id)) {
-        fprintf(stderr, "hold: error: call name '%s' already exists\n", new_name);
+        fprintf(stderr, "grutty: error: call name '%s' already exists\n", new_name);
         free(targets);
         return 5;
     }
@@ -225,7 +225,7 @@ static int protect_record_action(const struct hold_invocation *inv,
     /* Saving is idempotent: an already-saved call needs no rewrite, but still
      * confirms the protected state on stderr and exits 0. */
     if (!new_name && r.saved) {
-        hold_sig_note(inv, "hold: saved %s (%s)\n", display_id, r.has_name ? r.name : display_id);
+        hold_sig_note(inv, "grutty: saved %s (%s)\n", display_id, r.has_name ? r.name : display_id);
         hold_free_run_record(&r);
         free(targets);
         return 0;
@@ -235,7 +235,7 @@ static int protect_record_action(const struct hold_invocation *inv,
     int argc = 0;
     if (hold_read_owned_file_no_symlink(record_path, &j) != 0 ||
         hold_json_get_argv_alloc(j, &argv, &argc) != 0) {
-        fprintf(stderr, "hold: error: failed to load call record for %s\n", target.id);
+        fprintf(stderr, "grutty: error: failed to load call record for %s\n", target.id);
         free(j);
         hold_free_run_record(&r);
         free(targets);
@@ -249,17 +249,17 @@ static int protect_record_action(const struct hold_invocation *inv,
     r.saved = true;
     char out_path[HOLD_PATH_MAX];
     if (hold_write_record_atomic(target.store.record_dir, &r, argc, argv, out_path, sizeof(out_path)) != 0) {
-        hold_die_errno(new_name ? "hold: failed to write renamed call record"
-                                : "hold: failed to write saved call record");
+        hold_die_errno(new_name ? "grutty: failed to write renamed call record"
+                                : "grutty: failed to write saved call record");
     }
     if (target.store.kind == STORE_SYSTEM_MANAGED) {
         (void)hold_write_public_index_atomic(&target.store, &r, NULL);
     }
     if (new_name) {
-        hold_sig_note(inv, "hold: renamed %s to %s%s\n", display_id, new_name,
+        hold_sig_note(inv, "grutty: renamed %s to %s%s\n", display_id, new_name,
                       newly_saved ? " (saved)" : "");
     } else {
-        hold_sig_note(inv, "hold: saved %s (%s)\n", display_id, r.has_name ? r.name : display_id);
+        hold_sig_note(inv, "grutty: saved %s (%s)\n", display_id, r.has_name ? r.name : display_id);
     }
     hold_free_argv_alloc(argv, argc);
     free(j);
@@ -274,7 +274,7 @@ int hold_cmd_rename_action(const struct hold_invocation *inv,
                              const char *target_token,
                              const char *new_name) {
     if (!hold_valid_alias(new_name)) {
-        fprintf(stderr, "hold: error: invalid call name '%s'\n", new_name);
+        fprintf(stderr, "grutty: error: invalid call name '%s'\n", new_name);
         return 5;
     }
     return protect_record_action(inv, user_store, system_store, target_token, new_name);
@@ -290,11 +290,11 @@ int hold_cmd_save_action(const struct hold_invocation *inv,
 int hold_generate_run_name_for_id(const struct hold_store *store, const char *id, const char *requested, char out[ALIAS_MAX_LEN + 1]) {
     if (requested && *requested) {
         if (!hold_valid_alias(requested)) {
-            fprintf(stderr, "hold: error: invalid call name '%s'\n", requested);
+            fprintf(stderr, "grutty: error: invalid call name '%s'\n", requested);
             return 5;
         }
         if (run_name_exists_in_store(store, requested, NULL)) {
-            fprintf(stderr, "hold: error: call name '%s' already exists\n", requested);
+            fprintf(stderr, "grutty: error: call name '%s' already exists\n", requested);
             return 5;
         }
         snprintf(out, ALIAS_MAX_LEN + 1, "%s", requested);
@@ -307,8 +307,8 @@ int hold_generate_run_name_for_id(const struct hold_store *store, const char *id
     /* The word lists are 256 each, so the id's first byte picks the adjective
      * and its second byte the noun: an uncontested name spells the id's first
      * four hex digits. A taken name steps to the next adjective. */
-    _Static_assert(sizeof(adjectives) / sizeof(adjectives[0]) == 256, "adjectives must hold 256 words");
-    _Static_assert(sizeof(nouns) / sizeof(nouns[0]) == 256, "nouns must hold 256 words");
+    _Static_assert(sizeof(adjectives) / sizeof(adjectives[0]) == 256, "adjectives must grutty 256 words");
+    _Static_assert(sizeof(nouns) / sizeof(nouns[0]) == 256, "nouns must grutty 256 words");
     unsigned long long seed = 0;
     for (size_t i = 0; id && id[i] && i < 4; i++) {
         unsigned nibble = (unsigned)(id[i] <= '9' ? id[i] - '0' : id[i] - 'a' + 10);

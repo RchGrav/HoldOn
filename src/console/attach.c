@@ -83,7 +83,7 @@ int hold_run_native_console(const char *sock_path) {
     int sock = hold_connect_console_socket(sock_path);
     if (sock < 0) {
         int e = errno;
-        fprintf(stderr, "hold: cannot attach: %s\n", strerror(e));
+        fprintf(stderr, "grutty: cannot attach: %s\n", strerror(e));
         return e == ENOTSOCK || e == ENAMETOOLONG ? 5 : 3;
     }
 

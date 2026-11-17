@@ -1,8 +1,8 @@
-# On Hold — implementation invariants
+# Grutty — implementation invariants
 
-[Docs index](index.md) | [Identity and surface contract](hold-on-identity.md) | [Docker familiarity contract](docker-parity-contract.md)
+[Docs index](index.md) | [Identity and surface contract](grutty-identity.md) | [Docker familiarity contract](docker-parity-contract.md)
 
-The command surface is specified by [hold-on-identity.md](hold-on-identity.md)
+The command surface is specified by [grutty-identity.md](grutty-identity.md)
 and the borrowed Docker behaviors by
 [docker-parity-contract.md](docker-parity-contract.md). Mechanism references:
 [launcher](launcher.md), [store](store.md), [identity](identity.md),
@@ -15,8 +15,8 @@ history, in [archive/](archive/).
 Two stores, one shape:
 
 ```text
-user-local:    ~/.local/state/hold          (0700, owned by the user)
-root-managed:  /var/lib/hold  (Linux)       /var/db/hold  (macOS)
+user-local:    ~/.local/state/grutty          (0700, owned by the user)
+root-managed:  /var/lib/grutty  (Linux)       /var/db/grutty  (macOS)
 ```
 
 User-local layout: call records (`<64hex>.json`, 0600), logs
@@ -35,7 +35,7 @@ id, a generated name when present, an honest state hint, timestamps, and the
 listening/bound ports root last observed (never outbound connections). The
 invoking user and the command line are deliberately absent — user-facing
 views render them as `hidden`. An entry whose private record is gone is an
-orphan; `sudo hold purge` sweeps it so no view can resurrect it.
+orphan; `sudo grutty purge` sweeps it so no view can resurrect it.
 
 ## Records
 
@@ -53,7 +53,7 @@ unique per store, user-renameable (renaming saves).
 
 Raw captured bytes, appended as they arrive: stdout and stderr of a plain
 call (interleaved in arrival order), or the PTY stream of a TTY call. One
-plain file, no index; anything can read it without Hold's help. `hold logs`
+plain file, no index; anything can read it without Grutty's help. `grutty logs`
 prints it whole, from the newest N lines (`-n`), or followed to the call's
 end (`-f`).
 
@@ -72,8 +72,8 @@ end (`-f`).
   paths stored in records are never followed for deletion.
 - stdout carries machine data; human notes go to stderr; `--quiet`
   silences them.
-- Hold never elevates on a user's behalf, with one deliberate exception:
-  `hold purge --system` re-executes itself through `sudo` (which does the
+- Grutty never elevates on a user's behalf, with one deliberate exception:
+  `grutty purge --system` re-executes itself through `sudo` (which does the
   prompting) at a single commented dispatch site.
 
 ## Non-goals

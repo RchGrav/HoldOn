@@ -3,8 +3,8 @@
 [Docs index](index.md) | Related: [Screens](screen.md), [Launcher](launcher.md)
 
 A call placed with `-t` runs on a pseudo-terminal owned by its **console
-broker**: `hold -it <cmd>` attaches to it at once, `hold -dt <cmd>` leaves it
-running in the background, and `hold attach <target>` picks it back up later
+broker**: `grutty -it <cmd>` attaches to it at once, `grutty -dt <cmd>` leaves it
+running in the background, and `grutty attach <target>` picks it back up later
 (`console` is an alias). `Ctrl-P Ctrl-Q` detaches without stopping the call;
 `--detach-keys` changes the sequence.
 
@@ -13,7 +13,7 @@ the PTY master and a private socket under the store's `console/` directory
 (0700 directory, 0600 socket; peers are checked by uid), and it:
 
 - appends every output byte to the call's log;
-- feeds the same bytes to a headless terminal, which `hold peek`, `send`,
+- feeds the same bytes to a headless terminal, which `grutty peek`, `send`,
   `wait`, `resize`, and `msg` use (see [screen.md](screen.md));
 - serves one attach client at a time — a second gets "console already
   attached" — plus short-lived control clients;

@@ -38,7 +38,7 @@ struct hold_cli_command_spec {
  * code: only its duplicated usage lines compress (help prints the row's
  * usage line above the body). */
 static const char help_list[] =
-    "list is Hold's scoped ledger, with a USER column (CALL ID, USER, COMMAND, CREATED,\n"
+    "list is Grutty's scoped ledger, with a USER column (CALL ID, USER, COMMAND, CREATED,\n"
     "STATUS, PORTS, NAMES). By default you see your own calls, live and past. Scope flags:\n"
     "  -u/--user     your personal calls only (even under sudo: the invoking user's)\n"
     "  -s/--system   the global (root-managed) calls only\n"
@@ -51,28 +51,28 @@ static const char help_ps[] =
     "ps is Docker's machine-wide view: running calls (add -a for ended too) across both your\n"
     "own calls and the global ones, rendered as Docker's table without an IMAGE or USER\n"
     "column (CALL ID, COMMAND, CREATED, STATUS, PORTS, NAMES). Global calls you cannot read\n"
-    "show a 'hidden' COMMAND. ps speaks only Docker: it takes no scope flags. For Hold's\n"
+    "show a 'hidden' COMMAND. ps speaks only Docker: it takes no scope flags. For Grutty's\n"
     "scoped, past-inclusive ledger with a USER column, use list.\n";
 static const char help_end[] =
     "End matching calls politely: TERM, then KILL if needed. (stop is an alias.)\n";
 static const char help_kill[] =
     "Force matching calls down with KILL.\n";
 static const char help_tail[] =
-    "Follow a call's live output. Shorthand for hold logs <target> -f.\n";
+    "Follow a call's live output. Shorthand for grutty logs <target> -f.\n";
 static const char help_logs[] =
-    "Print a call's captured output as plain text. -f follows a running call until it ends; -n N prints the newest N lines; --filter TEXT keeps lines containing TEXT; --similar LINE keeps lines shaped like LINE; --replay re-emits the output with its recorded timing. For the live screen of a TTY call, use hold peek.\n";
+    "Print a call's captured output as plain text. -f follows a running call until it ends; -n N prints the newest N lines; --filter TEXT keeps lines containing TEXT; --similar LINE keeps lines shaped like LINE; --replay re-emits the output with its recorded timing. For the live screen of a TTY call, use grutty peek.\n";
 static const char help_peek[] =
     "Show a TTY call's screen as it is right now. By default prints the visible screen as plain text, one line per row. --ruler adds column and row numbers. --json adds the cursor, terminal modes, title, output counter and idle time. --image FILE writes a color PNG with a coordinate ruler (the cursor's column and row marked in red; --no-ruler drops it); --cursor-ring circles the cursor and --scale N enlarges it. After a call ends, peek shows its last screen.\n";
 static const char help_send[] =
-    "Type into a TTY call without attaching. Arguments are applied in order: TEXT is typed literally (--text TEXT for text starting with -), -k KEY presses a key (Enter, Tab, Escape, Up, Down, Left, Right, Home, End, PageUp, PageDown, Delete, F1-F24, Space, with C- M- S- modifiers such as C-c or M-x), --keys \"K1 K2\" presses several, --enter presses Enter, --paste TEXT pastes (bracketed when the program asked for it; - reads stdin), --stdin types stdin, and --mouse ACTION,COL,ROW[,BUTTON] sends a mouse event (click, press, release, move, drag, scroll-up, scroll-down). Keys are encoded for the program's current modes. --wait MS then waits until the program has answered and gone quiet for MS (bounded by --timeout, default 10s). --seq prints the output counter for hold wait --since.\n";
+    "Type into a TTY call without attaching. Arguments are applied in order: TEXT is typed literally (--text TEXT for text starting with -), -k KEY presses a key (Enter, Tab, Escape, Up, Down, Left, Right, Home, End, PageUp, PageDown, Delete, F1-F24, Space, with C- M- S- modifiers such as C-c or M-x), --keys \"K1 K2\" presses several, --enter presses Enter, --paste TEXT pastes (bracketed when the program asked for it; - reads stdin), --stdin types stdin, and --mouse ACTION,COL,ROW[,BUTTON] sends a mouse event (click, press, release, move, drag, scroll-up, scroll-down). Keys are encoded for the program's current modes. --wait MS then waits until the program has answered and gone quiet for MS (bounded by --timeout, default 10s). --seq prints the output counter for grutty wait --since.\n";
 static const char help_wait[] =
     "Block until a condition holds. --idle MS: the program has drawn something and the screen then stays quiet for MS (counted from when the wait began; with --since SEQ, output after SEQ is required). --match TEXT / --regex RE: the text is on the screen (already there counts, unless --since SEQ: then only after output past SEQ). --exit or no condition: the call ends; prints its exit code (docker wait). Screen conditions time out after 30s unless --timeout MS says otherwise (0 = never). Exit status: 0 met, 7 timed out, 8 the call ended first.\n";
 static const char help_resize[] =
-    "Resize a TTY call's terminal to <cols> <rows> (or <cols>x<rows>). The program receives SIGWINCH and the screen hold peek shows reflows with it.\n";
+    "Resize a TTY call's terminal to <cols> <rows> (or <cols>x<rows>). The program receives SIGWINCH and the screen grutty peek shows reflows with it.\n";
 static const char help_msg[] =
-    "Message another call, typically an agent harness running under Hold. The text is typed into its prompt as \"[msg from <you>; reply: hold msg <you> \\\"...\\\"] TEXT\" and submitted with Enter, after its screen has been quiet for --quiet MS (default 1s; --now skips the wait; --timeout MS, default 60s, delivers anyway). <you> is your own call ($HOLD_CALL_NAME, set in every call), verified by the receiver; from outside any call the header is [msg via hold]. Multi-line text goes in as one bracketed paste when the program supports it. --no-enter types without submitting; --stdin reads the text from stdin. Delivery is capped at 20 messages a minute per receiver.\n";
+    "Message another call, typically an agent harness running under Grutty. The text is typed into its prompt as \"[msg from <you>; reply: grutty msg <you> \\\"...\\\"] TEXT\" and submitted with Enter, after its screen has been quiet for --quiet MS (default 1s; --now skips the wait; --timeout MS, default 60s, delivers anyway). <you> is your own call ($GRUTTY_CALL_NAME, set in every call), verified by the receiver; from outside any call the header is [msg via grutty]. Multi-line text goes in as one bracketed paste when the program supports it. --no-enter types without submitting; --stdin reads the text from stdin. Delivery is capped at 20 messages a minute per receiver.\n";
 static const char help_attach[] =
-    "Pick a running console/TTY call back up. Detach again with Ctrl-P Ctrl-Q. Start attachable calls with hold -it <cmd>. (console is an alias of attach.)\n";
+    "Pick a running console/TTY call back up. Detach again with Ctrl-P Ctrl-Q. Start attachable calls with grutty -it <cmd>. (console is an alias of attach.)\n";
 static const char help_purge[] =
     "The one removal verb. With no target it sweeps ended calls; -a includes stale (a state\n"
     "widener, not a scope one). Scope: -u/--user sweeps your personal calls (the default);\n"
@@ -80,65 +80,65 @@ static const char help_purge[] =
     "sudo can prompt for the password. A target removes one call; --force removes regardless\n"
     "of state (live or saved). rm, prune, and drop are accepted aliases.\n";
 static const char help_inspect[] =
-    "Print structured JSON details for a call. For a live call the output includes a Stdio object showing where fds 0/1/2 currently point. Log text belongs to hold logs <target> --plain.\n";
+    "Print structured JSON details for a call. For a live call the output includes a Stdio object showing where fds 0/1/2 currently point. Log text belongs to grutty logs <target> --plain.\n";
 static const char help_ports[] =
     "List the listening sockets in use by the call's process group, one per line (\"127.0.0.1:8080/tcp\"). Your own calls need no root.\n";
 static const char help_stats[] =
     "Live resource usage for the call's process group: CPU %, resident memory, and process count, refreshing in place every second until Ctrl-C. Prints a single frame when stdout is not a TTY or with --no-stream.\n";
 static const char help_save[] =
-    "Protect a call from purge. There is no unsave; use hold purge --force to remove a saved call.\n";
+    "Protect a call from purge. There is no unsave; use grutty purge --force to remove a saved call.\n";
 static const char help_rename[] =
-    "Rename a call. Live and ended calls are both renameable. Naming a call\ndeclares you want to keep it, so rename also saves it (protects it from\npurge); a targeted `hold purge <name> --force` still removes it.\n";
+    "Rename a call. Live and ended calls are both renameable. Naming a call\ndeclares you want to keep it, so rename also saves it (protects it from\npurge); a targeted `grutty purge <name> --force` still removes it.\n";
 
 /* The purge family's help documents the scope flags its arity usage omits. */
 static const char usage_purge_help[] =
-    "usage: hold purge [<target>] [-a|--all] [-s|--system] [-u|--user] [--force]";
-static const char usage_end[] = "usage: hold end [--print] [--all] <target>...";
-static const char usage_attach[] = "usage: hold attach <target>";
+    "usage: grutty purge [<target>] [-a|--all] [-s|--system] [-u|--user] [--force]";
+static const char usage_end[] = "usage: grutty end [--print] [--all] <target>...";
+static const char usage_attach[] = "usage: grutty attach <target>";
 
 #define SPEC_PURGE_FLAGS (SPEC_ALL | SPEC_SCOPE | SPEC_FORCE)
 
 static const struct hold_cli_command_spec command_specs[] = {
     {"list", NULL, 0, 1, SPEC_ALL | SPEC_LIVE | SPEC_SCOPE | SPEC_STRICT,
-     "usage: hold list [-a|--all] [-s|--system] [-u|--user] [-l|--live] [name]", NULL, help_list},
+     "usage: grutty list [-a|--all] [-s|--system] [-u|--user] [-l|--live] [name]", NULL, help_list},
     {"ps", NULL, 0, 1, SPEC_ALL | SPEC_STRICT | SPEC_PS_DOCKER,
-     "usage: hold ps [-a|--all] [name]", NULL, help_ps},
+     "usage: grutty ps [-a|--all] [name]", NULL, help_ps},
     {"end", NULL, 1, -1, SPEC_ALL | SPEC_PRINT, usage_end, NULL, help_end},
     {"stop", "end", 1, -1, SPEC_ALL | SPEC_PRINT,
-     "usage: hold stop [--print] [--all] <target>...", usage_end, help_end},
+     "usage: grutty stop [--print] [--all] <target>...", usage_end, help_end},
     {"kill", NULL, 1, -1, SPEC_ALL | SPEC_PRINT,
-     "usage: hold kill [--print] [--all] <target>...", NULL, help_kill},
-    {"tail", NULL, 1, 1, 0, "usage: hold tail <target>", NULL, help_tail},
+     "usage: grutty kill [--print] [--all] <target>...", NULL, help_kill},
+    {"tail", NULL, 1, 1, 0, "usage: grutty tail <target>", NULL, help_tail},
     {"logs", NULL, 1, -1, 0,
-     "usage: hold logs <target> [--follow|-f] [--tail|-n N] [--filter TEXT] [--similar LINE] [--replay]", NULL, help_logs},
-    {"inspect", NULL, 1, 1, 0, "usage: hold inspect <target>", NULL, help_inspect},
-    {"ports", NULL, 1, 1, 0, "usage: hold ports <target>", NULL, help_ports},
-    {"stats", NULL, 1, 1, SPEC_NOSTREAM, "usage: hold stats <target> [--no-stream]", NULL, help_stats},
+     "usage: grutty logs <target> [--follow|-f] [--tail|-n N] [--filter TEXT] [--similar LINE] [--replay]", NULL, help_logs},
+    {"inspect", NULL, 1, 1, 0, "usage: grutty inspect <target>", NULL, help_inspect},
+    {"ports", NULL, 1, 1, 0, "usage: grutty ports <target>", NULL, help_ports},
+    {"stats", NULL, 1, 1, SPEC_NOSTREAM, "usage: grutty stats <target> [--no-stream]", NULL, help_stats},
     {"peek", NULL, 1, -1, 0,
-     "usage: hold peek <target> [--json] [--ruler] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]", NULL, help_peek},
+     "usage: grutty peek <target> [--json] [--ruler] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]", NULL, help_peek},
     /* Undocumented: peek's Krian cousin. With no target it recites. */
     {"peen", "peek", 0, -1, 0,
-     "usage: hold peen [<target>]", NULL, help_peek},
+     "usage: grutty peen [<target>]", NULL, help_peek},
     {"send", NULL, 1, -1, 0,
-     "usage: hold send <target> [TEXT]... [-k KEY]... [--enter] [--paste TEXT] [--mouse ACTION,COL,ROW] [--wait MS]", NULL, help_send},
+     "usage: grutty send <target> [TEXT]... [-k KEY]... [--enter] [--paste TEXT] [--mouse ACTION,COL,ROW] [--wait MS]", NULL, help_send},
     {"wait", NULL, 1, -1, 0,
-     "usage: hold wait <target> [--idle MS] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]", NULL, help_wait},
+     "usage: grutty wait <target> [--idle MS] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]", NULL, help_wait},
     {"msg", NULL, 1, -1, 0,
-     "usage: hold msg <target> TEXT... [--stdin] [--now] [--quiet MS] [--timeout MS] [--no-enter]", NULL, help_msg},
-    {"resize", NULL, 1, 3, 0, "usage: hold resize <target> <cols> <rows>", NULL, help_resize},
+     "usage: grutty msg <target> TEXT... [--stdin] [--now] [--quiet MS] [--timeout MS] [--no-enter]", NULL, help_msg},
+    {"resize", NULL, 1, 3, 0, "usage: grutty resize <target> <cols> <rows>", NULL, help_resize},
     {"attach", NULL, 1, 1, 0, usage_attach, NULL, help_attach},
-    {"console", "attach", 1, 1, 0, "usage: hold console <target>", usage_attach, help_attach},
+    {"console", "attach", 1, 1, 0, "usage: grutty console <target>", usage_attach, help_attach},
     {"purge", NULL, 0, 1, SPEC_PURGE_FLAGS,
-     "usage: hold purge [<target>] [-a|--all] [--force]", usage_purge_help, help_purge},
+     "usage: grutty purge [<target>] [-a|--all] [--force]", usage_purge_help, help_purge},
     {"prune", "purge", 0, 1, SPEC_PURGE_FLAGS,
-     "usage: hold purge [<target>] [-a|--all] [--force]", usage_purge_help, help_purge},
+     "usage: grutty purge [<target>] [-a|--all] [--force]", usage_purge_help, help_purge},
     {"rm", "purge", 0, 1, SPEC_PURGE_FLAGS,
-     "usage: hold purge [<target>] [--force]", usage_purge_help, help_purge},
+     "usage: grutty purge [<target>] [--force]", usage_purge_help, help_purge},
     {"drop", "purge", 0, 1, SPEC_PURGE_FLAGS,
-     "usage: hold purge [<target>] [-a|--all] [--force]", usage_purge_help, help_purge},
-    {"save", NULL, 1, 1, 0, "usage: hold save <target>", NULL, help_save},
-    {"rename", NULL, 2, 2, 0, "usage: hold rename <target> <name>", NULL, help_rename},
-    {"help", NULL, 0, 1, 0, "usage: hold help [topic]", NULL, NULL},
+     "usage: grutty purge [<target>] [-a|--all] [--force]", usage_purge_help, help_purge},
+    {"save", NULL, 1, 1, 0, "usage: grutty save <target>", NULL, help_save},
+    {"rename", NULL, 2, 2, 0, "usage: grutty rename <target> <name>", NULL, help_rename},
+    {"help", NULL, 0, 1, 0, "usage: grutty help [topic]", NULL, NULL},
 };
 
 static const struct hold_cli_command_spec *find_public_command_spec(const char *s) {
@@ -212,7 +212,7 @@ int hold_cli_collect_owned_args(const char *command, int argc, char **argv,
                 continue;
             }
             if ((allowed & SPEC_STRICT) && arg[0] == '-') {
-                fprintf(stderr, "hold: error: unknown flag '%s'\n", arg);
+                fprintf(stderr, "grutty: error: unknown flag '%s'\n", arg);
                 if (spec) {
                     fprintf(stderr, "%s\n", spec->usage);
                 }
@@ -225,7 +225,7 @@ int hold_cli_collect_owned_args(const char *command, int argc, char **argv,
 }
 
 static int help_targets(void) {
-    printf("hold help targets\n\n"
+    printf("grutty help targets\n\n"
            "  <target>          resolve in the current context\n"
            "  user:<target>     force user-local lookup\n"
            "  system:<target>   force root-managed lookup\n\n"
@@ -238,29 +238,29 @@ static int help_targets(void) {
 }
 
 static int help_system(void) {
-    printf("hold help system\n\n"
+    printf("grutty help system\n\n"
            "Root and sudo calls use the root-managed store:\n\n"
-           "  Linux: /var/lib/hold\n"
-           "  macOS: /var/db/hold\n\n"
+           "  Linux: /var/lib/grutty\n"
+           "  macOS: /var/db/grutty\n\n"
            "Private root records and logs stay root-only. Normal users see only the\n"
            "redacted public index, where a call's USER and COMMAND read 'hidden'.\n"
            "Acting on a root-managed target requires root; user-local targets win\n"
            "over root-public collisions.\n\n"
-           "  sudo hold <cmd...>           start in root-managed state\n"
-           "  sudo hold list               list the global calls (authoritative)\n"
-           "  sudo hold list -a            global calls plus every user's calls\n"
-           "  hold list -s                 the redacted global view, as a normal user\n"
-           "  hold purge -s                sweep the global store (re-execs via sudo)\n");
+           "  sudo grutty <cmd...>           start in root-managed state\n"
+           "  sudo grutty list               list the global calls (authoritative)\n"
+           "  sudo grutty list -a            global calls plus every user's calls\n"
+           "  grutty list -s                 the redacted global view, as a normal user\n"
+           "  grutty purge -s                sweep the global store (re-execs via sudo)\n");
     return 0;
 }
 
 static int help_scripting(void) {
-    printf("hold help scripting\n\n"
+    printf("grutty help scripting\n\n"
            "stdout is for machine data. Human banners, confirmations, warnings, and\n"
            "errors go to stderr; --quiet suppresses normal human status.\n\n"
-           "  id=$(hold -d <cmd...>)       capture the bare 64-hex call id\n"
-           "  hold end --print <id>        print kill -TERM -- -<pgid>\n"
-           "  hold kill --print <id>       print kill -KILL -- -<pgid>\n\n"
+           "  id=$(grutty -d <cmd...>)       capture the bare 64-hex call id\n"
+           "  grutty end --print <id>        print kill -TERM -- -<pgid>\n"
+           "  grutty kill --print <id>       print kill -KILL -- -<pgid>\n\n"
            "Exit codes:\n"
            "  0  success (includes known name with nothing to do)\n"
            "  1  usage / generic error\n"
@@ -269,7 +269,7 @@ static int help_scripting(void) {
            "  4  signal delivery failed\n"
            "  5  target not found or invalid target\n"
            "  6  must disambiguate\n"
-           "  7  hold wait timed out\n"
+           "  7  grutty wait timed out\n"
            "  8  the call ended before the wait condition held\n");
     return 0;
 }
@@ -287,7 +287,7 @@ int hold_show_help(const char *topic) {
         printf("%s\n\n%s", spec->help_usage ? spec->help_usage : spec->usage, spec->help);
         return 0;
     }
-    fprintf(stderr, "hold: unknown help topic '%s'\n", topic);
+    fprintf(stderr, "grutty: unknown help topic '%s'\n", topic);
     return 5;
 }
 

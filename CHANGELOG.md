@@ -2,6 +2,14 @@
 
 ## Unreleased - A terminal for scripts and agents
 
+**Hold is now grutty.** The binary, help, messages, and docs say `grutty`;
+the call environment is `GRUTTY_CALL_ID`, `GRUTTY_CALL_NAME`, and
+`GRUTTY_CALL_PARENT`; state lives in `~/.local/state/grutty` (system:
+`/var/lib/grutty`, macOS `/var/db/grutty`); release artifacts are
+`grutty-<version>-...` and the installer reads `GRUTTY_INSTALL_*` and
+`GRUTTY_VERSION`. The name: Grunthos the Flatulent's green putty, with a tty
+hiding in it. (Before Hold, the project was sigmund.)
+
 Hold turns from keeping programs alive toward seeing and driving them. Every
 TTY call now carries a headless terminal, and five verbs read and steer it —
 for test scripts, CI, and AI agents alike.

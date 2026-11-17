@@ -114,14 +114,14 @@ int hold_make_console_listener(const char *sock_path) {
 int hold_connect_console_socket(const char *sock_path) {
     struct stat st;
     if (stat(sock_path, &st) != 0 || !S_ISSOCK(st.st_mode)) {
-        fprintf(stderr, "hold: console socket is not available\n");
+        fprintf(stderr, "grutty: console socket is not available\n");
         errno = ENOTSOCK;
         return -1;
     }
     int fd = console_socket_in_dir(sock_path, false);
     if (fd < 0) {
         if (errno == ENAMETOOLONG) {
-            fprintf(stderr, "hold: console socket path is too long\n");
+            fprintf(stderr, "grutty: console socket path is too long\n");
         }
         return -1;
     }

@@ -115,7 +115,7 @@ int hold_proc_fd_target(pid_t pid, int fd, char *out, size_t n) {
     target[got] = '\0';
     /* A held call's captured stdout/stderr point at Hold's own capture pipe;
      * report the plumbing by its role, not its ephemeral inode. */
-    snprintf(out, n, "%s", strncmp(target, "pipe:", 5) == 0 ? "pipe:hold" : target);
+    snprintf(out, n, "%s", strncmp(target, "pipe:", 5) == 0 ? "pipe:grutty" : target);
     return 0;
 }
 

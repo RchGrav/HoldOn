@@ -45,7 +45,7 @@ jobs:
           make clean
           make
           make clean
-          make hold-dynamic
+          make grutty-dynamic
       - name: Assert release tests run as non-root
         run: test "$(id -u)" -ne 0
       - name: Run test suite
@@ -72,34 +72,34 @@ jobs:
         include:
           - target: linux-amd64-gnu-static
             dockcross_image: ""
-            make_target: hold
+            make_target: grutty
             static_ldflags: -static
-            package_binary: hold
+            package_binary: grutty
           - target: linux-amd64-gnu-dynamic
             dockcross_image: ""
-            make_target: hold-dynamic
+            make_target: grutty-dynamic
             static_ldflags: ''
-            package_binary: hold-dynamic
+            package_binary: grutty-dynamic
           - target: linux-arm64-gnu-static
             dockcross_image: dockcross/linux-arm64
-            make_target: hold
+            make_target: grutty
             static_ldflags: -static
-            package_binary: hold
+            package_binary: grutty
           - target: linux-arm64-gnu-dynamic
             dockcross_image: dockcross/linux-arm64
-            make_target: hold-dynamic
+            make_target: grutty-dynamic
             static_ldflags: ''
-            package_binary: hold-dynamic
+            package_binary: grutty-dynamic
           - target: linux-armhf-gnu-static
             dockcross_image: dockcross/linux-armv7
-            make_target: hold
+            make_target: grutty
             static_ldflags: -static
-            package_binary: hold
+            package_binary: grutty
           - target: linux-armhf-gnu-dynamic
             dockcross_image: dockcross/linux-armv7
-            make_target: hold-dynamic
+            make_target: grutty-dynamic
             static_ldflags: ''
-            package_binary: hold-dynamic
+            package_binary: grutty-dynamic
     steps:
       - uses: actions/checkout@v5
         with:
@@ -170,7 +170,7 @@ jobs:
       - name: Package tarball
         run: |
           mkdir -p dist
-          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ needs.version.outputs.value }}" hold dist
+          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ needs.version.outputs.value }}" grutty dist
 
       - name: Upload musl artifact
         uses: actions/upload-artifact@v6
@@ -212,12 +212,12 @@ jobs:
         run: |
           make clean
           make CC=clang STATIC_LDFLAGS='' CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2'
-          file hold
+          file grutty
 
       - name: Package tarball
         run: |
           mkdir -p dist
-          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ needs.version.outputs.value }}" hold dist
+          ./.github/scripts/package_tarball.sh "${{ matrix.target }}" "${{ needs.version.outputs.value }}" grutty dist
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v6
@@ -264,7 +264,7 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd dist
-          sha256sum hold-*.tar.gz install.sh > SHA256SUMS
+          sha256sum grutty-*.tar.gz install.sh > SHA256SUMS
 
       - name: Publish release artifacts
         uses: softprops/action-gh-release@v2
@@ -274,7 +274,7 @@ jobs:
           overwrite_files: true
           files: |
             dist/install.sh
-            dist/hold-*.tar.gz
+            dist/grutty-*.tar.gz
             dist/SHA256SUMS
 
       - name: Smoke-test GitHub one-line installer
@@ -291,8 +291,8 @@ jobs:
             [ "$i" -lt 30 ] || { echo "install.sh never became downloadable" >&2; exit 1; }
             sleep 10
           done
-          HOLD_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh "$install_tmp/install.sh"
-          installed_version="$("$install_tmp/bin/hold" --version)"
-          hold_version="$("$install_tmp/bin/hold" --version)"
+          GRUTTY_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh "$install_tmp/install.sh"
+          installed_version="$("$install_tmp/bin/grutty" --version)"
+          hold_version="$("$install_tmp/bin/grutty" --version)"
           test "$installed_version" = "${RELEASE_TAG}"
           test "$hold_version" = "${RELEASE_TAG}"

@@ -1,8 +1,8 @@
-# Installing On Hold
+# Installing Grutty
 
-[Docs index](index.md) | [Quickstart](quickstart.md) | [Using On Hold in CI](ci.md) | [Repository README](../README.md)
+[Docs index](index.md) | [Quickstart](quickstart.md) | [Using Grutty in CI](ci.md) | [Repository README](../README.md)
 
-On Hold publishes small release artifacts for supported Linux and macOS targets. The installer detects your platform, chooses the matching artifact, verifies it against the release `SHA256SUMS`, validates the archive layout, installs both compatibility binary names (`hold` and `hold`), and prints the absolute paths it installed. It refuses to install when checksums are missing, malformed, or mismatched.
+Grutty publishes small release artifacts for supported Linux and macOS targets. The installer detects your platform, chooses the matching artifact, verifies it against the release `SHA256SUMS`, validates the archive layout, installs the `grutty` binary, and prints the absolute paths it installed. It refuses to install when checksums are missing, malformed, or mismatched.
 
 ## One-line install
 
@@ -21,8 +21,8 @@ By default, the installer uses `/usr/local/bin` when the current process can wri
 When `/usr/local/bin` is not writable, it falls back to:
 
 ```text
-$HOME/.local/bin/hold
-$HOME/.local/bin/hold
+$HOME/.local/bin/grutty
+$HOME/.local/bin/grutty
 ```
 
 Run the same installer through root when you want a system install:
@@ -41,7 +41,7 @@ For CI or scripted use, the equivalent environment switch is:
 
 ```sh
 curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh |
-  HOLD_INSTALL_SYSTEM=1 sh
+  GRUTTY_INSTALL_SYSTEM=1 sh
 ```
 
 The installed binary is written with mode `0755`. For the default root-owned system install, ownership is set to `root:root` where the platform allows it.
@@ -58,8 +58,8 @@ A child installer process cannot change the parent shell's current `PATH`. In sc
 
 ```sh
 curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh |
-  HOLD_ENV_FILE="$PWD/.hold-env" sh
-. "$PWD/.hold-env"
+  HOLD_ENV_FILE="$PWD/.grutty-env" sh
+. "$PWD/.grutty-env"
 
 "$HOLD_BIN" --version
 ```
@@ -67,8 +67,8 @@ curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh
 The handoff file exports:
 
 ```sh
-HOLD_BIN=/absolute/path/to/hold
-HOLD_BIN=/absolute/path/to/hold
+HOLD_BIN=/absolute/path/to/grutty
+HOLD_BIN=/absolute/path/to/grutty
 PATH=/install/dir:$PATH
 ```
 
@@ -78,10 +78,10 @@ Use `"$HOLD_BIN"` for the 0.4.0 operator CLI, or `"$HOLD_BIN"` when you intentio
 
 ```sh
 curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh |
-  HOLD_INSTALL_DIR="$PWD/.bin" \
-  HOLD_ENV_FILE="$PWD/.hold-env" \
+  GRUTTY_INSTALL_DIR="$PWD/.bin" \
+  HOLD_ENV_FILE="$PWD/.grutty-env" \
   sh
-. "$PWD/.hold-env"
+. "$PWD/.grutty-env"
 
 "$HOLD_BIN" --help
 ```
@@ -98,8 +98,8 @@ curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh
 ```
 
 This removes the binary and the installer's marked PATH block from your shell
-profile. Hold state — your calls, logs, and records — is deliberately kept
-(`~/.local/state/hold` for user calls, `/var/lib/hold` for root-managed);
+profile. Grutty state — your calls, logs, and records — is deliberately kept
+(`~/.local/state/grutty` for user calls, `/var/lib/grutty` for root-managed);
 remove those directories manually only if you really mean it.
 
 ## Pinned version
@@ -110,7 +110,7 @@ By default the installer uses the latest GitHub release. Pin a release when repr
 curl -LsSf https://github.com/RchGrav/HoldOn/releases/download/vX.Y.Z/install.sh | sh
 ```
 
-You can also run the latest installer against a specific release by setting `HOLD_VERSION`; values with and without the leading `v` are equivalent.
+You can also run the latest installer against a specific release by setting `GRUTTY_VERSION`; values with and without the leading `v` are equivalent.
 
 ## Selection logic
 
@@ -121,7 +121,7 @@ The installer detects:
 - Linux libc: `gnu` or `musl`.
 - UID: root installs system-wide; normal users install under `$HOME`.
 
-Windows does not currently have a native On Hold release artifact. Use the installer inside WSL, or build from source in a POSIX-like environment.
+Windows does not currently have a native Grutty release artifact. Use the installer inside WSL, or build from source in a POSIX-like environment.
 
 Default artifact choices are:
 
@@ -170,21 +170,21 @@ The installer fails clearly instead of guessing when the platform is unsupported
 
 Every release must include a `SHA256SUMS` asset next to the tarballs and installer. The installer does not trust release-note text or optional sidecar checksum files as a fallback; if `SHA256SUMS` is missing or does not contain a valid 64-hex SHA-256 entry for the selected artifact, installation stops before extraction.
 
-Release tarballs are expected to place executables at the archive root as both `hold` and `hold`. The installer rejects archives that omit either root-level binary or contain unsafe absolute/parent-directory paths, rather than searching recursively for the first matching file.
+Release tarballs are expected to place executables at the archive root as the `grutty` executable. The installer rejects archives that omit the root-level binary or contain unsafe absolute/parent-directory paths, rather than searching recursively for the first matching file.
 
 ## Manual build
 
 If no release artifact matches your platform, build from source:
 
 ```sh
-git clone https://github.com/RchGrav/hold.git
-cd hold
+git clone https://github.com/RchGrav/grutty.git
+cd grutty
 make
-./hold --version
+./grutty --version
 ```
 
-On Linux, the default `Makefile` link mode is `STATIC_LDFLAGS=-static`. With a glibc compiler, that creates the same kind of GNU static binary described above: useful, but still subject to glibc NSS runtime caveats. For a dynamic glibc build, run `make STATIC_LDFLAGS=` or build the `hold-dynamic` target. For a true standalone-style Linux build, use a musl-targeting compiler and keep static linking enabled.
+On Linux, the default `Makefile` link mode is `STATIC_LDFLAGS=-static`. With a glibc compiler, that creates the same kind of GNU static binary described above: useful, but still subject to glibc NSS runtime caveats. For a dynamic glibc build, run `make STATIC_LDFLAGS=` or build the `grutty-dynamic` target. For a true standalone-style Linux build, use a musl-targeting compiler and keep static linking enabled.
 
 ## Continue
 
-[Back to quickstart](quickstart.md) | [Using On Hold in CI](ci.md) | [Back to docs index](index.md)
+[Back to quickstart](quickstart.md) | [Using Grutty in CI](ci.md) | [Back to docs index](index.md)

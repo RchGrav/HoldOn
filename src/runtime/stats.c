@@ -121,7 +121,7 @@ int hold_cmd_stats_action(const struct hold_invocation *inv,
     snprintf(name, sizeof(name), "%s", r.has_name && r.name[0] ? r.name : "-");
 
     if (st != STATE_RUNNING) {
-        hold_sig_note(inv, "hold: %s is not running\n", display_id);
+        hold_sig_note(inv, "grutty: %s is not running\n", display_id);
         print_stats_frame(display_id, name, "--", "0B", 0, false);
         hold_free_run_record(&r);
         free(targets);

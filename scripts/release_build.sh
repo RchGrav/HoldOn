@@ -54,7 +54,7 @@ runv() { # binary
 }
 emit() { # target  binary
   if "$pkg" "$1" "$ver" "$2" "$out" >/dev/null; then
-    printf '    packaged: hold-%s-%s.tar.gz\n' "$ver" "$1"; ok=$((ok + 1))
+    printf '    packaged: grutty-%s-%s.tar.gz\n' "$ver" "$1"; ok=$((ok + 1))
   else
     printf '    PACKAGE FAILED: %s\n' "$1" >&2; fail=$((fail + 1))
   fi
@@ -74,7 +74,7 @@ Darwin)
   make clean >/dev/null
   if make CC=clang STATIC_LDFLAGS='' \
        CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -Werror -O2' >"$log" 2>&1; then
-    show hold; verify_emit "macos-$hostm" hold 1
+    show grutty; verify_emit "macos-$hostm" grutty 1
   else bfail; fi
   ;;
 Linux)
@@ -86,14 +86,14 @@ Linux)
 
   section "Linux gnu native ($hostm -> $gnu_arch) static"
   make clean >/dev/null
-  if make hold STATIC_LDFLAGS='-static' >"$log" 2>&1; then
-    show hold; verify_emit "linux-$gnu_arch-gnu-static" hold 1
+  if make grutty STATIC_LDFLAGS='-static' >"$log" 2>&1; then
+    show grutty; verify_emit "linux-$gnu_arch-gnu-static" grutty 1
   else bfail; fi
 
   section "Linux gnu native ($gnu_arch) dynamic"
   make clean >/dev/null
-  if make hold-dynamic STATIC_LDFLAGS='' >"$log" 2>&1; then
-    show hold-dynamic; verify_emit "linux-$gnu_arch-gnu-dynamic" hold-dynamic 1
+  if make grutty-dynamic STATIC_LDFLAGS='' >"$log" 2>&1; then
+    show grutty-dynamic; verify_emit "linux-$gnu_arch-gnu-dynamic" grutty-dynamic 1
   else bfail; fi
 
   if command -v zig >/dev/null 2>&1; then
@@ -109,11 +109,11 @@ Linux)
       if make CC="zig cc -target $zt" \
            CFLAGS='-std=c11 -Wall -Wextra -Wpedantic -O2 -s' \
            STATIC_LDFLAGS='-static' >"$log" 2>&1; then
-        show hold
+        show grutty
         if [ "$target" = "linux-$gnu_arch-musl-static" ]; then
-          verify_emit "$target" hold 1
+          verify_emit "$target" grutty 1
         else
-          emit "$target" hold
+          emit "$target" grutty
         fi
       else bfail; fi
     done
@@ -131,6 +131,6 @@ esac
 
 rm -f "$log" "${log}.run"
 section "artifacts in $out"
-ls -la "$out"/hold-"$ver"-*.tar.gz 2>/dev/null | awk '{print "   ", $NF, $5"B"}'
+ls -la "$out"/grutty-"$ver"-*.tar.gz 2>/dev/null | awk '{print "   ", $NF, $5"B"}'
 printf '\n===== release build: %d ok, %d failed, %d skipped =====\n' "$ok" "$fail" "$skip"
 [ "$fail" -eq 0 ]

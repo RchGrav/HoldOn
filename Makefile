@@ -29,7 +29,7 @@ SRCS := $(wildcard src/*.c) \
         $(wildcard src/cli/*.c)
 
 # Vendored libvterm (third_party/libvterm, MIT): built with its own flags so the
-# project's warning set (and CI's -Werror) applies to Hold's code only, while
+# project's warning set (and CI's -Werror) applies to Grutty's code only, while
 # optimization and sanitizer flags still carry over.
 VTERM_SRCS := $(wildcard third_party/libvterm/src/*.c)
 VTERM_CFLAGS := $(filter-out -Werror -Wall -Wextra -Wpedantic -std=%,$(CFLAGS)) -std=c99 -w
@@ -45,7 +45,7 @@ INCLUDES := -Iinclude -Ithird_party/libvterm/include
 ALL_CPPFLAGS := $(CPPFLAGS) $(EXTRA_CPPFLAGS) $(INCLUDES) $(VERSION_CPPFLAG)
 TEST_CPPFLAGS := -DHOLD_TESTING -DHOLD_BOOT_ID_PATH='"/tmp/hold_test_boot_id"'
 
-all: hold
+all: grutty
 
 obj/vterm/%.o: third_party/libvterm/src/%.c
 	@mkdir -p $(dir $@)
@@ -55,18 +55,18 @@ obj/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-hold: $(OBJS)
+grutty: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(STATIC_LDFLAGS) -o $@ $(OBJS)
 
-hold-dynamic: $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o hold-dynamic $(OBJS)
+grutty-dynamic: $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o grutty-dynamic $(OBJS)
 
 obj-test/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 test: $(TEST_OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o hold $(TEST_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o grutty $(TEST_OBJS)
 	@bash tests/test_hold.sh
 	@$(MAKE) screen-test
 	@bash tests/test_version_makefile.sh
@@ -77,8 +77,8 @@ screen-test: $(VTERM_OBJS)
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o screen-test tests/screen_test.c src/screen/screen.c $(VTERM_OBJS)
 	@./screen-test
 
-test-040: hold-dynamic
-	@HOLD_BIN=./hold-dynamic bash tests/test_040_dockerish.sh
+test-040: grutty-dynamic
+	@HOLD_BIN=./grutty-dynamic bash tests/test_040_dockerish.sh
 
 print-version:
 	@printf '%s\n' '$(VERSION)'
@@ -96,7 +96,7 @@ lint:
 	@bash scripts/lint_layers.sh
 
 clean:
-	rm -f hold hold-dynamic screen-test
+	rm -f grutty grutty-dynamic screen-test
 	rm -rf obj obj-test
 
 .PHONY: all clean test test-040 check ci lint screen-test print-version

@@ -54,13 +54,13 @@ int hold_cmd_ports_action(const struct hold_invocation *inv,
         hold_port_list_free(&ports);
         hold_free_run_record(&r);
         free(targets);
-        hold_die_errno("hold: failed to read ports");
+        hold_die_errno("grutty: failed to read ports");
     }
     int result = 0;
     if (denied && ports.count == 0) {
         char display_id[ID_DISPLAY_HEX_LEN + 1];
         hold_run_id_display(r.id, display_id);
-        fprintf(stderr, "hold: error: cannot read the process table for '%s'\n", display_id);
+        fprintf(stderr, "grutty: error: cannot read the process table for '%s'\n", display_id);
         result = 3;
     } else {
         for (size_t i = 0; i < ports.count; i++) {
