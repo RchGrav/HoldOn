@@ -444,6 +444,9 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
         unlink_log_index_for_log(log_path);
         unlink(log_path);
     }
+    char screen_path[HOLD_PATH_MAX];
+    if (hold_checked_snprintf(screen_path, sizeof(screen_path), "%s/%s.screen", store->log_dir, r->id) == 0)
+        unlink(screen_path);
     if (hold_format_console_sock_path(store, r->id, sock_path, sizeof(sock_path)) == 0) {
         if (r->has_console && strcmp(r->console_sock, sock_path) != 0)
             fprintf(stderr, "hold: warning: record %s names a console socket outside the store; left untouched: %s\n", r->id, r->console_sock);

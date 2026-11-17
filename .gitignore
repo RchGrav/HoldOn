@@ -76,6 +76,7 @@ dkms.conf
 # Standalone unit-test binaries
 /viewer-filter-test
 /logidx-recovery-test
+/screen-test
 
 # Local scratch/test executable
 /hello

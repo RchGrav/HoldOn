@@ -13,6 +13,7 @@ viol() {
   fi
 }
 viol "src/core include/hold/core.h"                                          'platform|store|term|console|access|runtime|cli'
+viol "src/screen include/hold/screen.h"                                      'platform|store|term|console|access|runtime|cli'
 viol "src/platform include/hold/platform.h"                                  'store|term|console|access|runtime|cli'
 viol "src/store include/hold/store.h"                                        'term|console|access|runtime|cli'
 viol "src/term include/hold/term.h"                                          'console|access|runtime|cli'

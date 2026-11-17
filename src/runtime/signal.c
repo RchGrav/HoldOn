@@ -210,7 +210,7 @@ int hold_cmd_signal_action(const struct hold_invocation *inv,
 /* Resolve a single-target token; on a hit the target is copied out and the
  * list freed. *hit false means the caller returns rc as its exit status
  * (covers resolve errors and the friendly "nothing to <verb>" no-op). */
-static int resolve_single(const struct hold_invocation *inv,
+int hold_resolve_single(const struct hold_invocation *inv,
                           const struct hold_store *user_store,
                           const struct hold_store *system_store,
                           const char *command,
@@ -233,7 +233,7 @@ static int resolve_single(const struct hold_invocation *inv,
 }
 
 /* Requires-root gate + record load; *ok false means the caller returns rc. */
-static int load_target_record(const struct hold_resolved_target *target,
+int hold_load_target_record(const struct hold_resolved_target *target,
                               bool need_log,
                               struct hold_run_record *r,
                               char *path,
@@ -300,11 +300,11 @@ int hold_cmd_tail_action(const struct hold_invocation *inv,
                            const char *id_token) {
     struct hold_resolved_target target;
     bool hit = false, ok = false;
-    int rc = resolve_single(inv, user_store, system_store, "tail", "tail", id_token, &target, &hit);
+    int rc = hold_resolve_single(inv, user_store, system_store, "tail", "tail", id_token, &target, &hit);
     if (!hit) return rc;
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
-    rc = load_target_record(&target, true, &r, path, sizeof(path), &ok);
+    rc = hold_load_target_record(&target, true, &r, path, sizeof(path), &ok);
     if (!ok) return rc;
     char boot[128];
     const char *boot_id = hold_boot_id_or_null(boot);
@@ -529,11 +529,11 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
                               const char *id_token) {
     struct hold_resolved_target target;
     bool hit = false, ok = false;
-    int rc = resolve_single(inv, user_store, system_store, "inspect", "inspect", id_token, &target, &hit);
+    int rc = hold_resolve_single(inv, user_store, system_store, "inspect", "inspect", id_token, &target, &hit);
     if (!hit) return rc;
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
-    rc = load_target_record(&target, false, &r, path, sizeof(path), &ok);
+    rc = hold_load_target_record(&target, false, &r, path, sizeof(path), &ok);
     if (!ok) return rc;
     char boot[128];
     const char *boot_id = hold_boot_id_or_null(boot);
@@ -645,11 +645,11 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
 
     struct hold_resolved_target target;
     bool hit = false, ok = false;
-    int rc = resolve_single(inv, user_store, system_store, "view", "log", target_token, &target, &hit);
+    int rc = hold_resolve_single(inv, user_store, system_store, "view", "log", target_token, &target, &hit);
     if (!hit) return rc;
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
-    rc = load_target_record(&target, true, &r, path, sizeof(path), &ok);
+    rc = hold_load_target_record(&target, true, &r, path, sizeof(path), &ok);
     if (!ok) return rc;
     int fd = open(r.log_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) hold_die_errno("hold: failed to open log");

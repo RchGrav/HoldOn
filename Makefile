@@ -26,19 +26,31 @@ SRCS := $(wildcard src/*.c) \
         $(wildcard src/access/*.c) \
         $(wildcard src/runtime/*.c) \
         $(wildcard src/viewer/*.c) \
+        $(wildcard src/screen/*.c) \
         $(wildcard src/cli/*.c)
+
+# Vendored libvterm (third_party/libvterm, MIT): built with its own flags so the
+# project's warning set (and CI's -Werror) applies to Hold's code only, while
+# optimization and sanitizer flags still carry over.
+VTERM_SRCS := $(wildcard third_party/libvterm/src/*.c)
+VTERM_CFLAGS := $(filter-out -Werror -Wall -Wextra -Wpedantic -std=%,$(CFLAGS)) -std=c99 -w
 
 # Separate object trees per build "personality" so the test objects (built with
 # -DHOLD_TESTING and a different HOLD_BOOT_ID_PATH) can never be linked
 # into a release binary, and vice versa.
-OBJS      := $(patsubst src/%.c,obj/%.o,$(SRCS))
-TEST_OBJS := $(patsubst src/%.c,obj-test/%.o,$(SRCS))
+VTERM_OBJS := $(patsubst third_party/libvterm/src/%.c,obj/vterm/%.o,$(VTERM_SRCS))
+OBJS      := $(patsubst src/%.c,obj/%.o,$(SRCS)) $(VTERM_OBJS)
+TEST_OBJS := $(patsubst src/%.c,obj-test/%.o,$(SRCS)) $(VTERM_OBJS)
 
-INCLUDES := -Iinclude
+INCLUDES := -Iinclude -Ithird_party/libvterm/include
 ALL_CPPFLAGS := $(CPPFLAGS) $(EXTRA_CPPFLAGS) $(INCLUDES) $(VERSION_CPPFLAG)
 TEST_CPPFLAGS := -DHOLD_TESTING -DHOLD_BOOT_ID_PATH='"/tmp/hold_test_boot_id"'
 
 all: hold
+
+obj/vterm/%.o: third_party/libvterm/src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -Ithird_party/libvterm/include $(VTERM_CFLAGS) -c -o $@ $<
 
 obj/%.o: src/%.c
 	@mkdir -p $(dir $@)
@@ -59,6 +71,7 @@ test: $(TEST_OBJS)
 	@bash tests/test_hold.sh
 	@$(MAKE) viewer-filter-test
 	@$(MAKE) logidx-recovery-test
+	@$(MAKE) screen-test
 	@bash tests/test_version_makefile.sh
 	@bash tests/test_release_installer.sh
 	@$(MAKE) test-040
@@ -70,6 +83,10 @@ viewer-filter-test:
 logidx-recovery-test:
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o logidx-recovery-test tests/logidx_recovery_test.c src/core/logidx.c src/core/json.c src/core/util.c src/platform/paths.c
 	@./logidx-recovery-test
+
+screen-test: $(VTERM_OBJS)
+	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o screen-test tests/screen_test.c src/screen/screen.c $(VTERM_OBJS)
+	@./screen-test
 
 test-040: hold-dynamic
 	@HOLD_BIN=./hold-dynamic bash tests/test_040_dockerish.sh
@@ -105,7 +122,7 @@ lint:
 	@bash scripts/lint_layers.sh
 
 clean:
-	rm -f hold hold-dynamic viewer-filter-test logidx-recovery-test
+	rm -f hold hold-dynamic viewer-filter-test logidx-recovery-test screen-test
 	rm -rf obj obj-test
 
-.PHONY: all clean test test-040 check ci lint viewer-filter-test logidx-recovery-test print-version review-build review-fixture demo demo-stop demo-status
+.PHONY: all clean test test-040 check ci lint viewer-filter-test logidx-recovery-test screen-test print-version review-build review-fixture demo demo-stop demo-status

@@ -179,3 +179,27 @@ int hold_console_peer_uid(int fd, uid_t *uid_out) {
     return -1;
 #endif
 }
+
+/* The connecting process's pid (Linux SO_PEERCRED, macOS LOCAL_PEERPID);
+ * used to verify a hold msg sender's claimed call. ENOTSUP elsewhere. */
+int hold_console_peer_pid(int fd, pid_t *pid_out) {
+#if defined(__linux__)
+    struct ucred cred;
+    socklen_t len = (socklen_t)sizeof(cred);
+    memset(&cred, 0, sizeof(cred));
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0 || len < sizeof(cred)) return -1;
+    *pid_out = cred.pid;
+    return 0;
+#elif defined(__APPLE__) && defined(LOCAL_PEERPID)
+    pid_t pid = 0;
+    socklen_t len = (socklen_t)sizeof(pid);
+    if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) != 0) return -1;
+    *pid_out = pid;
+    return 0;
+#else
+    (void)fd;
+    (void)pid_out;
+    errno = ENOTSUP;
+    return -1;
+#endif
+}

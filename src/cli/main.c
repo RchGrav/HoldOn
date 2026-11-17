@@ -71,9 +71,13 @@ static bool parse_docker_run_flag(const char *arg,
         *tty = true;
         return true;
     }
-    if (!strcmp(arg, "-it") || !strcmp(arg, "-ti")) {
-        *interactive = true;
-        *tty = true;
+    /* Docker-style clusters of the boolean short flags: -it, -dt, -dit, ... */
+    if (arg[1] && arg[1] != '-' && arg[2] && strspn(arg + 1, "dit") == strlen(arg + 1)) {
+        for (const char *p = arg + 1; *p; p++) {
+            if (*p == 'd') *detach = true;
+            else if (*p == 'i') *interactive = true;
+            else *tty = true;
+        }
         return true;
     }
     if (!strcmp(arg, "--privileged")) {
@@ -628,6 +632,16 @@ int hold_cli_main(int argc, char **argv) {
         rc = hold_cmd_stats_action(&inv, &user_store, &system_store, cmd_argv[0], oo.no_stream);
     } else if (!strcmp(canon, "logs")) {
         rc = hold_cmd_view_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
+    } else if (!strcmp(canon, "peek")) {
+        rc = hold_cmd_peek_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
+    } else if (!strcmp(canon, "send")) {
+        rc = hold_cmd_send_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
+    } else if (!strcmp(canon, "wait")) {
+        rc = hold_cmd_wait_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
+    } else if (!strcmp(canon, "msg")) {
+        rc = hold_cmd_msg_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
+    } else if (!strcmp(canon, "resize")) {
+        rc = hold_cmd_resize_action(&inv, &user_store, &system_store, cmd_argc, cmd_argv);
     } else if (!strcmp(canon, "attach")) {
         rc = hold_cmd_console_action(&inv, &user_store, &system_store, cmd_argv[0]);
     } else if (!strcmp(canon, "purge")) {

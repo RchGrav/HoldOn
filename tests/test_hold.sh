@@ -3642,6 +3642,202 @@ test_restart_unless_stopped() {
   "$HOLD_BIN" list -a | grep -Eq "^$id[[:space:]].*Exited" || { "$HOLD_BIN" list -a >&2; return 1; }
 }
 
+# hold msg: a call messages another; the receiver verifies the sender's call,
+# labels impostors, and flattens newlines when there is no bracketed paste.
+test_msg_between_calls() {
+  "$HOLD_BIN" -dt --name lead -- /bin/sh -c 'stty -echo; echo lead-ready; while IFS= read -r l; do printf "LEAD GOT: %s\n" "$l"; done' >/dev/null || return 1
+  "$HOLD_BIN" wait lead --match lead-ready --timeout 5000 || return 1
+  "$HOLD_BIN" -dt --name worker -- /bin/sh -c "\"$HOLD_REAL_BIN\" msg lead 'task done'; sleep 30" >/dev/null || return 1
+  "$HOLD_BIN" wait lead --match 'LEAD GOT' --timeout 10000 || { "$HOLD_BIN" peek lead >&2; return 1; }
+  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg from worker; reply: hold msg worker "..."] task done' || { "$HOLD_BIN" peek lead >&2; return 1; }
+  HOLD_CALL_ID= HOLD_CALL_NAME=worker "$HOLD_BIN" msg lead --now 'fake' || return 1
+  "$HOLD_BIN" wait lead --match 'fake' --timeout 5000 || return 1
+  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg from worker (unverified)] fake' || return 1
+  env -u HOLD_CALL_ID -u HOLD_CALL_NAME "$HOLD_BIN" msg lead --now "$(printf 'two\nlines')" || return 1
+  "$HOLD_BIN" wait lead --match 'two lines' --timeout 5000 || { "$HOLD_BIN" peek lead >&2; return 1; }
+  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg via hold] two lines' || return 1
+  "$HOLD_BIN" end lead worker >/dev/null 2>&1 || true
+}
+
+# ---- the screen verbs: peek / send / wait / resize -------------------------
+
+# A TTY call's screen reads back as plain text, with a ruler, and as JSON.
+test_peek_text_ruler_and_json() {
+  "$HOLD_BIN" -dt --name scr -- /bin/sh -c 'printf "\033[1;32malpha\033[0m\nbeta\n"; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait scr --match beta --timeout 5000 || return 1
+  out=$("$HOLD_BIN" peek scr) || return 1
+  [ "$(printf '%s\n' "$out" | sed -n 1p)" = alpha ] || { printf '%s\n' "$out" >&2; return 1; }
+  [ "$(printf '%s\n' "$out" | sed -n 2p)" = beta ] || return 1
+  [ "$("$HOLD_BIN" peek scr | wc -l | tr -d ' ')" -eq 24 ] || { echo "expected 24 rows" >&2; return 1; }
+  "$HOLD_BIN" peek scr --ruler | sed -n 3p | grep -qx ' 0|alpha' || return 1
+  "$HOLD_BIN" peek scr --json >"$TEST_ROOT/peek.json" || return 1
+  python3 - "$TEST_ROOT/peek.json" <<'PY' || { cat "$TEST_ROOT/peek.json" >&2; return 1; }
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["name"] == "scr" and d["running"] is True and d["exit_code"] is None
+assert (d["rows"], d["cols"]) == (24, 80)
+assert d["cursor"] == {"row": 2, "col": 0, "visible": True}, d["cursor"]
+assert d["lines"][:2] == ["alpha", "beta"] and len(d["lines"]) == 24
+assert d["output_seq"] > 0 and d["mouse"] == "none" and d["cursor_keys"] == "normal"
+PY
+  "$HOLD_BIN" end scr >/dev/null 2>&1 || true
+}
+
+# send types text and presses keys; --wait returns once the program answered.
+test_send_text_keys_and_wait() {
+  "$HOLD_BIN" -dt --name typer -- /bin/sh -c 'stty -echo; echo ready; while IFS= read -r l; do printf "got:%s\n" "$l"; done' >/dev/null || return 1
+  "$HOLD_BIN" wait typer --match ready --timeout 5000 || return 1
+  "$HOLD_BIN" send typer "hello world" --enter --wait 200 --timeout 5000 || return 1
+  "$HOLD_BIN" peek typer | grep -qx 'got:hello world' || { "$HOLD_BIN" peek typer >&2; return 1; }
+  "$HOLD_BIN" send typer --text --not-a-flag -k Enter --wait 200 || return 1
+  "$HOLD_BIN" peek typer | grep -qx 'got:--not-a-flag' || return 1
+  set +e
+  "$HOLD_BIN" send typer -k NoSuchKey 2>"$TEST_ROOT/badkey.err"; rc=$?
+  set -e
+  [ "$rc" -eq 1 ] && grep -q "unknown key 'NoSuchKey'" "$TEST_ROOT/badkey.err" || return 1
+  "$HOLD_BIN" send typer -k C-d || return 1
+  "$HOLD_BIN" wait typer --timeout 5000 | grep -qx 0 || return 1
+}
+
+# Keys follow the program's modes: arrows switch to ESC O x under DECCKM.
+test_send_keys_follow_cursor_key_mode() {
+  "$HOLD_BIN" -dt --name keys -- /bin/sh -c 'printf "\033[?1h"; stty raw -echo; echo ready; dd bs=1 count=3 2>/dev/null | od -An -c; sleep 5' >/dev/null || return 1
+  "$HOLD_BIN" wait keys --match ready --timeout 5000 || return 1
+  "$HOLD_BIN" send keys -k Up || return 1
+  "$HOLD_BIN" wait keys --regex '033 +O +A' --timeout 5000 || { "$HOLD_BIN" peek keys >&2; return 1; }
+  "$HOLD_BIN" end keys >/dev/null 2>&1 || true
+}
+
+# Bracketed paste wraps the text only when the program enabled mode 2004.
+test_send_paste_brackets_when_requested() {
+  "$HOLD_BIN" -dt --name paste -- /bin/sh -c 'printf "\033[?2004h"; stty raw -echo; echo ready; dd bs=1 count=15 2>/dev/null | od -An -c; sleep 5' >/dev/null || return 1
+  "$HOLD_BIN" wait paste --match ready --timeout 5000 || return 1
+  "$HOLD_BIN" send paste --paste 'a b' || return 1
+  "$HOLD_BIN" wait paste --regex '033 +\[ +2 +0 +0 +~ +a' --timeout 5000 || { "$HOLD_BIN" peek paste >&2; return 1; }
+  "$HOLD_BIN" end paste >/dev/null 2>&1 || true
+}
+
+# wait: idle that never comes times out (7); a call that ends first is 8;
+# no condition is docker wait (prints the exit code).
+test_wait_timeout_ended_and_exit_code() {
+  "$HOLD_BIN" -dt --name chatty -- /bin/sh -c 'while :; do echo tick; sleep 0.05; done' >/dev/null || return 1
+  set +e
+  "$HOLD_BIN" wait chatty --idle 400 --timeout 900 2>/dev/null; rc=$?
+  set -e
+  [ "$rc" -eq 7 ] || { echo "idle on a chatty call: rc $rc, want 7" >&2; return 1; }
+  "$HOLD_BIN" end chatty >/dev/null 2>&1 || true
+  "$HOLD_BIN" -dt --name brief -- /bin/sh -c 'echo hi; sleep 0.5; exit 3' >/dev/null || return 1
+  set +e
+  "$HOLD_BIN" wait brief --match never-appears --timeout 10000 2>"$TEST_ROOT/ended.err"; rc=$?
+  set -e
+  [ "$rc" -eq 8 ] || { cat "$TEST_ROOT/ended.err" >&2; echo "rc $rc, want 8" >&2; return 1; }
+  [ "$("$HOLD_BIN" wait brief)" = 3 ] || return 1
+  "$HOLD_BIN" -d --name plain -- /bin/sh -c 'exit 4' >/dev/null || return 1
+  [ "$("$HOLD_BIN" wait plain --timeout 5000)" = 4 ] || return 1
+}
+
+# wait --idle counts silence from the start of the wait, and settles.
+test_wait_idle_settles() {
+  "$HOLD_BIN" -dt --name settle -- /bin/sh -c 'for i in 1 2 3 4 5; do echo "step $i"; sleep 0.1; done; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait settle --idle 400 --timeout 8000 || return 1
+  "$HOLD_BIN" peek settle | grep -qx 'step 5' || { "$HOLD_BIN" peek settle >&2; return 1; }
+  "$HOLD_BIN" end settle >/dev/null 2>&1 || true
+}
+
+# resize: the program gets SIGWINCH and the screen reports the new size.
+test_resize_delivers_sigwinch() {
+  "$HOLD_BIN" -dt --name sized -- /bin/sh -c 'trap "echo SIZE:\$(stty size)" WINCH; echo ready; while :; do sleep 0.1; done' >/dev/null || return 1
+  "$HOLD_BIN" wait sized --match ready --timeout 5000 || return 1
+  "$HOLD_BIN" resize sized 100 30 || return 1
+  "$HOLD_BIN" wait sized --match 'SIZE:30 100' --timeout 5000 || { "$HOLD_BIN" peek sized >&2; return 1; }
+  "$HOLD_BIN" peek sized --json | grep -q '"size_set_by": "resize"' || return 1
+  "$HOLD_BIN" resize sized 90x20 || return 1
+  "$HOLD_BIN" wait sized --match 'SIZE:20 90' --timeout 5000 || return 1
+  "$HOLD_BIN" end sized >/dev/null 2>&1 || true
+}
+
+# peek --image writes a PNG; without ruler or footer at scale 1 it is exactly
+# 8x16 pixels per cell.
+test_peek_image_png() {
+  "$HOLD_BIN" -dt --name pic -- /bin/sh -c 'printf "\033[44m box \033[0m \342\224\214\342\224\200\342\224\220\n"; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait pic --match box --timeout 5000 || return 1
+  "$HOLD_BIN" peek pic --image "$TEST_ROOT/full.png" --cursor-ring || return 1
+  "$HOLD_BIN" peek pic --image "$TEST_ROOT/bare.png" --scale 1 --no-ruler --no-footer || return 1
+  python3 - "$TEST_ROOT/full.png" "$TEST_ROOT/bare.png" <<'PY' || return 1
+import struct, sys, zlib
+def ihdr(path):
+    data = open(path, "rb").read()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", path
+    w, h = struct.unpack(">II", data[16:24])
+    pos, idat = 8, b""
+    while pos < len(data):
+        n, = struct.unpack(">I", data[pos:pos + 4]); kind = data[pos + 4:pos + 8]
+        if kind == b"IDAT": idat += data[pos + 8:pos + 8 + n]
+        pos += 12 + n
+    raw = zlib.decompress(idat)
+    assert len(raw) == h * (w * 3 + 1), (len(raw), w, h)
+    return w, h
+assert ihdr(sys.argv[2]) == (640, 384), ihdr(sys.argv[2])
+w, h = ihdr(sys.argv[1])
+assert w > 1280 and h > 768, (w, h)
+PY
+  "$HOLD_BIN" end pic >/dev/null 2>&1 || true
+}
+
+# After the call ends, peek shows its last screen; purge removes it.
+test_peek_after_exit_and_purge() {
+  "$HOLD_BIN" -dt --name gone -- /bin/sh -c 'echo last words; sleep 0.3' >/dev/null || return 1
+  "$HOLD_BIN" wait gone --timeout 5000 >/dev/null || return 1
+  "$HOLD_BIN" peek gone | grep -qx 'last words' || return 1
+  "$HOLD_BIN" peek gone --json | grep -q '"running": false' || return 1
+  ls "$HOME"/.local/state/hold/*.screen >/dev/null 2>&1 || return 1
+  "$HOLD_BIN" purge gone >/dev/null 2>&1 || return 1
+  ! ls "$HOME"/.local/state/hold/*.screen >/dev/null 2>&1 || return 1
+}
+
+# Calls without a TTY have no screen; the verbs say so.
+test_screen_verbs_need_a_tty() {
+  "$HOLD_BIN" -d --name notty -- /bin/sh -c 'sleep 30' >/dev/null || return 1
+  set +e
+  "$HOLD_BIN" peek notty 2>"$TEST_ROOT/notty.err"; rc=$?
+  set -e
+  [ "$rc" -eq 5 ] && grep -q 'no terminal screen' "$TEST_ROOT/notty.err" || { cat "$TEST_ROOT/notty.err" >&2; return 1; }
+  "$HOLD_BIN" end notty >/dev/null 2>&1 || true
+}
+
+# A mouse event to a program with mouse reporting off is reported, not lost silently.
+test_send_mouse_off_is_reported() {
+  "$HOLD_BIN" -dt --name nomouse -- /bin/sh -c 'echo ready; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait nomouse --match ready --timeout 5000 || return 1
+  "$HOLD_BIN" send nomouse --mouse click,3,1 2>"$TEST_ROOT/mouse.err" || return 1
+  grep -q 'mouse reporting off' "$TEST_ROOT/mouse.err" || return 1
+  "$HOLD_BIN" peek nomouse --json | grep -q '"last_mouse": {"row": 1, "col": 3}' || return 1
+  "$HOLD_BIN" end nomouse >/dev/null 2>&1 || true
+}
+
+# Every call knows its own address; a call launched from inside another
+# learns its parent's.
+test_call_identity_environment() {
+  out=$("$HOLD_BIN" -d --name selfaware -- /bin/sh -c 'echo "name=$HOLD_CALL_NAME id=$HOLD_CALL_ID parent=${HOLD_CALL_PARENT:-none}"') || return 1
+  id=$(printf '%s\n' "$out" | sed -n '/^[0-9a-f]\{64\}$/p')
+  "$HOLD_BIN" wait selfaware --timeout 5000 >/dev/null || return 1
+  "$HOLD_BIN" logs selfaware | grep -qx "name=selfaware id=$id parent=none" || { "$HOLD_BIN" logs selfaware >&2; return 1; }
+  HOLD_CALL_NAME=lead "$HOLD_BIN" -d --name kid -- /bin/sh -c 'echo "parent=$HOLD_CALL_PARENT name=$HOLD_CALL_NAME"' >/dev/null || return 1
+  "$HOLD_BIN" wait kid --timeout 5000 >/dev/null || return 1
+  "$HOLD_BIN" logs kid | grep -qx 'parent=lead name=kid' || { "$HOLD_BIN" logs kid >&2; return 1; }
+}
+
+# Attaching repaints the live screen rather than replaying bytes.
+test_attach_repaints_live_screen() {
+  "$HOLD_BIN" -dt --name painted -- /bin/sh -c 'printf "first\nsecond\033[1;1Hover"; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait painted --match over --timeout 5000 || return 1
+  ( sleep 1.5; "$HOLD_BIN" end painted >/dev/null 2>&1 ) &
+  "$HOLD_BIN" attach painted </dev/null >"$TEST_ROOT/attach.out" 2>&1 || true
+  wait
+  grep -a -q 'overt' "$TEST_ROOT/attach.out" || { od -c "$TEST_ROOT/attach.out" | head -20 >&2; return 1; }
+  "$HOLD_BIN" end painted >/dev/null 2>&1 || true
+}
+
 run_test "--print spans --all and multiple explicit targets" test_print_over_all_and_multiple
 run_test "stop refuses a record with a tampered pgid<=1 (exit 5)" test_signal_refuses_tampered_pgid
 run_test "public-index write failure rolls back the start" test_public_index_write_rollback
@@ -3773,6 +3969,20 @@ run_test "list -u shows only the invoking user's calls, even under sudo" test_li
 run_test "drop removes a call exactly like prune" test_drop_alias_matches_prune
 run_test "sudo purge sweeps an orphan public entry" test_orphan_public_entry_swept
 run_test "unless-stopped restarts crashes but stays down after end" test_restart_unless_stopped
+run_test "peek prints the screen as text, with a ruler, and as JSON" test_peek_text_ruler_and_json
+run_test "send types text and keys; --wait settles after the answer" test_send_text_keys_and_wait
+run_test "send encodes arrows for the program's cursor-key mode" test_send_keys_follow_cursor_key_mode
+run_test "send --paste brackets only when the program asked" test_send_paste_brackets_when_requested
+run_test "wait times out (7), sees early exit (8), and prints exit codes" test_wait_timeout_ended_and_exit_code
+run_test "wait --idle settles after output stops" test_wait_idle_settles
+run_test "resize delivers SIGWINCH and updates the screen" test_resize_delivers_sigwinch
+run_test "peek --image writes a well-formed PNG" test_peek_image_png
+run_test "peek shows the last screen after exit; purge removes it" test_peek_after_exit_and_purge
+run_test "screen verbs refuse calls without a TTY" test_screen_verbs_need_a_tty
+run_test "send --mouse to a program without mouse reporting is reported" test_send_mouse_off_is_reported
+run_test "calls see HOLD_CALL_ID, HOLD_CALL_NAME, HOLD_CALL_PARENT" test_call_identity_environment
+run_test "attach repaints the live screen" test_attach_repaints_live_screen
+run_test "msg delivers between calls and verifies the sender" test_msg_between_calls
 
 echo "----------------------------------------------------------------"
 echo "summary: $PASSES passed, $FAILS failed, $SKIPS skipped"

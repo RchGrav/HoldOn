@@ -68,6 +68,41 @@ static int clear_process_environment(void) {
 #endif
 }
 
+/* The call's own identity, exported to the held program: HOLD_CALL_ID and
+ * HOLD_CALL_NAME are its address (hold send/peek/wait accept either), and
+ * HOLD_CALL_PARENT names the call that launched it, when it was launched
+ * from inside one (an agent starting a worker), so the worker can reply.
+ * Captured in the launcher before fork; always overrides inherited values. */
+static struct {
+    char id[ID_STR_LEN];
+    char name[ALIAS_MAX_LEN + 1];
+    char parent[ALIAS_MAX_LEN + 1];
+    bool set;
+} g_child_identity;
+
+static void child_identity_prepare(const char *id, const char *name) {
+    memset(&g_child_identity, 0, sizeof(g_child_identity));
+    snprintf(g_child_identity.id, sizeof(g_child_identity.id), "%s", id ? id : "");
+    snprintf(g_child_identity.name, sizeof(g_child_identity.name), "%s", name ? name : "");
+    const char *parent = getenv("HOLD_CALL_NAME");
+    if (!parent || !*parent) parent = getenv("HOLD_CALL_ID");
+    if (parent && strlen(parent) < sizeof(g_child_identity.parent) && strcmp(parent, g_child_identity.name) != 0)
+        snprintf(g_child_identity.parent, sizeof(g_child_identity.parent), "%s", parent);
+    g_child_identity.set = g_child_identity.id[0] != '\0';
+}
+
+static int apply_child_identity(void) {
+    if (!g_child_identity.set) return 0;
+    if (setenv("HOLD_CALL_ID", g_child_identity.id, 1) != 0) return -1;
+    if (g_child_identity.name[0] ? setenv("HOLD_CALL_NAME", g_child_identity.name, 1) != 0
+                                 : unsetenv("HOLD_CALL_NAME") != 0)
+        return -1;
+    if (g_child_identity.parent[0] ? setenv("HOLD_CALL_PARENT", g_child_identity.parent, 1) != 0
+                                   : unsetenv("HOLD_CALL_PARENT") != 0)
+        return -1;
+    return 0;
+}
+
 static int apply_child_env(int envc, char **env, bool clean_base) {
     if (clean_base) {
         if (clear_process_environment() != 0) return -1;
@@ -79,7 +114,7 @@ static int apply_child_env(int envc, char **env, bool clean_base) {
         if (env_entry_key(entry, key) != 0) return -1;
         if (setenv(key, strchr(entry, '=') + 1, 1) != 0) return -1;
     }
-    return 0;
+    return apply_child_identity();
 }
 
 /* ---- the child-side handshake and session preamble ---- */
@@ -589,6 +624,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         launch_die(&u, "hold: pipe failed");
     }
 
+    child_identity_prepare(id, run_name);
     pid_t pid = fork();
     if (pid < 0) {
         launch_die(&u, "hold: fork failed");

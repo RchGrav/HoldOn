@@ -78,6 +78,18 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
                            const struct hold_store *system_store,
                            int argc,
                            char **argv);
+/* The screen verbs (src/runtime/screen_cmds.c): argv holds the target and
+ * the verb's own flags. */
+int hold_cmd_peek_action(const struct hold_invocation *inv, const struct hold_store *user_store,
+                         const struct hold_store *system_store, int argc, char **argv);
+int hold_cmd_send_action(const struct hold_invocation *inv, const struct hold_store *user_store,
+                         const struct hold_store *system_store, int argc, char **argv);
+int hold_cmd_wait_action(const struct hold_invocation *inv, const struct hold_store *user_store,
+                         const struct hold_store *system_store, int argc, char **argv);
+int hold_cmd_resize_action(const struct hold_invocation *inv, const struct hold_store *user_store,
+                           const struct hold_store *system_store, int argc, char **argv);
+int hold_cmd_msg_action(const struct hold_invocation *inv, const struct hold_store *user_store,
+                        const struct hold_store *system_store, int argc, char **argv);
 int hold_cmd_console_action(const struct hold_invocation *inv,
                               const struct hold_store *user_store,
                               const struct hold_store *system_store,

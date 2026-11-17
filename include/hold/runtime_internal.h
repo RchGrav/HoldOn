@@ -25,4 +25,22 @@ int hold_resolve_action_token(const struct hold_invocation *inv,
                                 struct hold_resolved_target **targets_out,
                                 int *count_out);
 
+/* Single-target prologue shared by logs/inspect/tail and the screen verbs:
+ * resolve one token (*hit false: return rc), then the requires-root gate and
+ * record load (*ok false: return rc). */
+int hold_resolve_single(const struct hold_invocation *inv,
+                        const struct hold_store *user_store,
+                        const struct hold_store *system_store,
+                        const char *command,
+                        const char *verb,
+                        const char *token,
+                        struct hold_resolved_target *out,
+                        bool *hit);
+int hold_load_target_record(const struct hold_resolved_target *target,
+                            bool need_log,
+                            struct hold_run_record *r,
+                            char *path,
+                            size_t path_len,
+                            bool *ok);
+
 #endif /* HOLD_RUNTIME_INTERNAL_H */
