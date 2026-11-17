@@ -47,7 +47,16 @@ int hold_proc_socket_inodes(pid_t pid, int (*cb)(unsigned long long inode, void 
 int hold_scan_listening_sockets(const unsigned long long *inodes, size_t count,
                                 int (*cb)(const char *entry, void *ctx), void *ctx);
 
+/* resolve_*: realpath() spellings, for identity and privilege checks.
+ * find_binary / absolute_existing: absolute but symlinks intact, for what a
+ * program is launched as (argv[0], exec path, path arguments). */
+/* Process ancestry: a pid's parent, and whether ancestor is pid itself or one
+ * of its ancestors (bounded walk). Used to verify a hold msg sender. */
+int hold_proc_parent_pid(pid_t pid, pid_t *ppid_out);
+bool hold_pid_has_ancestor(pid_t pid, pid_t ancestor);
 int hold_resolve_binary_path(const char *argv0, char *out, size_t n);
+int hold_find_binary_path(const char *argv0, char *out, size_t n);
+int hold_absolute_existing_path_from_cwd(const char *token, const char *cwd, char *out, size_t n);
 int hold_resolve_existing_path_from_cwd(const char *token, const char *cwd, char *out, size_t n);
 int hold_normalize_existing_argv_paths_from_cwd(char **argv, int argc, int first_arg, const char *cwd);
 bool hold_path_is_within_dir(const char *path, const char *dir);

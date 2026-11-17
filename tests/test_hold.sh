@@ -3651,7 +3651,13 @@ test_restart_unless_stopped() {
 test_msg_between_calls() {
   "$HOLD_BIN" -dt --name lead -- /bin/sh -c 'stty -echo; echo lead-ready; while IFS= read -r l; do printf "LEAD GOT: %s\n" "$l"; done' >/dev/null || return 1
   "$HOLD_BIN" wait lead --match lead-ready --timeout 5000 || return 1
-  "$HOLD_BIN" -dt --name worker -- /bin/sh -c "\"$HOLD_REAL_BIN\" msg lead 'task done'; sleep 30" >/dev/null || return 1
+  # The sender runs in a new session, as agent harnesses run tool commands:
+  # verification must follow ancestry, not just the session.
+  if command -v setsid >/dev/null 2>&1; then
+    "$HOLD_BIN" -dt --name worker -- /bin/sh -c "setsid \"$HOLD_REAL_BIN\" msg lead 'task done'; sleep 30" >/dev/null || return 1
+  else
+    "$HOLD_BIN" -dt --name worker -- /bin/sh -c "\"$HOLD_REAL_BIN\" msg lead 'task done'; sleep 30" >/dev/null || return 1
+  fi
   "$HOLD_BIN" wait lead --match 'LEAD GOT' --timeout 10000 || { "$HOLD_BIN" peek lead >&2; return 1; }
   "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg from worker; reply: hold msg worker "..."] task done' || { "$HOLD_BIN" peek lead >&2; return 1; }
   HOLD_CALL_ID= HOLD_CALL_NAME=worker "$HOLD_BIN" msg lead --now 'fake' || return 1
@@ -3825,6 +3831,23 @@ test_micro_mouse_editing() {
   "$HOLD_BIN" end mi >/dev/null 2>&1 || true
 }
 
+# wait --idle never passes before the program's first output; and a program
+# launched through a symlink (a venv's python) runs under the name it was given.
+test_wait_idle_needs_first_output_and_symlink_launch() {
+  "$HOLD_BIN" -dt --name slow -- /bin/sh -c 'sleep 1.5; echo drawn-late; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait slow --idle 400 --timeout 8000 || return 1
+  "$HOLD_BIN" peek slow | grep -qx 'drawn-late' || { echo "idle passed before first output" >&2; return 1; }
+  "$HOLD_BIN" end slow >/dev/null 2>&1 || true
+  mkdir -p "$TEST_ROOT/bin"
+  printf '#!/bin/sh\necho "argv0=$0"\n' >"$TEST_ROOT/bin/real-tool"
+  chmod +x "$TEST_ROOT/bin/real-tool"
+  ln -s real-tool "$TEST_ROOT/bin/alias-tool"
+  ( cd "$TEST_ROOT" && "$HOLD_BIN" -d --name via-link -- bin/alias-tool ) >/dev/null || return 1
+  "$HOLD_BIN" wait via-link --timeout 5000 >/dev/null || return 1
+  "$HOLD_BIN" logs via-link | grep -q 'argv0=.*/bin/alias-tool$' || { "$HOLD_BIN" logs via-link >&2; return 1; }
+  "$HOLD_BIN" inspect via-link | grep -q '"exe": ".*/bin/real-tool"' || return 1
+}
+
 # ---- the screen verbs: peek / send / wait / resize -------------------------
 
 # A TTY call's screen reads back as plain text, with a ruler, and as JSON.
@@ -3984,7 +4007,8 @@ test_send_mouse_off_is_reported() {
 # Every call knows its own address; a call launched from inside another
 # learns its parent's.
 test_call_identity_environment() {
-  out=$("$HOLD_BIN" -d --name selfaware -- /bin/sh -c 'echo "name=$HOLD_CALL_NAME id=$HOLD_CALL_ID parent=${HOLD_CALL_PARENT:-none}"') || return 1
+  # Launched from outside any call (the suite itself may run inside one).
+  out=$(env -u HOLD_CALL_NAME -u HOLD_CALL_ID -u HOLD_CALL_PARENT "$HOLD_BIN" -d --name selfaware -- /bin/sh -c 'echo "name=$HOLD_CALL_NAME id=$HOLD_CALL_ID parent=${HOLD_CALL_PARENT:-none}"') || return 1
   id=$(printf '%s\n' "$out" | sed -n '/^[0-9a-f]\{64\}$/p')
   "$HOLD_BIN" wait selfaware --timeout 5000 >/dev/null || return 1
   "$HOLD_BIN" logs selfaware | grep -qx "name=selfaware id=$id parent=none" || { "$HOLD_BIN" logs selfaware >&2; return 1; }
@@ -4157,6 +4181,7 @@ run_test "send reports a clamped legacy mouse event" test_send_mouse_legacy_clam
 run_test "tmux: prefix split, mouse pane focus, detach" test_tmux_prefix_mouse_and_detach
 run_test "an ncurses program takes mouse clicks" test_curses_mouse_checklist
 run_test "micro: click, double-click, drag select, wheel" test_micro_mouse_editing
+run_test "wait --idle needs first output; symlinked programs keep their name" test_wait_idle_needs_first_output_and_symlink_launch
 
 echo "----------------------------------------------------------------"
 echo "summary: $PASSES passed, $FAILS failed, $SKIPS skipped"

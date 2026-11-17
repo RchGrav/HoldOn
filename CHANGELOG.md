@@ -65,6 +65,17 @@ for test scripts, CI, and AI agents alike.
 
 ### Fixed
 
+- A program named by a symlink was launched by its resolved path, so a
+  venv's `.venv/bin/python` ran as the base interpreter and lost its venv.
+  Programs and path arguments now keep the name they were given (made
+  absolute for redial, symlinks intact); the resolved path is recorded only
+  as `observed.exe` and still drives the privilege check.
+- `hold wait --idle` could pass before a slow-starting program drew
+  anything. Idle now requires output first (after `--since SEQ`, output past
+  it).
+- `hold msg` marked a genuine sender `(unverified)` when its agent harness
+  ran the command in a new session (Claude Code does). The receiver now also
+  accepts a sender that descends from the claimed call's leader.
 - `rm --force` could resurrect the call it removed: the exit stamp's
   existence check and its fsync'd rewrite raced purge's unlink. Both now
   hold a store lock.

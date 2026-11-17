@@ -513,9 +513,11 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         return 5;
     }
 
+    /* Launched as named (symlinks intact: a venv's python finds its venv by
+     * its own path); the realpath is recorded only as observed_exe. */
     char resolved_exec_path[HOLD_PATH_MAX];
     const char *path_to_resolve = (opts->exec_path && *opts->exec_path) ? opts->exec_path : argv[0];
-    if (hold_resolve_binary_path(path_to_resolve, resolved_exec_path, sizeof(resolved_exec_path)) != 0) {
+    if (hold_find_binary_path(path_to_resolve, resolved_exec_path, sizeof(resolved_exec_path)) != 0) {
         if (errno == ENOENT) {
             fprintf(stderr, "hold: cannot start '%s': command not found\n", argv[0]);
         } else {
@@ -830,7 +832,10 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         snprintf(r.cmdline, sizeof(r.cmdline), "?");
     }
     r.has_observed = true;
-    copy_field(&u, r.observed_exe, sizeof(r.observed_exe), resolved_exec_path, "hold: observed executable path too long");
+    char real_exe[HOLD_PATH_MAX];
+    if (hold_resolve_binary_path(resolved_exec_path, real_exe, sizeof(real_exe)) != 0)
+        snprintf(real_exe, sizeof(real_exe), "%s", resolved_exec_path);
+    copy_field(&u, r.observed_exe, sizeof(r.observed_exe), real_exe, "hold: observed executable path too long");
     copy_field(&u, r.observed_cwd, sizeof(r.observed_cwd), observed_cwd, "hold: observed cwd too long");
     r.observed_argc = argc;
     r.observed_argv = observed_argv;

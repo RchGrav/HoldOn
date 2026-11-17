@@ -79,6 +79,55 @@ int hold_resolve_binary_path(const char *argv0, char *out, size_t n) {
     return -1;
 }
 
+/* An absolute spelling of path WITHOUT resolving symlinks: programs that find
+ * their environment through their own path (a venv's python, busybox-style
+ * multi-call binaries) must run under the name they were given. Leading
+ * "./" segments are dropped; ".." stays for the kernel to resolve. */
+static int absolute_copy(const char *path, const char *cwd, char *out, size_t n) {
+    if (path[0] == '/') return hold_checked_snprintf(out, n, "%s", path);
+    while (path[0] == '.' && path[1] == '/') {
+        path += 2;
+        while (*path == '/') path++;
+    }
+    char here[HOLD_PATH_MAX];
+    if (!cwd || !*cwd) {
+        if (!getcwd(here, sizeof(here))) return -1;
+        cwd = here;
+    }
+    size_t cl = strlen(cwd);
+    return hold_checked_snprintf(out, n, "%s%s%s", cwd, cl && cwd[cl - 1] == '/' ? "" : "/", *path ? path : ".");
+}
+
+int hold_find_binary_path(const char *argv0, char *out, size_t n) {
+    if (!argv0 || !*argv0) { errno = EINVAL; return -1; }
+    if (strchr(argv0, '/')) {
+        if (access(argv0, F_OK) != 0) return -1;
+        return absolute_copy(argv0, NULL, out, n);
+    }
+    const char *path = getenv("PATH");
+    if (!path || !*path) path = "/usr/local/bin:/usr/bin:/bin";
+    for (const char *p = path;; p = strchr(p, ':') + 1) {
+        const char *colon = strchr(p, ':');
+        size_t len = colon ? (size_t)(colon - p) : strlen(p);
+        if (len >= HOLD_PATH_MAX) { errno = ENAMETOOLONG; return -1; }
+        char candidate[HOLD_PATH_MAX];
+        if (len > 0 &&
+            hold_checked_snprintf(candidate, sizeof(candidate), "%.*s/%s", (int)len, p, argv0) == 0 &&
+            access(candidate, X_OK) == 0 && absolute_copy(candidate, NULL, out, n) == 0) return 0;
+        if (!colon) break;
+    }
+    errno = ENOENT;
+    return -1;
+}
+
+int hold_absolute_existing_path_from_cwd(const char *token, const char *cwd, char *out, size_t n) {
+    if (!token || !*token || !out || n == 0) { errno = EINVAL; return -1; }
+    char candidate[HOLD_PATH_MAX];
+    if (absolute_copy(token, cwd, candidate, sizeof(candidate)) != 0) return -1;
+    if (access(candidate, F_OK) != 0) return -1;
+    return hold_checked_snprintf(out, n, "%s", candidate);
+}
+
 int hold_resolve_existing_path_from_cwd(const char *token, const char *cwd, char *out, size_t n) {
     if (!token || !*token || !out || n == 0) { errno = EINVAL; return -1; }
     char candidate[HOLD_PATH_MAX];
@@ -104,7 +153,7 @@ int hold_normalize_existing_argv_paths_from_cwd(char **argv, int argc, int first
             path_part = eq + 1;
         }
         char resolved[HOLD_PATH_MAX];
-        if (hold_resolve_existing_path_from_cwd(path_part, cwd, resolved, sizeof(resolved)) != 0 ||
+        if (hold_absolute_existing_path_from_cwd(path_part, cwd, resolved, sizeof(resolved)) != 0 ||
             strcmp(path_part, resolved) == 0) continue;
         size_t resolved_len = strlen(resolved);
         char *copy = malloc(prefix_len + resolved_len + 1);

@@ -245,6 +245,34 @@ int hold_read_proc_stat_tokens(pid_t pid, char *state_out, uint64_t *starttime_o
     return 0;
 }
 
+int hold_proc_parent_pid(pid_t pid, pid_t *ppid_out) {
+#if defined(__APPLE__)
+    struct kinfo_proc kp;
+    if (mac_kinfo_pid(pid, &kp) != 0) return -1;
+    *ppid_out = kp.kp_eproc.e_ppid;
+#else
+    char buf[4096], *f;
+    if (proc_stat_fields(pid, buf, sizeof(buf), &f) != 0) return -1;
+    const char *tok = nth_field(f, 1); /* field 4: ppid */
+    char *end = NULL;
+    long v = tok ? strtol(tok, &end, 10) : -1;
+    if (!tok || end == tok || v < 0) return -1;
+    *ppid_out = (pid_t)v;
+#endif
+    return 0;
+}
+
+bool hold_pid_has_ancestor(pid_t pid, pid_t ancestor) {
+    if (pid <= 1 || ancestor <= 1) return false;
+    for (int depth = 0; depth < 64 && pid > 1; depth++) {
+        if (pid == ancestor) return true;
+        pid_t parent = 0;
+        if (hold_proc_parent_pid(pid, &parent) != 0 || parent == pid) return false;
+        pid = parent;
+    }
+    return false;
+}
+
 int hold_read_proc_exe(pid_t pid, uint64_t *dev, uint64_t *ino) {
     struct stat st;
 #if defined(__APPLE__)

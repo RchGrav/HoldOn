@@ -574,7 +574,9 @@ static void check_wait(struct broker *b, struct control_client *c, int64_t now) 
         return;
     }
     if (w->idle_ms) {
-        bool fresh = !w->has_since || b->output_seq > w->since;
+        /* Settled means drawn, then quiet: silence before the program's first
+         * output (or, with --since, before fresh output) never counts. */
+        bool fresh = w->has_since ? b->output_seq > w->since : b->output_seq > 0;
         if (fresh && now - quiet_since(b, w) >= (int64_t)w->idle_ms) {
             control_replyf(c, "ok reason=idle seq=%" PRIu64 "\n", b->output_seq);
             return;
@@ -589,7 +591,8 @@ static void check_wait(struct broker *b, struct control_client *c, int64_t now) 
 static int64_t wait_due_in(const struct broker *b, const struct control_client *c, int64_t now) {
     const struct wait_request *w = &c->wait;
     int64_t due = INT64_MAX;
-    if (w->idle_ms) due = quiet_since(b, w) + w->idle_ms - now;
+    bool fresh = w->has_since ? b->output_seq > w->since : b->output_seq > 0;
+    if (w->idle_ms && fresh) due = quiet_since(b, w) + w->idle_ms - now;
     if (w->deadline_ms && w->deadline_ms - now < due) due = w->deadline_ms - now;
     return due < 0 ? 0 : due;
 }
@@ -611,7 +614,8 @@ static int match_record_name(const char *id, const char *path, struct hold_run_r
 }
 
 /* Who is speaking: the claimed call (the sender's HOLD_CALL_ID, or a name)
- * is verified when the connecting process belongs to that call's session. */
+ * is verified when the connecting process belongs to that call's session or
+ * descends from its leader. */
 static bool verify_sender(const struct broker *b, pid_t peer, const char *claim, char *label, size_t n) {
     snprintf(label, n, "%s", claim);
     if (!b->store || peer <= 0) return false;
@@ -626,8 +630,11 @@ static bool verify_sender(const struct broker *b, pid_t peer, const char *claim,
     }
     if (hold_load_record_by_id(b->store->record_dir, id, &r, path, sizeof(path)) != 0) return false;
     if (r.has_name && r.name[0]) snprintf(label, n, "%s", r.name);
+    /* Same session as the call, or a descendant of its leader: agent
+     * harnesses (Claude Code among them) run each tool command in a new
+     * session, but it still descends from the harness the call launched. */
     pid_t peer_sid = getsid(peer);
-    bool ok = peer_sid > 0 && r.sid > 0 && peer_sid == r.sid;
+    bool ok = (peer_sid > 0 && r.sid > 0 && peer_sid == r.sid) || hold_pid_has_ancestor(peer, r.pid);
     hold_free_run_record(&r);
     return ok;
 }
