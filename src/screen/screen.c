@@ -313,6 +313,7 @@ int hold_screen_snapshot(const struct hold_screen *s, struct hold_snapshot *out)
             if (vc.attrs.strike) hc->attrs |= HOLD_ATTR_STRIKE;
             if (vc.attrs.blink) hc->attrs |= HOLD_ATTR_BLINK;
             if (vc.attrs.conceal) hc->attrs |= HOLD_ATTR_CONCEAL;
+            if (vc.attrs.dim) hc->attrs |= HOLD_ATTR_DIM;
             if (VTERM_COLOR_IS_DEFAULT_FG(&vc.fg)) hc->flags |= HOLD_CELL_FG_DEFAULT;
             if (VTERM_COLOR_IS_DEFAULT_BG(&vc.bg)) hc->flags |= HOLD_CELL_BG_DEFAULT;
             color_rgb(s->vs, vc.fg, hc->fg);
@@ -572,6 +573,7 @@ static int emit_pen(const struct hold_cell *c, char **buf, size_t *len, size_t *
     char sgr[96];
     int n = snprintf(sgr, sizeof(sgr), "\033[0");
     if (c->attrs & HOLD_ATTR_BOLD) n += snprintf(sgr + n, sizeof(sgr) - n, ";1");
+    if (c->attrs & HOLD_ATTR_DIM) n += snprintf(sgr + n, sizeof(sgr) - n, ";2");
     if (c->attrs & HOLD_ATTR_ITALIC) n += snprintf(sgr + n, sizeof(sgr) - n, ";3");
     if (c->attrs & HOLD_ATTR_UNDERLINE) n += snprintf(sgr + n, sizeof(sgr) - n, ";4");
     if (c->attrs & HOLD_ATTR_BLINK) n += snprintf(sgr + n, sizeof(sgr) - n, ";5");

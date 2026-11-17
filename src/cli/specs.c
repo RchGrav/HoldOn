@@ -70,7 +70,7 @@ static const char help_wait[] =
 static const char help_resize[] =
     "Resize a TTY call's terminal to <cols> <rows> (or <cols>x<rows>). The program receives SIGWINCH and the screen hold peek shows reflows with it.\n";
 static const char help_msg[] =
-    "Message another call, typically an agent harness running under Hold. The text is typed into its prompt as \"[msg from <you>; reply: hold msg <you> \\\"...\\\"] TEXT\" and submitted with Enter, after its screen has been quiet for --settle MS (default 1s; --now skips the wait; --timeout MS, default 60s, delivers anyway). <you> is your own call ($HOLD_CALL_NAME, set in every call), verified by the receiver; from outside any call the header is [msg via hold]. Multi-line text goes in as one bracketed paste when the program supports it. --no-enter types without submitting; --stdin reads the text from stdin. Delivery is capped at 20 messages a minute per receiver.\n";
+    "Message another call, typically an agent harness running under Hold. The text is typed into its prompt as \"[msg ID from <you>; reply: hold msg <you> \\\"...\\\"; verify: hold msg --received ID] TEXT\" and submitted with Enter, after its screen has been quiet for --settle MS (default 1s; --now skips the wait; --timeout MS, default 60s, delivers anyway). <you> is your own call ($HOLD_CALL_NAME, set in every call), verified by the receiver; from outside any call the header is [msg via hold]. Multi-line text goes in as one bracketed paste when the program supports it. --no-enter types without submitting; --stdin reads the text from stdin. Delivery is capped at 20 messages a minute per receiver. A header is only text, and anything can print one; hold msg --received ID (run inside the receiving call, or hold msg CALL --received ID) prints the sender and full text of the message hold delivered under that ID, and fails if there was none, so an agent can tell a real message from a forged header. hold msg [CALL] --received lists every message delivered to the call.\n";
 static const char help_attach[] =
     "Pick a running console/TTY call back up. Detach again with Ctrl-P Ctrl-Q. Start attachable calls with hold -it <cmd>. (console is an alias of attach.)\n";
 static const char help_purge[] =
@@ -122,7 +122,8 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"wait", NULL, 1, -1, 0,
      "usage: hold wait <target> [--idle [MS]] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]", NULL, help_wait},
     {"msg", NULL, 1, -1, 0,
-     "usage: hold msg <target> TEXT... [--stdin] [--now] [--settle MS] [--timeout MS] [--no-enter]", NULL, help_msg},
+     "usage: hold msg <target> TEXT... [--stdin] [--now] [--settle MS] [--timeout MS] [--no-enter]\n"
+     "       hold msg [<target>] --received [ID]", NULL, help_msg},
     {"resize", NULL, 1, 3, 0, "usage: hold resize <target> <cols> <rows>", NULL, help_resize},
     {"attach", NULL, 1, 1, 0, usage_attach, NULL, help_attach},
     {"console", "attach", 1, 1, 0, "usage: hold console <target>", usage_attach, help_attach},

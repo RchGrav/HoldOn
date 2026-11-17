@@ -325,6 +325,8 @@ static void draw_cell(struct fb *fb, const struct hold_snapshot *snap, int r, in
     int cw = 8 * s, ch = 16 * s;
     int span = cell->width == 2 && c + 1 < snap->cols ? 2 : 1;
     rgb fg = cell_fg(cell), bg = cell_bg(cell);
+    if (cell->attrs & HOLD_ATTR_DIM) /* faint: the foreground halfway to the background, as xterm draws it */
+        fg = (rgb){(uint8_t)((fg.r + bg.r + 1) / 2), (uint8_t)((fg.g + bg.g + 1) / 2), (uint8_t)((fg.b + bg.b + 1) / 2)};
     if (cell->attrs & HOLD_ATTR_REVERSE) {
         rgb t = fg;
         fg = bg;

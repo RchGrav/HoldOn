@@ -53,6 +53,25 @@ static void test_text_and_cursor(void) {
     hold_screen_free(s);
 }
 
+/* SGR 2 (faint) is tracked (a local libvterm patch): dim text such as shell
+ * autosuggestions must stay distinguishable from typed text. SGR 22 clears
+ * faint and bold together; SGR 0 clears it too. */
+static void test_dim_attribute(void) {
+    struct hold_screen *s = hold_screen_new(3, 20);
+    feed(s, "a\033[2mb\033[22mc\033[1;2md\033[22me\033[2mf\033[0mg");
+    struct hold_snapshot snap;
+    CHECK(hold_screen_snapshot(s, &snap) == 0, "snapshot");
+    const char *want = "-D-D-D"; /* a..f: dim on b, d, f */
+    for (int i = 0; i < 6; i++) {
+        bool dim = snap.cells[i].attrs & HOLD_ATTR_DIM;
+        CHECK(dim == (want[i] == 'D'), "cell %c dim=%d", 'a' + i, dim);
+    }
+    CHECK(!(snap.cells[6].attrs & HOLD_ATTR_DIM), "SGR 0 clears dim");
+    CHECK((snap.cells[3].attrs & HOLD_ATTR_BOLD) && !(snap.cells[4].attrs & HOLD_ATTR_BOLD), "SGR 22 clears bold too");
+    hold_snapshot_free(&snap);
+    hold_screen_free(s);
+}
+
 static void test_keys_follow_modes(void) {
     struct hold_screen *s = hold_screen_new(5, 20);
     char out[64];
@@ -195,6 +214,7 @@ static void test_resize_and_text_ruler(void) {
 
 int main(void) {
     test_text_and_cursor();
+    test_dim_attribute();
     test_keys_follow_modes();
     test_paste_and_mouse();
     test_query_reply();

@@ -22,6 +22,7 @@
 #define HOLD_ATTR_STRIKE 0x10u
 #define HOLD_ATTR_BLINK 0x20u
 #define HOLD_ATTR_CONCEAL 0x40u
+#define HOLD_ATTR_DIM 0x80u /* SGR 2 faint */
 
 #define HOLD_CELL_FG_DEFAULT 0x01u
 #define HOLD_CELL_BG_DEFAULT 0x02u

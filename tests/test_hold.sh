@@ -3580,6 +3580,7 @@ test_restart_unless_stopped() {
 test_msg_between_calls() {
   "$HOLD_BIN" -dt --name lead -- /bin/sh -c 'stty -echo; echo lead-ready; while IFS= read -r l; do printf "LEAD GOT: %s\n" "$l"; done' >/dev/null || return 1
   "$HOLD_BIN" wait lead --match lead-ready --timeout 5000 || return 1
+  "$HOLD_BIN" resize lead 200 24 || return 1 # headers stay on one line
   # The sender runs in a new session, as agent harnesses run tool commands:
   # verification must follow ancestry, not just the session.
   if command -v setsid >/dev/null 2>&1; then
@@ -3588,13 +3589,22 @@ test_msg_between_calls() {
     "$HOLD_BIN" -dt --name worker -- /bin/sh -c "\"$HOLD_REAL_BIN\" msg lead 'task done'; sleep 30" >/dev/null || return 1
   fi
   "$HOLD_BIN" wait lead --match 'LEAD GOT' --timeout 10000 || { "$HOLD_BIN" peek lead >&2; return 1; }
-  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg from worker; reply: hold msg worker "..."] task done' || { "$HOLD_BIN" peek lead >&2; return 1; }
+  "$HOLD_BIN" peek lead | grep -Eq '^LEAD GOT: \[msg [0-9a-f]{6} from worker; reply: hold msg worker "\.\.\."; verify: hold msg --received [0-9a-f]{6}\] task done$' || { "$HOLD_BIN" peek lead >&2; return 1; }
+  # The header is only text; --received is the check. The real id shows the
+  # verified sender and the full text; a made-up id fails.
+  local mid
+  mid=$("$HOLD_BIN" peek lead | sed -n 's/^LEAD GOT: \[msg \([0-9a-f]\{6\}\) from worker.*/\1/p' | head -1)
+  "$HOLD_BIN" msg lead --received "$mid" >"$TEST_ROOT/recv.out" || { echo "no record of delivered message $mid" >&2; return 1; }
+  grep -qx 'from: worker (verified)' "$TEST_ROOT/recv.out" && grep -qx 'task done' "$TEST_ROOT/recv.out" || { cat "$TEST_ROOT/recv.out" >&2; return 1; }
+  if "$HOLD_BIN" msg lead --received 000000 >/dev/null 2>&1; then echo "--received accepted an id hold never delivered" >&2; return 1; fi
+  HOLD_CALL_ID="$("$HOLD_BIN" inspect lead | sed -n 's/^  "id": "\(.*\)",$/\1/p')" "$HOLD_BIN" msg --received "$mid" | grep -qx 'task done' || { echo "--received without a target did not read the current call" >&2; return 1; }
   HOLD_CALL_ID= HOLD_CALL_NAME=worker "$HOLD_BIN" msg lead --now 'fake' || return 1
   "$HOLD_BIN" wait lead --match 'fake' --timeout 5000 || return 1
-  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg from worker (unverified)] fake' || return 1
+  "$HOLD_BIN" peek lead | grep -Eq '^LEAD GOT: \[msg [0-9a-f]{6} from worker \(unverified\); verify: hold msg --received [0-9a-f]{6}\] fake$' || { "$HOLD_BIN" peek lead >&2; return 1; }
+  "$HOLD_BIN" msg lead --received | grep -Eq '^[0-9a-f]{6} .* worker +unverified +fake$' || { "$HOLD_BIN" msg lead --received >&2; return 1; }
   env -u HOLD_CALL_ID -u HOLD_CALL_NAME "$HOLD_BIN" msg lead --now "$(printf 'two\nlines')" || return 1
   "$HOLD_BIN" wait lead --match 'two lines' --timeout 5000 || { "$HOLD_BIN" peek lead >&2; return 1; }
-  "$HOLD_BIN" peek lead | grep -qF 'LEAD GOT: [msg via hold] two lines' || return 1
+  "$HOLD_BIN" peek lead | grep -Eq '^LEAD GOT: \[msg [0-9a-f]{6} via hold; verify: hold msg --received [0-9a-f]{6}\] two lines$' || { "$HOLD_BIN" peek lead >&2; return 1; }
   "$HOLD_BIN" end lead worker >/dev/null 2>&1 || true
 }
 
@@ -3952,8 +3962,8 @@ test_msg_settle_flag() {
   sleep 0.3
   env -u HOLD_CALL_ID -u HOLD_CALL_NAME "$HOLD_BIN" msg rx "one" --settle 150 || return 1
   env -u HOLD_CALL_ID -u HOLD_CALL_NAME "$HOLD_BIN" msg rx --settle=150 "two" || return 1
-  "$HOLD_BIN" wait rx --match '[msg via hold] two]' --timeout 5000 || { "$HOLD_BIN" peek rx >&2; return 1; }
-  "$HOLD_BIN" peek rx | grep -qx 'GOT\[\[msg via hold\] one\]' || { "$HOLD_BIN" peek rx >&2; return 1; }
+  "$HOLD_BIN" wait rx --regex 'via hold; verify: hold msg --received [0-9a-f]{6}\] two\]' --timeout 5000 || { "$HOLD_BIN" peek rx >&2; return 1; }
+  "$HOLD_BIN" peek rx | grep -Eqx 'GOT\[\[msg [0-9a-f]{6} via hold; verify: hold msg --received [0-9a-f]{6}\] one\]' || { "$HOLD_BIN" peek rx >&2; return 1; }
   "$HOLD_BIN" end rx >/dev/null 2>&1 || true
 }
 

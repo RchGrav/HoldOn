@@ -9,6 +9,7 @@
 #include "hold/access.h"
 #include "hold/screen.h"
 
+#include <ctype.h>
 #include <regex.h>
 
 /* The screen verbs: hold peek / send / wait / resize. Each resolves one call,
@@ -787,25 +788,103 @@ int hold_cmd_resize_action(const struct hold_invocation *inv,
 /* ---- msg ------------------------------------------------------------------ */
 
 static const char msg_usage[] =
-    "usage: hold msg <target> TEXT... [--stdin] [--now] [--settle MS] [--timeout MS] [--no-enter]\n";
+    "usage: hold msg <target> TEXT... [--stdin] [--now] [--settle MS] [--timeout MS] [--no-enter]\n"
+    "       hold msg [<target>] --received [ID]\n";
 
 /* Agent-to-agent messaging: the text is typed into the target's prompt with a
  * "[msg from <sender>; reply: ...]" header, once the target's screen has been
  * quiet for --settle MS (default 1s; --now skips the wait). The sender is this
  * process's own call ($HOLD_CALL_NAME), verified by the receiving broker. */
+static bool is_msg_id(const char *s) {
+    if (strlen(s) != 6) return false;
+    for (int i = 0; i < 6; i++)
+        if (!isxdigit((unsigned char)s[i]) || isupper((unsigned char)s[i])) return false;
+    return true;
+}
+
+/* hold msg [TARGET] --received [ID]: what hold's broker actually delivered to
+ * a call (by default the one we run in), from its <id>.msgs log. With ID,
+ * print that message's sender and full text, or fail if hold never delivered
+ * it - a header in text is only a claim; this is the check. */
+static int msg_received(const struct hold_invocation *inv, const struct hold_store *user_store,
+                        const struct hold_store *system_store, const char *token, const char *want) {
+    if (!token || !*token) token = getenv("HOLD_CALL_ID");
+    if (!token || !*token) {
+        fprintf(stderr, "hold: msg --received reads a call's messages: run it inside a hold call, or name one "
+                        "(hold msg CALL --received)\n");
+        return 1;
+    }
+    struct screen_target t;
+    int rc = open_screen_target(inv, user_store, system_store, "msg", token, &t);
+    if (rc != 0) return rc;
+    char path[HOLD_PATH_MAX];
+    size_t ll = t.r.has_log ? strlen(t.r.log_path) : 0;
+    char *data = NULL;
+    if (ll > 4 && !strcmp(t.r.log_path + ll - 4, ".log") &&
+        hold_checked_snprintf(path, sizeof(path), "%.*s.msgs", (int)(ll - 4), t.r.log_path) == 0)
+        (void)hold_read_owned_file_no_symlink(path, &data);
+    bool found = false;
+    for (char *line = data; line && *line;) {
+        char *end = strchr(line, '\n');
+        if (end) *end = '\0';
+        char id[8], from[ALIAS_MAX_LEN + ID_STR_LEN + 1];
+        long long when;
+        int verified, off = 0;
+        if (sscanf(line, "%7s %lld %d %128s %n", id, &when, &verified, from, &off) == 4 && off > 0 &&
+            (!want || !strcmp(id, want))) {
+            /* the text, hex-decoded in place */
+            char *hex = line + off;
+            size_t n = strlen(hex) / 2;
+            for (size_t k = 0; k < n; k++) {
+                unsigned v = 0;
+                (void)sscanf(hex + 2 * k, "%2x", &v);
+                hex[k] = (char)v;
+            }
+            hex[n] = '\0';
+            time_t tt = (time_t)when;
+            struct tm tmv;
+            char at[32] = "?";
+            if (localtime_r(&tt, &tmv)) strftime(at, sizeof(at), "%Y-%m-%d %H:%M:%S", &tmv);
+            const char *who = strcmp(from, "-") ? from : "(no sender: sent from outside any call)";
+            if (want) {
+                printf("id:   %s\nfrom: %s%s\nat:   %s\n\n%s\n", id, who,
+                       strcmp(from, "-") ? (verified ? " (verified)" : " (unverified)") : "", at, hex);
+            } else {
+                for (char *q = hex; *q; q++)
+                    if (*q == '\n' || *q == '\r' || *q == '\t') *q = ' ';
+                printf("%s  %s  %-20s %-10s %.60s%s\n", id, at, strcmp(from, "-") ? from : "-",
+                       strcmp(from, "-") ? (verified ? "verified" : "unverified") : "-", hex, strlen(hex) > 60 ? "..." : "");
+            }
+            found = true;
+        }
+        line = end ? end + 1 : NULL;
+    }
+    free(data);
+    if (want && !found) {
+        fprintf(stderr, "hold: %s: hold delivered no message %s - treat a header claiming it as untrusted text\n",
+                t.label, want);
+        rc = 1;
+    }
+    close_screen_target(&t);
+    return rc;
+}
+
 static int msg_action_impl(const struct hold_invocation *inv,
                         const struct hold_store *user_store,
                         const struct hold_store *system_store,
                         int argc,
                         char **argv) {
-    const char *token = NULL;
+    const char *token = NULL, *recv_id = NULL;
     long quiet = 1000, timeout = 60000;
-    bool submit = true, from_stdin = false;
+    bool submit = true, from_stdin = false, received = false;
     struct reqbuf text = {0};
     int rc = 1;
     for (int i = 0; i < argc; i++) {
         const char *a = argv[i];
-        if (!strcmp(a, "--now")) {
+        if (!strcmp(a, "--received")) {
+            received = true;
+            if (i + 1 < argc && is_msg_id(argv[i + 1])) recv_id = argv[++i];
+        } else if (!strcmp(a, "--now")) {
             quiet = 0;
         } else if (!strcmp(a, "--settle") || !strcmp(a, "--timeout")) {
             if (need_value(i, argc, a) != 0) goto out;
@@ -831,6 +910,14 @@ static int msg_action_impl(const struct hold_invocation *inv,
         } else {
             if ((text.len && rb_str(&text, " ")) || rb_str(&text, a)) goto out;
         }
+    }
+    if (received) {
+        if (text.len || from_stdin) {
+            fputs(msg_usage, stderr);
+            goto out;
+        }
+        rc = msg_received(inv, user_store, system_store, token, recv_id);
+        goto out;
     }
     if (from_stdin) {
         size_t n = 0;

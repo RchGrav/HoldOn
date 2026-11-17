@@ -62,6 +62,21 @@
 - Objects now also depend on the Makefile, so objects built before header
   tracking (or with different rules) rebuild once.
 
+- Dim text (SGR 2, faint) was drawn at full brightness: libvterm 0.3.3
+  ignores it, so shell autosuggestions looked typed. A small local libvterm
+  patch tracks it (see `third_party/libvterm/README.md`); screenshots draw it
+  faint and an attached terminal's repaint keeps it.
+
+### Added
+
+- Verifiable messages: every `hold msg` gets an ID, shown in the header
+  (`[msg ID from X; reply: ...; verify: hold msg --received ID]`). The
+  receiving broker logs what it delivered; `hold msg --received ID` (inside
+  the receiving call, or `hold msg CALL --received ID`) prints the sender and
+  full text, or fails if hold never delivered that ID, so an agent can tell
+  a real message from text that only looks like one.
+- README: "Found with hold".
+
 ### Changed
 
 - `hold wait --idle` takes an optional value: a bare `--idle` means 500 ms,

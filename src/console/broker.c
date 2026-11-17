@@ -94,6 +94,7 @@ struct broker {
     } msgs[BROKER_MAX_MSGS];
     int64_t sent_ms[BROKER_MSG_RATE];
     int sent_idx;
+    uint32_t msg_count; /* feeds each message's id */
 };
 
 static void broker_cleanup_and_exit(struct broker *b, int exit_code) {
@@ -720,15 +721,73 @@ static void handle_msg(struct broker *b, struct control_client *c, const char *a
     c->phase = CTL_MSG;
 }
 
+/* A short id per delivered message: the first 6 hex digits of a hash of the
+ * call, the time, a counter, and the text (unique within one call's log). */
+static void make_msg_id(struct broker *b, const struct pending_msg *m, char out[7]) {
+    struct sha256_ctx h;
+    unsigned char d[32];
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    uint32_t n = ++b->msg_count;
+    hold_sha256_init(&h);
+    if (b->run_id) hold_sha256_update(&h, b->run_id, strlen(b->run_id));
+    hold_sha256_update(&h, &ts, sizeof(ts));
+    hold_sha256_update(&h, &n, sizeof(n));
+    hold_sha256_update(&h, m->text, m->len);
+    hold_sha256_final(&h, d);
+    snprintf(out, 7, "%02x%02x%02x", d[0], d[1], d[2]);
+}
+
+/* <id>.msgs beside <id>.log: one line per delivered message, "ID UNIXTIME
+ * VERIFIED SENDER HEXTEXT", so the receiver can tell a message hold
+ * delivered (hold msg --received ID) from text that only looks like one. */
+static void record_received(const struct broker *b, const char *id, bool verified, const char *label,
+                            const char *text, size_t len) {
+    size_t ll = b->log_path ? strlen(b->log_path) : 0;
+    if (ll < 5 || strcmp(b->log_path + ll - 4, ".log") != 0) return;
+    char path[HOLD_PATH_MAX];
+    if (hold_checked_snprintf(path, sizeof(path), "%.*s.msgs", (int)(ll - 4), b->log_path) != 0) return;
+    char head[ALIAS_MAX_LEN + ID_STR_LEN + 64];
+    int hn = snprintf(head, sizeof(head), "%s %lld %d %s ", id, (long long)time(NULL), verified ? 1 : 0,
+                      label && *label ? label : "-");
+    char *line = malloc((size_t)hn + 2 * len + 2);
+    if (!line || hn < 0) {
+        free(line);
+        return;
+    }
+    memcpy(line, head, (size_t)hn);
+    static const char hx[] = "0123456789abcdef";
+    size_t o = (size_t)hn;
+    for (size_t i = 0; i < len; i++) {
+        line[o++] = hx[(unsigned char)text[i] >> 4];
+        line[o++] = hx[(unsigned char)text[i] & 15];
+    }
+    line[o++] = '\n';
+    int fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd >= 0) {
+        (void)hold_write_all(fd, line, o); /* one O_APPEND write per message */
+        close(fd);
+    }
+    free(line);
+}
+
 /* Type a queued message: bracketed paste when the program asked for it, else
- * newlines flattened so it cannot submit early; then Enter. */
+ * newlines flattened so it cannot submit early; then Enter. The header names
+ * the sender, how to reply, and how to check it was really delivered. */
 static void deliver_msg(struct broker *b, struct pending_msg *m, int verdict, const char *label) {
-    char header[320] = "[msg via hold] ";
+    char id[7], header[400];
+    make_msg_id(b, m, id);
     m->verified = verdict == 1;
     if (m->has_claim && verdict == 1)
-        snprintf(header, sizeof(header), "[msg from %.100s; reply: hold msg %.100s \"...\"] ", label, label);
+        snprintf(header, sizeof(header),
+                 "[msg %s from %.100s; reply: hold msg %.100s \"...\"; verify: hold msg --received %s] ", id, label,
+                 label, id);
     else if (m->has_claim)
-        snprintf(header, sizeof(header), "[msg from %.100s (unverified)] ", label);
+        snprintf(header, sizeof(header), "[msg %s from %.100s (unverified); verify: hold msg --received %s] ", id,
+                 label, id);
+    else
+        snprintf(header, sizeof(header), "[msg %s via hold; verify: hold msg --received %s] ", id, id);
+    record_received(b, id, m->verified, m->has_claim ? label : "", m->text, m->len);
     size_t hl = strlen(header);
     char *full = malloc(hl + m->len + 1);
     if (!full) return;
@@ -749,7 +808,7 @@ static void deliver_msg(struct broker *b, struct pending_msg *m, int verdict, co
     if (m->submit) (void)hold_write_all(b->master, "\r", 1);
     struct control_client *w = m->waiter;
     if (w && w->fd >= 0 && w->gen == m->waiter_gen && w->phase == CTL_MSG)
-        control_replyf(w, "ok delivered verified=%d\n", m->verified ? 1 : 0);
+        control_replyf(w, "ok delivered verified=%d id=%s\n", m->verified ? 1 : 0, id);
     free(m->text);
     memset(m, 0, sizeof(*m));
 }
