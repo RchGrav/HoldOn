@@ -186,13 +186,16 @@ static bool draw_procedural(struct fb *fb, int x, int y, int cw, int ch, int s, 
         return true;
     }
     if (cp >= 0x2800 && cp <= 0x28ff) {
+        /* A 2x4 grid: each dot centred in its half-width column and
+         * quarter-height row, so neighbouring dots never touch. */
         static const int dot_col[8] = {0, 0, 0, 1, 1, 1, 0, 1};
         static const int dot_row[8] = {0, 1, 2, 0, 1, 2, 3, 3};
         int d = cw / 4 > 0 ? cw / 4 : 1;
+        int colw = cw / 2, rowh = ch / 4;
         for (int b = 0; b < 8; b++) {
             if (!((cp - 0x2800) & (1u << b))) continue;
-            int dx = x + (dot_col[b] ? cw - cw / 4 - d : cw / 4);
-            int dy = y + ch / 8 + dot_row[b] * (ch / 4) + (ch / 8 - d) / 2;
+            int dx = x + dot_col[b] * colw + (colw - d) / 2;
+            int dy = y + dot_row[b] * rowh + (rowh - d) / 2;
             fill(fb, dx, dy, d, d, fg);
         }
         return true;

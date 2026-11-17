@@ -76,6 +76,8 @@ struct broker {
     uint16_t mouse_row, mouse_col;
     bool target_done;
     int target_status;
+    unsigned char *last_alt; /* HSNAP1 of the last full-screen frame left */
+    size_t last_alt_len;
     uint64_t next_gen;
     struct pending_msg {
         bool used;
@@ -109,6 +111,7 @@ static void broker_cleanup_and_exit(struct broker *b, int exit_code) {
     if (b->logfd >= 0) close(b->logfd);
     if (b->sock_path && *b->sock_path) unlink(b->sock_path);
     hold_screen_free(b->screen);
+    free(b->last_alt);
     _exit(exit_code);
 }
 
@@ -404,7 +407,16 @@ static const char *kv_get(const char *line, const char *key) {
     return NULL;
 }
 
-static void handle_peek(struct broker *b, struct control_client *c) {
+static void handle_peek(struct broker *b, struct control_client *c, const char *args) {
+    const char *alt = strstr(args, "alt=1");
+    if (alt) {
+        if (!b->last_alt) {
+            control_replyf(c, "error the program has not left a full-screen (alternate) screen yet\n");
+            return;
+        }
+        control_reply(c, "ok\n", b->last_alt, b->last_alt_len);
+        return;
+    }
     struct hold_snapshot snap;
     unsigned char *blob = NULL;
     size_t blob_len = 0;
@@ -780,7 +792,7 @@ static void dispatch_control(struct broker *b, struct control_client *c) {
     char *args = strchr(req, ' ');
     if (args) *args++ = '\0';
     else args = req + strlen(req);
-    if (!strcmp(req, "peek")) handle_peek(b, c);
+    if (!strcmp(req, "peek")) handle_peek(b, c, args);
     else if (!strcmp(req, "send")) handle_send(b, c, rest);
     else if (!strcmp(req, "resize")) handle_resize(b, c, args);
     else if (!strcmp(req, "msg")) handle_msg(b, c, args, rest);
@@ -828,30 +840,80 @@ static void read_control(struct broker *b, struct control_client *c) {
     dispatch_control(b, c);
 }
 
+/* ---- the last full-screen frame -------------------------------------------- */
+
+/* Full-screen programs (vim, less, htop) draw on the alternate screen and
+ * switch back when they exit, which leaves the normal screen showing nothing
+ * of what they displayed. Before the switch-back takes effect, keep that
+ * frame: feed up to the leave sequence, snapshot, feed the rest. Best effort
+ * (a leave sequence split across reads is fed whole). */
+static const char *find_alt_leave(const char *buf, size_t n) {
+    static const char *const seqs[] = {"\033[?1049l", "\033[?1047l", "\033[?47l"};
+    const char *first = NULL;
+    for (size_t i = 0; i < sizeof(seqs) / sizeof(seqs[0]); i++) {
+        const char *hit = memmem(buf, n, seqs[i], strlen(seqs[i]));
+        if (hit && (!first || hit < first)) first = hit;
+    }
+    return first;
+}
+
+static void keep_alt_frame(struct broker *b) {
+    struct hold_snapshot snap;
+    unsigned char *blob = NULL;
+    size_t len = 0;
+    if (take_snapshot(b, &snap) != 0) return;
+    int rc = hold_snapshot_serialize(&snap, &blob, &len);
+    hold_snapshot_free(&snap);
+    if (rc != 0) return;
+    free(b->last_alt);
+    b->last_alt = blob;
+    b->last_alt_len = len;
+}
+
+static void feed_screen(struct broker *b, const char *buf, size_t n) {
+    struct hold_screen_modes modes;
+    hold_screen_modes(b->screen, &modes);
+    const char *leave = modes.alt_screen ? find_alt_leave(buf, n) : NULL;
+    if (!leave) {
+        hold_screen_feed(b->screen, buf, n);
+        return;
+    }
+    size_t head = (size_t)(leave - buf);
+    hold_screen_feed(b->screen, buf, head);
+    hold_screen_modes(b->screen, &modes);
+    if (modes.alt_screen) keep_alt_frame(b);
+    hold_screen_feed(b->screen, buf + head, n - head);
+}
+
 /* ---- the final frame ----------------------------------------------------- */
 
-/* <id>.screen beside <id>.log: the last screen, for hold peek after exit. */
-static void write_final_screen(struct broker *b) {
+static void write_beside_log(const struct broker *b, const char *suffix, const unsigned char *blob, size_t len) {
     size_t ll = b->log_path ? strlen(b->log_path) : 0;
     if (ll < 5 || strcmp(b->log_path + ll - 4, ".log") != 0) return;
     char path[HOLD_PATH_MAX], tmp[HOLD_PATH_MAX];
-    if (hold_checked_snprintf(path, sizeof(path), "%.*s.screen", (int)(ll - 4), b->log_path) != 0 ||
+    if (hold_checked_snprintf(path, sizeof(path), "%.*s%s", (int)(ll - 4), b->log_path, suffix) != 0 ||
         hold_checked_snprintf(tmp, sizeof(tmp), "%s.tmp.%ld", path, (long)getpid()) != 0)
         return;
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd >= 0) {
+        bool ok = hold_write_all(fd, blob, len) == 0;
+        if (close(fd) != 0) ok = false;
+        if (!ok || rename(tmp, path) != 0) unlink(tmp);
+    }
+}
+
+/* <id>.screen beside <id>.log: the last screen, for hold peek after exit;
+ * <id>.altscreen: the last full-screen frame, for hold peek --last-alt. */
+static void write_final_screen(struct broker *b) {
     struct hold_snapshot snap;
     unsigned char *blob = NULL;
     size_t blob_len = 0;
     if (take_snapshot(b, &snap) != 0) return;
     int rc = hold_snapshot_serialize(&snap, &blob, &blob_len);
     hold_snapshot_free(&snap);
-    if (rc != 0) return;
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
-    if (fd >= 0) {
-        bool ok = hold_write_all(fd, blob, blob_len) == 0;
-        if (close(fd) != 0) ok = false;
-        if (!ok || rename(tmp, path) != 0) unlink(tmp);
-    }
+    if (rc == 0) write_beside_log(b, ".screen", blob, blob_len);
     free(blob);
+    if (b->last_alt) write_beside_log(b, ".altscreen", b->last_alt, b->last_alt_len);
 }
 
 /* ---- the one serve loop ------------------------------------------------- */
@@ -1045,7 +1107,7 @@ static void broker_serve(struct broker *b) {
             if (n > 0) {
                 b->output_seq += (uint64_t)n;
                 b->last_output_ms = now_ms();
-                hold_screen_feed(b->screen, buf, (size_t)n);
+                feed_screen(b, buf, (size_t)n);
                 if (cl.fd >= 0) hold_screen_discard_output(b->screen);
                 else flush_screen_output(b);
                 /* Before the repaint, the client gets nothing: the repaint

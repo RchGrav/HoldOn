@@ -17,6 +17,7 @@
 
 #define WAIT_EXIT_TIMEOUT 7
 #define WAIT_EXIT_ENDED 8
+#define SEND_EXIT_MOUSE_OFF 9 /* the program has mouse reporting off */
 
 struct screen_target {
     struct hold_resolved_target target;
@@ -71,9 +72,9 @@ static int reply_error(const struct screen_target *t, const unsigned char *reply
     return 1;
 }
 
-static int read_saved_screen(const struct screen_target *t, struct hold_snapshot *snap) {
+static int read_saved_frame(const struct screen_target *t, const char *suffix, struct hold_snapshot *snap) {
     char path[HOLD_PATH_MAX];
-    if (hold_checked_snprintf(path, sizeof(path), "%s/%s.screen", t->target.store.log_dir, t->r.id) != 0) return -1;
+    if (hold_checked_snprintf(path, sizeof(path), "%s/%s%s", t->target.store.log_dir, t->r.id, suffix) != 0) return -1;
     char *buf = NULL;
     if (hold_read_owned_file_no_symlink(path, &buf) != 0 || !buf) return -1;
     /* read_owned_file NUL-terminates; the snapshot is binary, so take its size. */
@@ -83,13 +84,19 @@ static int read_saved_screen(const struct screen_target *t, struct hold_snapshot
     return rc;
 }
 
-/* Live screen from the broker, else the saved final frame. */
-static int load_snapshot(const struct screen_target *t, struct hold_snapshot *snap) {
+static int read_saved_screen(const struct screen_target *t, struct hold_snapshot *snap) {
+    return read_saved_frame(t, ".screen", snap);
+}
+
+/* Live screen from the broker, else the saved final frame. With last_alt,
+ * the last full-screen (alternate) frame the program left instead. */
+static int load_snapshot(const struct screen_target *t, struct hold_snapshot *snap, bool last_alt) {
     if (!t->r.has_console) return no_screen(t);
     if (t->st == STATE_RUNNING) {
         unsigned char *reply = NULL;
         size_t len = 0;
-        if (hold_console_request(t->r.console_sock, "peek", 4, &reply, &len) == 0) {
+        const char *req = last_alt ? "peek alt=1" : "peek";
+        if (hold_console_request(t->r.console_sock, req, strlen(req), &reply, &len) == 0) {
             int rc = 0;
             if (len >= 3 && !memcmp(reply, "ok\n", 3)) {
                 if (hold_snapshot_parse(reply + 3, len - 3, snap) != 0) {
@@ -104,7 +111,20 @@ static int load_snapshot(const struct screen_target *t, struct hold_snapshot *sn
         }
         /* The call may have just ended: fall through to the saved frame. */
     }
-    if (read_saved_screen(t, snap) == 0) return 0;
+    if (last_alt) {
+        if (read_saved_frame(t, ".altscreen", snap) == 0) return 0;
+        fprintf(stderr, "hold: %s left no full-screen (alternate) frame\n", t->label);
+        return 5;
+    }
+    if (read_saved_screen(t, snap) == 0) {
+        struct hold_snapshot alt;
+        if (read_saved_frame(t, ".altscreen", &alt) == 0) {
+            hold_snapshot_free(&alt);
+            fprintf(stderr, "hold: note: %s's last full-screen frame is shown by hold peek %s --last-alt\n",
+                    t->label, t->label);
+        }
+        return 0;
+    }
     fprintf(stderr, "hold: %s has ended and left no saved screen - see 'hold logs %s'\n", t->label, t->label);
     return 5;
 }
@@ -130,6 +150,29 @@ static int need_value(int i, int argc, const char *flag) {
         return -1;
     }
     return 0;
+}
+
+/* "--flag=value" -> "--flag" "value" for the screen verbs' value flags, so
+ * both spellings work. Returns a new argv (caller frees the array only). */
+static char **split_eq_flags(int argc, char **argv, int *out_argc) {
+    char **out = calloc((size_t)argc * 2 + 1, sizeof(*out));
+    int n = 0;
+    if (!out) {
+        *out_argc = argc;
+        return NULL;
+    }
+    for (int i = 0; i < argc; i++) {
+        char *eq = (argv[i][0] == '-' && argv[i][1] == '-') ? strchr(argv[i], '=') : NULL;
+        if (eq && eq > argv[i] + 2) {
+            *eq = '\0'; /* argv strings are writable */
+            out[n++] = argv[i];
+            out[n++] = eq + 1;
+        } else {
+            out[n++] = argv[i];
+        }
+    }
+    *out_argc = n;
+    return out;
 }
 
 /* ---- peek ----------------------------------------------------------------- */
@@ -187,21 +230,22 @@ static void write_peek_json(const struct screen_target *t, const struct hold_sna
 }
 
 static const char peek_usage[] =
-    "usage: hold peek <target> [--json] [--ruler] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]\n";
+    "usage: hold peek <target> [--json] [--ruler] [--last-alt] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]\n";
 
-int hold_cmd_peek_action(const struct hold_invocation *inv,
+static int peek_action_impl(const struct hold_invocation *inv,
                          const struct hold_store *user_store,
                          const struct hold_store *system_store,
                          int argc,
                          char **argv) {
     const char *token = NULL, *image = NULL;
-    bool json = false, text_ruler = false, want_text = false;
+    bool json = false, text_ruler = false, want_text = false, last_alt = false;
     struct hold_render_options ro;
     hold_render_options_init(&ro);
     for (int i = 0; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "--json")) json = true;
         else if (!strcmp(a, "--text")) want_text = true;
+        else if (!strcmp(a, "--last-alt")) last_alt = true;
         else if (!strcmp(a, "--ruler")) text_ruler = true, ro.ruler = true;
         else if (!strcmp(a, "--no-ruler")) ro.ruler = false;
         else if (!strcmp(a, "--cursor-ring")) ro.cursor_ring = true;
@@ -237,7 +281,7 @@ int hold_cmd_peek_action(const struct hold_invocation *inv,
     int rc = open_screen_target(inv, user_store, system_store, "peek", token, &t);
     if (rc != 0) return rc;
     struct hold_snapshot snap;
-    rc = load_snapshot(&t, &snap);
+    rc = load_snapshot(&t, &snap, last_alt);
     if (rc != 0) {
         close_screen_target(&t);
         return rc;
@@ -320,7 +364,7 @@ static const char send_usage[] =
 
 static int run_wait(const struct screen_target *t, const char *args, bool print_exit);
 
-int hold_cmd_send_action(const struct hold_invocation *inv,
+static int send_action_impl(const struct hold_invocation *inv,
                          const struct hold_store *user_store,
                          const struct hold_store *system_store,
                          int argc,
@@ -440,8 +484,9 @@ int hold_cmd_send_action(const struct hold_invocation *inv,
         } else if (rc == 0) {
             const char *seq = strstr((char *)reply, "seq=");
             unsigned long long sv = seq ? strtoull(seq + 4, NULL, 10) : 0;
-            if (mouse_op && strstr((char *)reply, "mouse=off"))
-                fprintf(stderr, "hold: note: %s has mouse reporting off; the mouse event was not delivered\n", t.label);
+            bool mouse_off = mouse_op && strstr((char *)reply, "mouse=off");
+            if (mouse_off)
+                fprintf(stderr, "hold: %s has mouse reporting off; the mouse event was not delivered\n", t.label);
             if (mouse_op && strstr((char *)reply, "mouse=clamped"))
                 fprintf(stderr, "hold: note: %s uses the legacy mouse encoding, which cannot reach past column/row 222; "
                                 "the event landed at the edge\n", t.label);
@@ -451,6 +496,8 @@ int hold_cmd_send_action(const struct hold_invocation *inv,
                 snprintf(args, sizeof(args), "wait idle=%ld since=%llu timeout=%ld", wait_ms ? wait_ms : 1, sv, timeout_ms);
                 rc = run_wait(&t, args, false);
             }
+            /* An undelivered mouse event is a failed step for a script. */
+            if (mouse_off && rc == 0) rc = SEND_EXIT_MOUSE_OFF;
         }
         free(reply);
     }
@@ -523,7 +570,7 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
 static const char wait_usage[] =
     "usage: hold wait <target> [--idle MS] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]\n";
 
-int hold_cmd_wait_action(const struct hold_invocation *inv,
+static int wait_action_impl(const struct hold_invocation *inv,
                          const struct hold_store *user_store,
                          const struct hold_store *system_store,
                          int argc,
@@ -690,13 +737,13 @@ int hold_cmd_resize_action(const struct hold_invocation *inv,
 /* ---- msg ------------------------------------------------------------------ */
 
 static const char msg_usage[] =
-    "usage: hold msg <target> TEXT... [--stdin] [--now] [--quiet MS] [--timeout MS] [--no-enter]\n";
+    "usage: hold msg <target> TEXT... [--stdin] [--now] [--settle MS] [--timeout MS] [--no-enter]\n";
 
 /* Agent-to-agent messaging: the text is typed into the target's prompt with a
  * "[msg from <sender>; reply: ...]" header, once the target's screen has been
- * quiet for --quiet (default 1s; --now skips the wait). The sender is this
+ * quiet for --settle MS (default 1s; --now skips the wait). The sender is this
  * process's own call ($HOLD_CALL_NAME), verified by the receiving broker. */
-int hold_cmd_msg_action(const struct hold_invocation *inv,
+static int msg_action_impl(const struct hold_invocation *inv,
                         const struct hold_store *user_store,
                         const struct hold_store *system_store,
                         int argc,
@@ -710,14 +757,14 @@ int hold_cmd_msg_action(const struct hold_invocation *inv,
         const char *a = argv[i];
         if (!strcmp(a, "--now")) {
             quiet = 0;
-        } else if (!strcmp(a, "--quiet") || !strcmp(a, "--timeout")) {
+        } else if (!strcmp(a, "--settle") || !strcmp(a, "--timeout")) {
             if (need_value(i, argc, a) != 0) goto out;
             long v = parse_duration_ms(argv[++i]);
             if (v < 0) {
                 fprintf(stderr, "hold: error: bad duration '%s'\n", argv[i]);
                 goto out;
             }
-            if (a[2] == 'q') quiet = v;
+            if (a[2] == 's') quiet = v;
             else timeout = v;
         } else if (!strcmp(a, "--no-enter")) {
             submit = false;
@@ -779,3 +826,22 @@ out:
     free(text.p);
     return rc;
 }
+
+/* ---- entry points: accept --flag=value as well as --flag value ------------ */
+
+#define SCREEN_VERB_ENTRY(verb)                                                              \
+    int hold_cmd_##verb##_action(const struct hold_invocation *inv,                          \
+                                 const struct hold_store *user_store,                        \
+                                 const struct hold_store *system_store, int argc, char **argv) { \
+        int n = 0;                                                                           \
+        char **split = split_eq_flags(argc, argv, &n);                                       \
+        int rc = verb##_action_impl(inv, user_store, system_store, split ? n : argc,         \
+                                    split ? split : argv);                                   \
+        free(split);                                                                         \
+        return rc;                                                                           \
+    }
+
+SCREEN_VERB_ENTRY(peek)
+SCREEN_VERB_ENTRY(send)
+SCREEN_VERB_ENTRY(wait)
+SCREEN_VERB_ENTRY(msg)

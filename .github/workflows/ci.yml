@@ -35,6 +35,17 @@ jobs:
       - name: Run the suite as a non-root user that sudo-elevates per test (skips are failures)
         run: bash scripts/test_root.sh
 
+  root-runner:
+    name: Linux root-runner lane (suite run as root)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the TUIs the screen tests drive
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tmux whiptail vim-tiny
+      - name: Build and run the suite as root (it acts as a throwaway user per test)
+        run: sudo env PATH="$PATH" make test CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
+
   macos-runtime:
     name: macOS runtime test (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}

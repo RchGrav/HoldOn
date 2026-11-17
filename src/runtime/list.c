@@ -441,6 +441,8 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
     char screen_path[HOLD_PATH_MAX];
     if (hold_checked_snprintf(screen_path, sizeof(screen_path), "%s/%s.screen", store->log_dir, r->id) == 0)
         unlink(screen_path);
+    if (hold_checked_snprintf(screen_path, sizeof(screen_path), "%s/%s.altscreen", store->log_dir, r->id) == 0)
+        unlink(screen_path);
     if (hold_format_console_sock_path(store, r->id, sock_path, sizeof(sock_path)) == 0) {
         if (r->has_console && strcmp(r->console_sock, sock_path) != 0)
             fprintf(stderr, "hold: warning: record %s names a console socket outside the store; left untouched: %s\n", r->id, r->console_sock);
@@ -565,6 +567,7 @@ static int cmd_prune_store_all(const struct hold_store *store, bool include_stal
     hold_for_each_record(store->record_dir, prune_record_cb, &w);
     sweep_orphaned_artifacts(store, store->log_dir, ".log", stats);
     sweep_orphaned_artifacts(store, store->log_dir, ".screen", stats);
+    sweep_orphaned_artifacts(store, store->log_dir, ".altscreen", stats);
     sweep_orphaned_artifacts(store, store->console_dir, ".sock", stats);
     sweep_orphaned_artifacts(store, store->public_dir, ".json", stats);
     sweep_tmp_litter(store->record_dir);

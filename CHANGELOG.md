@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.8.1 - Review fixes — 2026-11-17
+
+### Fixed
+
+- `hold msg TARGET TEXT --quiet MS` lost its option to hold's global
+  `--quiet` flag (the number became part of the message). The option is now
+  `--settle MS`; value flags of `peek`, `send`, `wait`, and `msg` also accept
+  `--flag=value`.
+- `peek --image` drew Braille dots in adjacent columns that touched (U+283F
+  looked like three bars); each dot now sits centered in its column.
+- Running the test suite as root: the screen tests wrote into root-owned
+  scratch folders as the unprivileged test user. They now use a folder that
+  user owns, and CI gains a root-runner lane.
+- A static glibc build no longer links `getpwuid` (it cannot load NSS and the
+  linker warned); it reads `/etc/passwd`. Dynamic builds and macOS still use
+  the system account database.
+
+### Changed
+
+- `hold send --mouse` exits 9 when the program has mouse reporting off, so a
+  script can tell the event was not delivered.
+- `peen` is simply an undocumented alias for `peek`.
+
+### Added
+
+- `hold peek --last-alt`: the last full-screen (alternate-screen) frame a
+  program like vim, less, or htop displayed before switching back; live, and
+  after exit from `<id>.altscreen`. `hold peek` on an ended call points at it.
+- The README states that a verified `msg` header proves the sender, not that
+  the message is safe to act on.
+
 ## 0.8.0 - The agent TUI tester — 2026-11-17
 
 Hold turns from keeping programs alive toward seeing and driving them. Every
@@ -33,7 +64,7 @@ for test scripts, CI, and AI agents alike.
 - Calls see `HOLD_CALL_ID` and `HOLD_CALL_NAME`, plus `HOLD_CALL_PARENT`
   when launched from inside another call.
 - Docker-style flag clusters: `-dt`, `-dit`, `-td`.
-- An undocumented verb, contributed by the Azgoths of Kria.
+- An undocumented alias for `peek`.
 - A `-t` call launched without a usable `TERM` (unset or `dumb`, as under
   cron, CI, or systemd) gets `TERM=xterm-256color`, as `docker run -t` does;
   an explicit `-e TERM=...` wins.

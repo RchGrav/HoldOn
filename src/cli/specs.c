@@ -62,15 +62,15 @@ static const char help_tail[] =
 static const char help_logs[] =
     "Print a call's captured output as plain text. -f follows a running call until it ends; -n N prints the newest N lines; --filter TEXT keeps lines containing TEXT; --similar LINE keeps lines shaped like LINE; --replay re-emits the output with its recorded timing. For the live screen of a TTY call, use hold peek.\n";
 static const char help_peek[] =
-    "Show a TTY call's screen as it is right now. By default prints the visible screen as plain text, one line per row. --ruler adds column and row numbers. --json adds the cursor, terminal modes, title, output counter and idle time. --image FILE writes a color PNG with a coordinate ruler (the cursor's column and row marked in red; --no-ruler drops it); --cursor-ring circles the cursor and --scale N enlarges it. After a call ends, peek shows its last screen.\n";
+    "Show a TTY call's screen as it is right now. By default prints the visible screen as plain text, one line per row. --ruler adds column and row numbers. --json adds the cursor, terminal modes, title, output counter and idle time. --image FILE writes a color PNG with a coordinate ruler (the cursor's column and row marked in red; --no-ruler drops it); --cursor-ring circles the cursor and --scale N enlarges it. After a call ends, peek shows its last screen. --last-alt shows the last full-screen (alternate-screen) frame a program like vim or less displayed before it switched back.\n";
 static const char help_send[] =
-    "Type into a TTY call without attaching. Arguments are applied in order: TEXT is typed literally (--text TEXT for text starting with -), -k KEY presses a key (Enter, Tab, Escape, Up, Down, Left, Right, Home, End, PageUp, PageDown, Delete, F1-F24, Space, with C- M- S- modifiers such as C-c or M-x), --keys \"K1 K2\" presses several, --enter presses Enter, --paste TEXT pastes (bracketed when the program asked for it; - reads stdin), --stdin types stdin, and --mouse ACTION,COL,ROW[,BUTTON] sends a mouse event (click, press, release, move, drag, scroll-up, scroll-down). Keys are encoded for the program's current modes. --wait MS then waits until the program has answered and gone quiet for MS (bounded by --timeout, default 10s). --seq prints the output counter for hold wait --since.\n";
+    "Type into a TTY call without attaching. Arguments are applied in order: TEXT is typed literally (--text TEXT for text starting with -), -k KEY presses a key (Enter, Tab, Escape, Up, Down, Left, Right, Home, End, PageUp, PageDown, Delete, F1-F24, Space, with C- M- S- modifiers such as C-c or M-x), --keys \"K1 K2\" presses several, --enter presses Enter, --paste TEXT pastes (bracketed when the program asked for it; - reads stdin), --stdin types stdin, and --mouse ACTION,COL,ROW[,BUTTON] sends a mouse event (click, press, release, move, drag, scroll-up, scroll-down; exit 9 if the program has mouse reporting off). Keys are encoded for the program's current modes. --wait MS then waits until the program has answered and gone quiet for MS (bounded by --timeout, default 10s). --seq prints the output counter for hold wait --since.\n";
 static const char help_wait[] =
     "Block until a condition holds. --idle MS: the program has drawn something and the screen then stays quiet for MS (counted from when the wait began; with --since SEQ, output after SEQ is required). --match TEXT / --regex RE: the text is on the screen (already there counts, unless --since SEQ: then only after output past SEQ). --exit or no condition: the call ends; prints its exit code (docker wait). Screen conditions time out after 30s unless --timeout MS says otherwise (0 = never). Exit status: 0 met, 7 timed out, 8 the call ended first.\n";
 static const char help_resize[] =
     "Resize a TTY call's terminal to <cols> <rows> (or <cols>x<rows>). The program receives SIGWINCH and the screen hold peek shows reflows with it.\n";
 static const char help_msg[] =
-    "Message another call, typically an agent harness running under Hold. The text is typed into its prompt as \"[msg from <you>; reply: hold msg <you> \\\"...\\\"] TEXT\" and submitted with Enter, after its screen has been quiet for --quiet MS (default 1s; --now skips the wait; --timeout MS, default 60s, delivers anyway). <you> is your own call ($HOLD_CALL_NAME, set in every call), verified by the receiver; from outside any call the header is [msg via hold]. Multi-line text goes in as one bracketed paste when the program supports it. --no-enter types without submitting; --stdin reads the text from stdin. Delivery is capped at 20 messages a minute per receiver.\n";
+    "Message another call, typically an agent harness running under Hold. The text is typed into its prompt as \"[msg from <you>; reply: hold msg <you> \\\"...\\\"] TEXT\" and submitted with Enter, after its screen has been quiet for --settle MS (default 1s; --now skips the wait; --timeout MS, default 60s, delivers anyway). <you> is your own call ($HOLD_CALL_NAME, set in every call), verified by the receiver; from outside any call the header is [msg via hold]. Multi-line text goes in as one bracketed paste when the program supports it. --no-enter types without submitting; --stdin reads the text from stdin. Delivery is capped at 20 messages a minute per receiver.\n";
 static const char help_attach[] =
     "Pick a running console/TTY call back up. Detach again with Ctrl-P Ctrl-Q. Start attachable calls with hold -it <cmd>. (console is an alias of attach.)\n";
 static const char help_purge[] =
@@ -115,16 +115,16 @@ static const struct hold_cli_command_spec command_specs[] = {
     {"ports", NULL, 1, 1, 0, "usage: hold ports <target>", NULL, help_ports},
     {"stats", NULL, 1, 1, SPEC_NOSTREAM, "usage: hold stats <target> [--no-stream]", NULL, help_stats},
     {"peek", NULL, 1, -1, 0,
-     "usage: hold peek <target> [--json] [--ruler] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]", NULL, help_peek},
-    /* Undocumented: peek's Krian cousin. With no target it recites. */
-    {"peen", "peek", 0, -1, 0,
-     "usage: hold peen [<target>]", NULL, help_peek},
+     "usage: hold peek <target> [--json] [--ruler] [--last-alt] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]", NULL, help_peek},
+    /* Undocumented alias. */
+    {"peen", "peek", 1, -1, 0,
+     "usage: hold peen <target>", NULL, help_peek},
     {"send", NULL, 1, -1, 0,
      "usage: hold send <target> [TEXT]... [-k KEY]... [--enter] [--paste TEXT] [--mouse ACTION,COL,ROW] [--wait MS]", NULL, help_send},
     {"wait", NULL, 1, -1, 0,
      "usage: hold wait <target> [--idle MS] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]", NULL, help_wait},
     {"msg", NULL, 1, -1, 0,
-     "usage: hold msg <target> TEXT... [--stdin] [--now] [--quiet MS] [--timeout MS] [--no-enter]", NULL, help_msg},
+     "usage: hold msg <target> TEXT... [--stdin] [--now] [--settle MS] [--timeout MS] [--no-enter]", NULL, help_msg},
     {"resize", NULL, 1, 3, 0, "usage: hold resize <target> <cols> <rows>", NULL, help_resize},
     {"attach", NULL, 1, 1, 0, usage_attach, NULL, help_attach},
     {"console", "attach", 1, 1, 0, "usage: hold console <target>", usage_attach, help_attach},
@@ -270,7 +270,8 @@ static int help_scripting(void) {
            "  5  target not found or invalid target\n"
            "  6  must disambiguate\n"
            "  7  hold wait timed out\n"
-           "  8  the call ended before the wait condition held\n");
+           "  8  the call ended before the wait condition held\n"
+           "  9  send --mouse: the program has mouse reporting off (not delivered)\n");
     return 0;
 }
 

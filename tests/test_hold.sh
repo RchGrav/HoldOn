@@ -55,6 +55,15 @@ skip() { [ -n "${1:-}" ] && echo "  (skipped: $1)" >&2; return 77; }
 # An optional program (vim, tmux, ...) is missing: always a plain skip, even
 # under HOLD_REQUIRE_ROOT_TESTS=1, which exists to catch skipped root tests.
 skip_tool() { echo "  (skipped: $1)" >&2; return 78; }
+# A scratch directory the acting user owns: when the suite runs as root, hold
+# (and the programs it holds) run as an unprivileged test user who cannot
+# write into the root-owned $TEST_ROOT.
+actor_dir() {
+  local d="$TEST_ROOT/actor"
+  mkdir -p "$d" || return 1
+  if [ "${USER_ACTOR_NEEDS_SUDO:-0}" -eq 1 ]; then chown "$TEST_UID:$TEST_GID" "$d" || return 1; fi
+  printf '%s' "$d"
+}
 
 # Refuse to run vacuously: a missing core tool (e.g. ps from procps) must be a
 # hard, visible failure, never a quietly-green test.
@@ -3541,8 +3550,9 @@ test_tty_call_defaults_term() {
 # Arrow keys and mouse events move a real program's cursor (vim, mouse=a).
 test_cursor_control_keys_and_mouse() {
   command -v vim >/dev/null 2>&1 || skip_tool "vim not installed"
-  seq -f 'line %g of a file long enough to click anywhere on it' 1 60 >"$TEST_ROOT/f.txt"
-  "$HOLD_BIN" -dt --name v -- vim -u NONE -N -i NONE -c 'set mouse=a' -c 'set ttymouse=sgr' "$TEST_ROOT/f.txt" >/dev/null || return 1
+  W=$(actor_dir) || return 1
+  seq -f 'line %g of a file long enough to click anywhere on it' 1 60 >"$W/f.txt"
+  "$HOLD_BIN" -dt --name v -- vim -u NONE -N -i NONE -c 'set mouse=a' -c 'set ttymouse=sgr' "$W/f.txt" >/dev/null || return 1
   "$HOLD_BIN" wait v --idle 400 --timeout 8000 || return 1
   "$HOLD_BIN" peek v --json | grep -q '"mouse": "drag"' || { "$HOLD_BIN" peek v --json >&2; return 1; }
   "$HOLD_BIN" send v -k Down -k Down -k Right -k Right -k Right --wait 200 || return 1
@@ -3616,7 +3626,8 @@ test_send_mouse_legacy_clamp_is_reported() {
 # tmux under Hold: prefix chord split, mouse pane focus, prefix detach.
 test_tmux_prefix_mouse_and_detach() {
   command -v tmux >/dev/null 2>&1 || skip_tool "tmux not installed"
-  local sock="$TEST_ROOT/tmux.sock"
+  local sock
+  sock="$(actor_dir)/tmux.sock" || return 1
   "$HOLD_BIN" -dt --name tx -- tmux -S "$sock" -f /dev/null new-session \; set -g mouse on >/dev/null || return 1
   "$HOLD_BIN" wait tx --idle 500 --timeout 8000 || return 1
   "$HOLD_BIN" send tx -k C-b --text % --wait 500 || { tmux -S "$sock" kill-server; return 1; }
@@ -3670,13 +3681,14 @@ def main(scr):
         elif y == 7 and 4 <= x <= 11: return " ".join(str(i + 1) for i, c in enumerate(checked) if c)
 print("RESULT:" + curses.wrapper(main)); sys.stdout.flush(); time.sleep(20)
 PY
-  "$HOLD_BIN" -dt --name cl -- python3 "$TEST_ROOT/checklist.py" "$TEST_ROOT/mouse-events.log" >/dev/null || return 1
+  W=$(actor_dir) || return 1
+  "$HOLD_BIN" -dt --name cl -- python3 "$TEST_ROOT/checklist.py" "$W/mouse-events.log" >/dev/null || return 1
   "$HOLD_BIN" wait cl --match 'OK' --timeout 15000 || { "$HOLD_BIN" peek cl --json >&2; "$HOLD_BIN" logs cl >&2; return 1; }
   "$HOLD_BIN" wait cl --idle 300 --timeout 5000 || { "$HOLD_BIN" peek cl >&2; return 1; }
   "$HOLD_BIN" send cl --mouse click,8,4 --wait 300 || return 1
   "$HOLD_BIN" wait cl --match '[X] Option B' --timeout 5000 || {
-    "$HOLD_BIN" peek cl >&2; echo "mouse events:" >&2; cat "$TEST_ROOT/mouse-events.log" >&2; return 1; }
-  grep -q 'bstate=' "$TEST_ROOT/mouse-events.log" || return 1
+    "$HOLD_BIN" peek cl >&2; echo "mouse events:" >&2; cat "$W/mouse-events.log" >&2; return 1; }
+  grep -q 'bstate=' "$W/mouse-events.log" || return 1
   "$HOLD_BIN" end cl >/dev/null 2>&1 || true
 }
 
@@ -3684,9 +3696,10 @@ PY
 # across lines, the wheel scrolls.
 test_micro_mouse_editing() {
   command -v micro >/dev/null 2>&1 || skip_tool "micro not installed"
-  mkdir -p "$TEST_ROOT/mcfg"
-  seq -f 'alpha bravo charlie delta %g' 1 80 >"$TEST_ROOT/m.txt"
-  "$HOLD_BIN" -dt --name mi -- micro -config-dir "$TEST_ROOT/mcfg" "$TEST_ROOT/m.txt" >/dev/null || return 1
+  W=$(actor_dir) || return 1
+  mkdir -p "$W/mcfg" && { [ "${USER_ACTOR_NEEDS_SUDO:-0}" -ne 1 ] || chown "$TEST_UID:$TEST_GID" "$W/mcfg"; }
+  seq -f 'alpha bravo charlie delta %g' 1 80 >"$W/m.txt"
+  "$HOLD_BIN" -dt --name mi -- micro -config-dir "$W/mcfg" "$W/m.txt" >/dev/null || return 1
   "$HOLD_BIN" wait mi --match 'delta 5' --timeout 8000 || return 1
   "$HOLD_BIN" wait mi --idle 500 --timeout 5000 || return 1
   "$HOLD_BIN" send mi --mouse click,12,2 --wait 300 || return 1
@@ -3736,10 +3749,11 @@ test_wait_match_since_ignores_stale_screen() {
 
 # Screenshot fidelity: CJK and emoji draw real glyphs, not the missing box.
 test_peek_image_draws_cjk_and_emoji() {
-  "$HOLD_BIN" -dt --name glyphs -- /bin/sh -c 'printf "\347\225\214\n\360\237\232\200\n\356\200\200\n"; sleep 20' >/dev/null || return 1
+  "$HOLD_BIN" -dt --name glyphs -- /bin/sh -c 'printf "\347\225\214\n\360\237\232\200\n\356\200\200\n\342\240\277\n"; sleep 20' >/dev/null || return 1
   "$HOLD_BIN" wait glyphs --idle 300 --timeout 5000 || return 1
-  "$HOLD_BIN" peek glyphs --image "$TEST_ROOT/g.png" --scale 1 --no-ruler --no-footer || return 1
-  python3 - "$TEST_ROOT/g.png" <<'PY' || return 1
+  W=$(actor_dir) || return 1
+  "$HOLD_BIN" peek glyphs --image "$W/g.png" --scale 1 --no-ruler --no-footer || return 1
+  python3 - "$W/g.png" <<'PY' || return 1
 import struct, sys, zlib
 d = open(sys.argv[1], "rb").read()
 w, h = struct.unpack(">II", d[16:24]); pos, idat = 8, b""
@@ -3756,20 +3770,51 @@ def cell(row):  # the 16x16 block of a wide cell at column 0
     return b"".join(bytes(px[row * 16 + y][:16 * 3]) for y in range(16))
 cjk, emoji, missing = cell(0), cell(1), cell(2)
 assert missing != cjk and missing != emoji, "CJK or emoji drawn as the missing-glyph box"
+# Braille U+283F (row 3): its two dot columns must not touch - x=3,4 is a gap.
+bg = bytes(px[3 * 16 + 1][0:3])
+for y in range(3 * 16, 4 * 16):
+    for x in (3, 4):
+        assert bytes(px[y][x * 3:x * 3 + 3]) == bg, "braille dot columns touch"
 PY
   "$HOLD_BIN" end glyphs >/dev/null 2>&1 || true
 }
 
-# peen: peek's undocumented cousin. With a target it peeks; alone it recites.
-test_peen_recites_and_peeks() {
-  out=$("$HOLD_BIN" peen) || return 1
-  printf '%s\n' "$out" | head -1 | grep -qx 'Putty. Putty. Putty.' || return 1
-  printf '%s\n' "$out" | tail -1 | grep -qx -- '-- Grunthos the Flatulent' || return 1
+# peen: an undocumented alias for peek.
+test_peen_is_peek() {
+  set +e; "$HOLD_BIN" peen >/dev/null 2>"$TEST_ROOT/peen.err"; rc=$?; set -e
+  [ "$rc" -ne 0 ] && grep -q 'usage: hold peen <target>' "$TEST_ROOT/peen.err" || return 1
   ! "$HOLD_BIN" --help | grep -q peen || return 1
   "$HOLD_BIN" -dt --name lump -- /bin/sh -c 'echo green putty; sleep 10' >/dev/null || return 1
   "$HOLD_BIN" wait lump --match putty --timeout 5000 || return 1
   "$HOLD_BIN" peen lump | head -1 | grep -qx 'green putty' || return 1
   "$HOLD_BIN" end lump >/dev/null 2>&1 || true
+}
+# msg --settle (global --quiet owns that word) in both spellings; the value
+# never leaks into the message.
+test_msg_settle_flag() {
+  "$HOLD_BIN" -dt --name rx -- /bin/sh -c 'stty -echo; while IFS= read -r l; do echo "GOT[$l]"; done' >/dev/null || return 1
+  sleep 0.3
+  env -u HOLD_CALL_ID -u HOLD_CALL_NAME "$HOLD_BIN" msg rx "one" --settle 150 || return 1
+  env -u HOLD_CALL_ID -u HOLD_CALL_NAME "$HOLD_BIN" msg rx --settle=150 "two" || return 1
+  "$HOLD_BIN" wait rx --match '[msg via hold] two]' --timeout 5000 || { "$HOLD_BIN" peek rx >&2; return 1; }
+  "$HOLD_BIN" peek rx | grep -qx 'GOT\[\[msg via hold\] one\]' || { "$HOLD_BIN" peek rx >&2; return 1; }
+  "$HOLD_BIN" end rx >/dev/null 2>&1 || true
+}
+
+# A full-screen program's last frame survives its switch back to the normal
+# screen: peek --last-alt, live and after exit.
+test_peek_last_alt_frame() {
+  "$HOLD_BIN" -dt --name fs -- /bin/sh -c 'printf "\033[?1049hFULLSCREEN FRAME\n"; sleep 0.4; printf "\033[?1049l"; echo back to normal; sleep 1' >/dev/null || return 1
+  "$HOLD_BIN" wait fs --match 'back to normal' --timeout 5000 || return 1
+  "$HOLD_BIN" peek fs --last-alt | head -1 | grep -qx 'FULLSCREEN FRAME' || { "$HOLD_BIN" peek fs --last-alt >&2; return 1; }
+  "$HOLD_BIN" wait fs --timeout 5000 >/dev/null || return 1
+  "$HOLD_BIN" peek fs 2>"$TEST_ROOT/fs.err" | grep -qx 'back to normal' || return 1
+  grep -q -- '--last-alt' "$TEST_ROOT/fs.err" || return 1
+  "$HOLD_BIN" peek fs --last-alt | head -1 | grep -qx 'FULLSCREEN FRAME' || return 1
+  "$HOLD_BIN" -dt --name plain -- /bin/sh -c 'echo no alt; sleep 0.2' >/dev/null || return 1
+  "$HOLD_BIN" wait plain --timeout 5000 >/dev/null || return 1
+  set +e; "$HOLD_BIN" peek plain --last-alt >/dev/null 2>&1; rc=$?; set -e
+  [ "$rc" -eq 5 ] || return 1
 }
 
 # ---- the screen verbs: peek / send / wait / resize -------------------------
@@ -3874,9 +3919,10 @@ test_resize_delivers_sigwinch() {
 test_peek_image_png() {
   "$HOLD_BIN" -dt --name pic -- /bin/sh -c 'printf "\033[44m box \033[0m \342\224\214\342\224\200\342\224\220\n"; sleep 30' >/dev/null || return 1
   "$HOLD_BIN" wait pic --match box --timeout 5000 || return 1
-  "$HOLD_BIN" peek pic --image "$TEST_ROOT/full.png" --cursor-ring || return 1
-  "$HOLD_BIN" peek pic --image "$TEST_ROOT/bare.png" --scale 1 --no-ruler --no-footer || return 1
-  python3 - "$TEST_ROOT/full.png" "$TEST_ROOT/bare.png" <<'PY' || return 1
+  W=$(actor_dir) || return 1
+  "$HOLD_BIN" peek pic --image "$W/full.png" --cursor-ring || return 1
+  "$HOLD_BIN" peek pic --image "$W/bare.png" --scale 1 --no-ruler --no-footer || return 1
+  python3 - "$W/full.png" "$W/bare.png" <<'PY' || return 1
 import struct, sys, zlib
 def ihdr(path):
     data = open(path, "rb").read()
@@ -3922,7 +3968,8 @@ test_screen_verbs_need_a_tty() {
 test_send_mouse_off_is_reported() {
   "$HOLD_BIN" -dt --name nomouse -- /bin/sh -c 'echo ready; sleep 30' >/dev/null || return 1
   "$HOLD_BIN" wait nomouse --match ready --timeout 5000 || return 1
-  "$HOLD_BIN" send nomouse --mouse click,3,1 2>"$TEST_ROOT/mouse.err" || return 1
+  set +e; "$HOLD_BIN" send nomouse --mouse click,3,1 2>"$TEST_ROOT/mouse.err"; rc=$?; set -e
+  [ "$rc" -eq 9 ] || { echo "mouse-off send rc $rc, want 9" >&2; return 1; }
   grep -q 'mouse reporting off' "$TEST_ROOT/mouse.err" || return 1
   "$HOLD_BIN" peek nomouse --json | grep -q '"last_mouse": {"row": 1, "col": 3}' || return 1
   "$HOLD_BIN" end nomouse >/dev/null 2>&1 || true
@@ -4089,7 +4136,7 @@ run_test "resize delivers SIGWINCH and updates the screen" test_resize_delivers_
 run_test "peek --image writes a well-formed PNG" test_peek_image_png
 run_test "peek shows the last screen after exit; purge removes it" test_peek_after_exit_and_purge
 run_test "screen verbs refuse calls without a TTY" test_screen_verbs_need_a_tty
-run_test "send --mouse to a program without mouse reporting is reported" test_send_mouse_off_is_reported
+run_test "send --mouse to a program without mouse reporting exits 9" test_send_mouse_off_is_reported
 run_test "calls see HOLD_CALL_ID, HOLD_CALL_NAME, HOLD_CALL_PARENT" test_call_identity_environment
 run_test "attach repaints the live screen" test_attach_repaints_live_screen
 run_test "msg delivers between calls and verifies the sender" test_msg_between_calls
@@ -4104,7 +4151,9 @@ run_test "micro: click, double-click, drag select, wheel" test_micro_mouse_editi
 run_test "wait --idle needs first output; symlinked programs keep their name" test_wait_idle_needs_first_output_and_symlink_launch
 run_test "wait --match --since ignores a stale screen" test_wait_match_since_ignores_stale_screen
 run_test "peek --image draws CJK and emoji glyphs" test_peek_image_draws_cjk_and_emoji
-run_test "peen recites alone and peeks with a target" test_peen_recites_and_peeks
+run_test "peen is an alias for peek" test_peen_is_peek
+run_test "msg --settle works in both spellings" test_msg_settle_flag
+run_test "peek --last-alt keeps a full-screen program's last frame" test_peek_last_alt_frame
 
 echo "----------------------------------------------------------------"
 echo "summary: $PASSES passed, $FAILS failed, $SKIPS skipped"

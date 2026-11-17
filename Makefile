@@ -55,8 +55,16 @@ obj/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-hold: $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(STATIC_LDFLAGS) -o $@ $(OBJS)
+# A static link uses its own build of paths.c that never references getpwuid
+# (glibc cannot load NSS modules into a static binary, and warns).
+STATIC_OBJS := $(if $(strip $(STATIC_LDFLAGS)),$(filter-out obj/platform/paths.o,$(OBJS)) obj/platform/paths-static.o,$(OBJS))
+
+obj/platform/paths-static.o: src/platform/paths.c
+	@mkdir -p $(dir $@)
+	$(CC) $(ALL_CPPFLAGS) -DHOLD_STATIC_LINK $(CFLAGS) -c -o $@ $<
+
+hold: $(STATIC_OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(STATIC_LDFLAGS) -o $@ $(STATIC_OBJS)
 
 hold-dynamic: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o hold-dynamic $(OBJS)

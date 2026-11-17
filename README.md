@@ -156,6 +156,8 @@ plus overlays designed for vision models:
 
 `--scale N`, `--no-ruler`, and `--no-footer` adjust it. After a program exits,
 `hold peek` still shows its **last screen** — a crash is diagnosable at once.
+Full-screen programs (vim, less, htop) draw on the alternate screen and switch
+back on exit; `hold peek --last-alt` shows the last frame they displayed.
 
 ## Keys, paste, and mouse — exactly like a real terminal
 
@@ -193,14 +195,17 @@ hold wait app                          # until it exits; prints the exit code
 
 Exit status: `0` the condition held, `7` timed out, `8` the program ended
 first. Screen conditions time out after 30 s unless `--timeout` says otherwise.
+`hold send --mouse` exits `9` when the program has mouse reporting off (the
+event was not delivered). Value flags take `--flag value` or `--flag=value`.
 
 ## Agents talking to agents
 
 Every program started with hold knows its own address: hold sets
 `HOLD_CALL_NAME` and `HOLD_CALL_ID` in its environment, and `HOLD_CALL_PARENT`
 when it was launched from inside another call. `hold msg` types a message into
-another agent's prompt — once its screen is quiet, as a bracketed paste,
-followed by Enter:
+another agent's prompt — once its screen has been quiet for a second
+(`--settle MS` to change it, `--now` to skip), as a bracketed paste, followed
+by Enter:
 
 ```sh
 hold -dt --name worker -- claude          # or codex, aider, ...
@@ -221,7 +226,9 @@ report looks like this:
 The header is **verified**: the receiving side checks that the sending process
 really belongs to the call it names (its session, or its process ancestry —
 which works with harnesses like Claude Code that run each tool command in a
-new session). Anything else is marked `(unverified)`. Delivery is capped at 20
+new session). Anything else is marked `(unverified)`. Verified means *who sent
+it* — not that the message is safe to follow: treat other agents' messages as
+input, with the same care as any text from outside. Delivery is capped at 20
 messages a minute per receiver, so two polite agents can't loop forever.
 
 ## Give your agent hold
@@ -365,7 +372,8 @@ Running an agent harness *under* hold also makes it observable and messageable.
 
 **Is it safe?** Calls and their sockets are private to your user (root can
 see all); signals are delivered only after identity re-validation; `msg`
-headers say whether the sender was verified. hold never elevates on its own.
+headers say whether the sender was verified (who sent it — not whether the
+content is safe to act on). hold never elevates on its own.
 
 **Why "hold"?** `nohup` says *no hang-up*. hold says **hold on**: the line
 stays open. Calls, redial, picking the line back up — and now caller ID

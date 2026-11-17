@@ -21,7 +21,8 @@
  * send one be32-length-prefixed text request; the broker answers with one
  * be32-length-prefixed reply ("ok ...\n" | "error ...\n" | "timeout ...\n",
  * optionally followed by a binary body) and closes. Requests:
- *   peek                         -> "ok\n" + HSNAP1 snapshot
+ *   peek [alt=1]                 -> "ok\n" + HSNAP1 snapshot (alt=1: the last
+ *                                   alternate-screen frame the program left)
  *   send\n<op>\n...              -> "ok seq=N [mouse=off]\n"
  *        ops: text <hex> | paste <hex> | key <name> | mouse <action> <btn> <row> <col>
  *   resize rows=R cols=C         -> "ok rows=R cols=C\n"

@@ -30,7 +30,7 @@ attach). Requests and replies are documented beside the constants in
 `include/hold/console_internal.h`:
 
 ```text
-peek                                     -> ok\n + HSNAP1 snapshot
+peek [alt=1]                             -> ok\n + HSNAP1 snapshot (alt=1: last full-screen frame)
 send\n text <hex> | paste <hex> | key <name> | mouse <action> <btn> <row> <col>
                                          -> ok seq=N [mouse=off]
 resize rows=R cols=C                     -> ok rows=R cols=C
@@ -70,6 +70,13 @@ RGB background.
 When the target exits, the broker writes the final snapshot to
 `<id>.screen` beside `<id>.log`; `hold peek` reads it for ended calls and
 purge removes it with the other call artifacts.
+
+Full-screen programs draw on the alternate screen and switch back when they
+exit, which leaves the normal screen showing none of what they displayed.
+When output contains the switch-back (`CSI ?1049l`, `?1047l`, `?47l`), the
+broker feeds the screen up to it, keeps a snapshot of that last full-screen
+frame, then feeds the rest. `hold peek --last-alt` asks for it (`peek
+alt=1`); at exit it is saved as `<id>.altscreen`.
 
 ## Messages between calls
 
