@@ -58,32 +58,31 @@ A child installer process cannot change the parent shell's current `PATH`. In sc
 
 ```sh
 curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh |
-  HOLD_ENV_FILE="$PWD/.grutty-env" sh
+  GRUTTY_ENV_FILE="$PWD/.grutty-env" sh
 . "$PWD/.grutty-env"
 
-"$HOLD_BIN" --version
+"$GRUTTY_BIN" --version
 ```
 
 The handoff file exports:
 
 ```sh
-HOLD_BIN=/absolute/path/to/grutty
-HOLD_BIN=/absolute/path/to/grutty
+GRUTTY_BIN=/absolute/path/to/grutty
 PATH=/install/dir:$PATH
 ```
 
-Use `"$HOLD_BIN"` for the 0.4.0 operator CLI, or `"$HOLD_BIN"` when you intentionally need the compatibility name, without depending on shell startup files.
+Use `"$GRUTTY_BIN"` to reach the installed binary without depending on shell startup files.
 
 ## Custom install directory
 
 ```sh
 curl -LsSf https://github.com/RchGrav/HoldOn/releases/latest/download/install.sh |
   GRUTTY_INSTALL_DIR="$PWD/.bin" \
-  HOLD_ENV_FILE="$PWD/.grutty-env" \
+  GRUTTY_ENV_FILE="$PWD/.grutty-env" \
   sh
 . "$PWD/.grutty-env"
 
-"$HOLD_BIN" --help
+"$GRUTTY_BIN" --help
 ```
 
 ## Uninstall
@@ -149,19 +148,19 @@ Linux artifact names deliberately distinguish the libc ABI from the link mode:
 On glibc hosts, the installer defaults to `gnu-static` for compatibility with the detected host ABI. If true standalone behavior matters more than matching the host glibc ABI, request the musl artifact explicitly:
 
 ```sh
-HOLD_FLAVOR=musl-static sh install.sh
+GRUTTY_FLAVOR=musl-static sh install.sh
 ```
 
 GNU dynamic artifacts are available for users who specifically want normal dynamic glibc behavior:
 
 ```sh
-HOLD_FLAVOR=gnu-dynamic sh install.sh
+GRUTTY_FLAVOR=gnu-dynamic sh install.sh
 ```
 
 GNU static artifacts can also be requested explicitly:
 
 ```sh
-HOLD_FLAVOR=gnu-static sh install.sh
+GRUTTY_FLAVOR=gnu-static sh install.sh
 ```
 
 The installer fails clearly instead of guessing when the platform is unsupported or libc cannot be detected safely.

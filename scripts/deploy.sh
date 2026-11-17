@@ -231,10 +231,10 @@ if [[ "$install_test" -eq 1 ]]; then
   note "deploy: smoke-testing one-line installer from $installer_url"
   if command -v curl >/dev/null 2>&1; then
     curl -LsSf "$installer_url" |
-      GRUTTY_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh
+      GRUTTY_INSTALL_DIR="$install_tmp/bin" GRUTTY_UPDATE_PROFILE=0 sh
   else
     wget -qO- "$installer_url" |
-      GRUTTY_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh
+      GRUTTY_INSTALL_DIR="$install_tmp/bin" GRUTTY_UPDATE_PROFILE=0 sh
   fi
 
   installed_version=$("$install_tmp/bin/grutty" --version)

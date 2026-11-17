@@ -674,13 +674,13 @@ test_exec_replacement_remains_controllable() {
 
 test_corrupt_record_handling() {
   ensure_user_fixture_store || return 1
-  printf 'garbage\n' > "$HOME/.local/state/hold/badbad00cafe0000000000000000000000000000000000000000000000000000.json" || return 1
+  printf 'garbage\n' > "$HOME/.local/state/grutty/badbad00cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^badbad00cafe' "$TEST_ROOT/list.out"
   ! grep -Eq '^0[[:space:]]' "$TEST_ROOT/list.out"
   grep -q 'warning: skipping corrupt record badbad00cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
   "$HOLD_BIN" prune >/dev/null || return 1
-  [ ! -e "$HOME/.local/state/hold/badbad00cafe0000000000000000000000000000000000000000000000000000.json" ]
+  [ ! -e "$HOME/.local/state/grutty/badbad00cafe0000000000000000000000000000000000000000000000000000.json" ]
 }
 
 test_deep_json_record_rejected_not_crashed() {
@@ -691,7 +691,7 @@ test_deep_json_record_rejected_not_crashed() {
   json="${json}0"
   for i in $(seq 1 80); do json="${json}]"; done
   json="${json},\"version\":1,\"id\":\"abc12445cafe\",\"pid\":12345,\"pgid\":12345,\"sid\":12345,\"start_unix_ns\":0,\"argv\":[\"x\"],\"cmdline_display\":\"x\",\"uid\":0,\"gid\":0,\"proc_starttime_ticks\":0,\"exe_dev\":0,\"exe_ino\":0}"
-  printf '%s\n' "$json" > "$HOME/.local/state/hold/abc12445cafe0000000000000000000000000000000000000000000000000000.json" || return 1
+  printf '%s\n' "$json" > "$HOME/.local/state/grutty/abc12445cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^abc12445cafe' "$TEST_ROOT/list.out" || return 1
   grep -q 'warning: skipping corrupt record abc12445cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
@@ -702,7 +702,7 @@ test_symlinked_record_rejected() {
   cat > "$TEST_ROOT/record-target.json" <<'JSON'
 {"version":1,"id":"abc12545cafe0000000000000000000000000000000000000000000000000000","pid":12345,"pgid":12345,"sid":12345,"start_unix_ns":0,"argv":["x"],"cmdline_display":"x","uid":0,"gid":0,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0}
 JSON
-  ln -s "$TEST_ROOT/record-target.json" "$HOME/.local/state/hold/abc12545cafe0000000000000000000000000000000000000000000000000000.json" || return 1
+  ln -s "$TEST_ROOT/record-target.json" "$HOME/.local/state/grutty/abc12545cafe0000000000000000000000000000000000000000000000000000.json" || return 1
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
   ! grep -q '^abc12545cafe' "$TEST_ROOT/list.out" || return 1
   grep -q 'warning: skipping corrupt record abc12545cafe0000000000000000000000000000000000000000000000000000.json' "$TEST_ROOT/list.err"
@@ -730,7 +730,7 @@ test_symlinked_log_rejected() {
 
 test_invalid_pgid_record() {
   ensure_user_fixture_store || return 1
-  cat > "$HOME/.local/state/hold/abc12345cafe0000000000000000000000000000000000000000000000000000.json" <<'JSON'
+  cat > "$HOME/.local/state/grutty/abc12345cafe0000000000000000000000000000000000000000000000000000.json" <<'JSON'
 {"version":1,"id":"abc12345cafe0000000000000000000000000000000000000000000000000000","pid":12345,"pgid":0,"sid":12345,"start_unix_ns":0,"argv":["x"],"cmdline_display":"x","uid":0,"gid":0,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0}
 JSON
   "$HOLD_BIN" list >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
@@ -739,10 +739,10 @@ JSON
 
 test_orphan_log_cleanup() {
   ensure_user_fixture_store || return 1
-  : > "$HOME/.local/state/hold/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" || return 1
-  : > "$HOME/.local/state/hold/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" || return 1
+  : > "$HOME/.local/state/grutty/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" || return 1
+  : > "$HOME/.local/state/grutty/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" || return 1
   "$HOLD_BIN" prune >/dev/null || return 1
-  [ ! -e "$HOME/.local/state/hold/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" ] && [ ! -e "$HOME/.local/state/hold/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" ]
+  [ ! -e "$HOME/.local/state/grutty/a1b2c3d4e5f60000000000000000000000000000000000000000000000000000.log" ] && [ ! -e "$HOME/.local/state/grutty/deadbeefcafe0000000000000000000000000000000000000000000000000000.log" ]
 }
 
 test_id_sanitization() {
@@ -1433,7 +1433,7 @@ test_console_rejects_unrelated_peer_uid_before_replay() {
   # credential check must still reject it before replaying output or forwarding
   # input.
   chmod 0711 "$ACTOR_HOME" "$ACTOR_HOME/.local" "$ACTOR_HOME/.local/state" \
-    "$HOME/.local/state/grutty" "$HOME/.local/state/hold/console" || return 1
+    "$HOME/.local/state/grutty" "$HOME/.local/state/grutty/console" || return 1
   chmod 0666 "$sock" || return 1
 
   helper=$(build_console_protocol_helper) || return 1
@@ -1980,7 +1980,7 @@ test_root_list_all_labels_owner_and_walks_homes() {
   # the invoking user (so its USER resolves via /etc/passwd). The record shape
   # mirrors the minimal valid record, with a live-looking pgid so it is a row.
   mkdir -p "$homes/somebody/.local/state/grutty" || return 1
-  cat > "$homes/somebody/.local/state/hold/aa11bb22cc330000000000000000000000000000000000000000000000000000.json" <<JSON
+  cat > "$homes/somebody/.local/state/grutty/aa11bb22cc330000000000000000000000000000000000000000000000000000.json" <<JSON
 {"version":1,"id":"aa11bb22cc330000000000000000000000000000000000000000000000000000","pid":2,"pgid":2,"sid":2,"start_unix_ns":0,"argv":["peer-cmd"],"cmdline_display":"peer-cmd","uid":$uid,"gid":$uid,"proc_starttime_ticks":0,"exe_dev":0,"exe_ino":0,"name":"peer_call"}
 JSON
   chmod -R 755 "$homes" || return 1
@@ -3880,9 +3880,9 @@ test_peek_after_exit_and_purge() {
   "$HOLD_BIN" wait gone --timeout 5000 >/dev/null || return 1
   "$HOLD_BIN" peek gone | grep -qx 'last words' || return 1
   "$HOLD_BIN" peek gone --json | grep -q '"running": false' || return 1
-  ls "$HOME"/.local/state/hold/*.screen >/dev/null 2>&1 || return 1
+  ls "$HOME"/.local/state/grutty/*.screen >/dev/null 2>&1 || return 1
   "$HOLD_BIN" purge gone >/dev/null 2>&1 || return 1
-  ! ls "$HOME"/.local/state/hold/*.screen >/dev/null 2>&1 || return 1
+  ! ls "$HOME"/.local/state/grutty/*.screen >/dev/null 2>&1 || return 1
 }
 
 # Calls without a TTY have no screen; the verbs say so.

@@ -43,10 +43,10 @@ fi
 if printf '%s\n' "$out" | grep -Eq '^[0-9a-f]{12}$|^[0-9a-f]{64}$'; then
   fail "foreground call printed an id line"
 fi
-full=$(basename "$(ls "$HOME/.local/state/hold/"*.log | head -n1)" .log)
+full=$(basename "$(ls "$HOME/.local/state/grutty/"*.log | head -n1)" .log)
 [ "${#full}" -eq 64 ] || fail "full 64-hex call id missing from store"
 display=${full:0:12}
-log="$HOME/.local/state/hold/$full.log"
+log="$HOME/.local/state/grutty/$full.log"
 grep -qx 'smoke-out' "$log" || fail "stdout raw log line missing"
 test ! -e "$log.idx" || fail "a log index sidecar was written"
 grutty logs --plain "$display" | grep -qx 'smoke-out' || fail "logs --plain did not print raw log"
@@ -101,10 +101,10 @@ rmout=$(grutty -d --rm -- /bin/sh -c 'echo rm; sleep 0.1' 2>&1)
 rmfull=$(printf '%s\n' "$rmout" | extract_full64)
 [ "${#rmfull}" -eq 64 ] || fail "--rm full id missing"
 for _ in $(seq 1 50); do
-  [ ! -e "$HOME/.local/state/hold/$rmfull.json" ] && [ ! -e "$HOME/.local/state/hold/$rmfull.log" ] && break
+  [ ! -e "$HOME/.local/state/grutty/$rmfull.json" ] && [ ! -e "$HOME/.local/state/grutty/$rmfull.log" ] && break
   sleep 0.1
 done
-[ ! -e "$HOME/.local/state/hold/$rmfull.json" ] || fail "--rm record remained"
-[ ! -e "$HOME/.local/state/hold/$rmfull.log" ] || fail "--rm log remained"
+[ ! -e "$HOME/.local/state/grutty/$rmfull.json" ] || fail "--rm record remained"
+[ ! -e "$HOME/.local/state/grutty/$rmfull.log" ] || fail "--rm log remained"
 
 echo "PASS: grutty surface smoke"

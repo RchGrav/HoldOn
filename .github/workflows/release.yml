@@ -291,7 +291,7 @@ jobs:
             [ "$i" -lt 30 ] || { echo "install.sh never became downloadable" >&2; exit 1; }
             sleep 10
           done
-          GRUTTY_INSTALL_DIR="$install_tmp/bin" HOLD_UPDATE_PROFILE=0 sh "$install_tmp/install.sh"
+          GRUTTY_INSTALL_DIR="$install_tmp/bin" GRUTTY_UPDATE_PROFILE=0 sh "$install_tmp/install.sh"
           installed_version="$("$install_tmp/bin/grutty" --version)"
           hold_version="$("$install_tmp/bin/grutty" --version)"
           test "$installed_version" = "${RELEASE_TAG}"

@@ -11,7 +11,7 @@ sha256_file() {
 
 make_fake_release() {
   local root="$1" artifact="$2" mode="${3:-good}" release_dir stage
-  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/grutty/releases/download/v1.2.3"
   stage="$root/stage-$mode"
   mkdir -p "$release_dir" "$stage"
   case "$mode" in
@@ -41,13 +41,13 @@ SH
 run_installer() {
   local root="$1" install_dir="$2" extra_env="${3:-}"
   env \
-    HOLD_GITHUB_BASE="file://$root" \
-    HOLD_REPO_NAME=grutty \
+    GRUTTY_GITHUB_BASE="file://$root" \
+    GRUTTY_REPO_NAME=grutty \
     GRUTTY_INSTALL_TEST_OS=linux \
     GRUTTY_INSTALL_TEST_ARCH=amd64 \
     GRUTTY_INSTALL_TEST_LIBC=gnu \
     GRUTTY_INSTALL_DIR="$install_dir" \
-    HOLD_UPDATE_PROFILE=0 \
+    GRUTTY_UPDATE_PROFILE=0 \
     $extra_env \
     sh ./install.sh 1.2.3
 }
@@ -74,7 +74,7 @@ test_installer_fail_closed() {
   root="$tmp/malformed-sums"
   install_dir="$tmp/install-malformed"
   make_fake_release "$root" "$artifact" good
-  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/grutty/releases/download/v1.2.3"
   printf 'not-a-sha  %s\n' "$artifact" >"$release_dir/SHA256SUMS"
   expect_fail malformed-sums run_installer "$root" "$install_dir"
   grep -q 'malformed SHA256SUMS' "$tmp/malformed-sums.err"
@@ -82,7 +82,7 @@ test_installer_fail_closed() {
   root="$tmp/mismatch-sums"
   install_dir="$tmp/install-mismatch"
   make_fake_release "$root" "$artifact" good
-  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/grutty/releases/download/v1.2.3"
   printf '%064d  %s\n' 0 "$artifact" >"$release_dir/SHA256SUMS"
   expect_fail mismatch-sums run_installer "$root" "$install_dir"
   grep -q 'checksum mismatch' "$tmp/mismatch-sums.err"
@@ -90,7 +90,7 @@ test_installer_fail_closed() {
   root="$tmp/bad-layout"
   install_dir="$tmp/install-layout"
   make_fake_release "$root" "$artifact" missing-root-binary
-  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/grutty/releases/download/v1.2.3"
   sum="$(sha256_file "$release_dir/$artifact")"
   printf '%s  %s\n' "$sum" "$artifact" >"$release_dir/SHA256SUMS"
   expect_fail bad-layout run_installer "$root" "$install_dir"
@@ -102,7 +102,7 @@ test_installer_fail_closed() {
   root="$tmp/good"
   install_dir="$tmp/install-good"
   make_fake_release "$root" "$artifact" good
-  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/grutty/releases/download/v1.2.3"
   sum="$(sha256_file "$release_dir/$artifact")"
   printf '%s  %s\n' "$sum" "$artifact" >"$release_dir/SHA256SUMS"
   run_installer "$root" "$install_dir" >"$tmp/good.out" 2>"$tmp/good.err"
@@ -159,12 +159,12 @@ test_installer_uninstall_round_trip() {
   fake_home="$tmp/uninstall-home"
   mkdir -p "$fake_home"
   make_fake_release "$root" "$artifact" good
-  release_dir="$root/RchGrav/hold/releases/download/v1.2.3"
+  release_dir="$root/RchGrav/grutty/releases/download/v1.2.3"
   sum="$(sha256_file "$release_dir/$artifact")"
   printf '%s  %s\n' "$sum" "$artifact" >"$release_dir/SHA256SUMS"
 
   # Install with profile updates on so the PATH block exists to reverse.
-  env HOLD_GITHUB_BASE="file://$root" HOLD_REPO_NAME=grutty \
+  env GRUTTY_GITHUB_BASE="file://$root" GRUTTY_REPO_NAME=grutty \
     GRUTTY_INSTALL_TEST_OS=linux GRUTTY_INSTALL_TEST_ARCH=amd64 GRUTTY_INSTALL_TEST_LIBC=gnu \
     GRUTTY_INSTALL_DIR="$install_dir" HOME="$fake_home" SHELL=/bin/bash \
     sh ./install.sh 1.2.3 >"$tmp/uninstall-install.out" 2>"$tmp/uninstall-install.err"

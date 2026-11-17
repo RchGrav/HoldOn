@@ -1,11 +1,11 @@
 #!/bin/sh
 set -eu
 
-REPO_OWNER="${HOLD_REPO_OWNER:-RchGrav}"
-REPO_NAME="${HOLD_REPO_NAME:-HoldOn}"
-GITHUB_BASE="${HOLD_GITHUB_BASE:-https://github.com}"
-GITHUB_API="${HOLD_GITHUB_API:-https://api.github.com}"
-INSTALLER_VERSION="${HOLD_INSTALLER_VERSION:-latest}"
+REPO_OWNER="${GRUTTY_REPO_OWNER:-RchGrav}"
+REPO_NAME="${GRUTTY_REPO_NAME:-HoldOn}"
+GITHUB_BASE="${GRUTTY_GITHUB_BASE:-https://github.com}"
+GITHUB_API="${GRUTTY_GITHUB_API:-https://api.github.com}"
+INSTALLER_VERSION="${GRUTTY_INSTALLER_VERSION:-latest}"
 INSTALL_SYSTEM="${GRUTTY_INSTALL_SYSTEM:-0}"
 
 note() {
@@ -153,7 +153,7 @@ select_artifact() {
 
   case "$arch" in
     amd64|arm64|armhf)
-      case "${HOLD_FLAVOR:-}" in
+      case "${GRUTTY_FLAVOR:-}" in
         gnu-dynamic) printf 'grutty-%s-linux-%s-gnu-dynamic.tar.gz\n' "$version_no_v" "$arch" ;;
         gnu-static) printf 'grutty-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
         musl-static) printf 'grutty-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
@@ -161,14 +161,14 @@ select_artifact() {
           case "$libc" in
             gnu) printf 'grutty-%s-linux-%s-gnu-static.tar.gz\n' "$version_no_v" "$arch" ;;
             musl) printf 'grutty-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch" ;;
-            *) die "could not determine Linux libc; set HOLD_FLAVOR=gnu-static or HOLD_FLAVOR=musl-static" ;;
+            *) die "could not determine Linux libc; set GRUTTY_FLAVOR=gnu-static or GRUTTY_FLAVOR=musl-static" ;;
           esac
           ;;
-        *) die "unsupported HOLD_FLAVOR: $HOLD_FLAVOR" ;;
+        *) die "unsupported GRUTTY_FLAVOR: $GRUTTY_FLAVOR" ;;
       esac
       ;;
     mipsel|riscv64)
-      if [ "${HOLD_FLAVOR:-}" ] && [ "${HOLD_FLAVOR:-}" != musl-static ]; then
+      if [ "${GRUTTY_FLAVOR:-}" ] && [ "${GRUTTY_FLAVOR:-}" != musl-static ]; then
         die "$arch only has a musl-static Grutty artifact"
       fi
       printf 'grutty-%s-linux-%s-musl-static.tar.gz\n' "$version_no_v" "$arch"
@@ -328,14 +328,14 @@ write_env_file() {
   install_dir=$3
   mkdir -p "$(dirname "$env_file")"
   {
-    printf 'export HOLD_BIN=%s\n' "$(shell_quote "$hold_bin_path")"
+    printf 'export GRUTTY_BIN=%s\n' "$(shell_quote "$hold_bin_path")"
     printf 'export PATH=%s:"$PATH"\n' "$(shell_quote "$install_dir")"
   } >"$env_file"
 }
 
 profile_path() {
-  if [ "${HOLD_PROFILE:-}" ]; then
-    printf '%s\n' "$HOLD_PROFILE"
+  if [ "${GRUTTY_PROFILE:-}" ]; then
+    printf '%s\n' "$GRUTTY_PROFILE"
     return
   fi
   shell_name=$(basename "${SHELL:-sh}")
@@ -348,7 +348,7 @@ profile_path() {
 
 maybe_update_profile() {
   install_dir=$1
-  [ "${HOLD_UPDATE_PROFILE:-1}" = 1 ] || return 0
+  [ "${GRUTTY_UPDATE_PROFILE:-1}" = 1 ] || return 0
   [ "$(current_uid)" -ne 0 ] || return 0
   [ -n "${HOME:-}" ] || return 0
 
@@ -529,12 +529,12 @@ fi
 version=$("$target" --version 2>/dev/null || true)
 [ -n "$version" ] || die "installed binary did not run: $target --version"
 
-if [ "${HOLD_ENV_FILE:-}" ]; then
-  write_env_file "$HOLD_ENV_FILE" "$target" "$install_dir"
-  note "wrote environment handoff: $HOLD_ENV_FILE"
+if [ "${GRUTTY_ENV_FILE:-}" ]; then
+  write_env_file "$GRUTTY_ENV_FILE" "$target" "$install_dir"
+  note "wrote environment handoff: $GRUTTY_ENV_FILE"
 fi
 
-if ! path_contains_dir "$install_dir" && [ -z "${HOLD_ENV_FILE:-}" ]; then
+if ! path_contains_dir "$install_dir" && [ -z "${GRUTTY_ENV_FILE:-}" ]; then
   maybe_update_profile "$install_dir"
 fi
 
@@ -555,5 +555,5 @@ esac
 
 # Machine handoff for scripts capturing stdout; humans already saw the path.
 if [ ! -t 1 ]; then
-  printf 'HOLD_BIN=%s\n' "$target"
+  printf 'GRUTTY_BIN=%s\n' "$target"
 fi
