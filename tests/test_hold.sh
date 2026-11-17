@@ -3635,6 +3635,7 @@ test_curses_mouse_checklist() {
   cat >"$TEST_ROOT/checklist.py" <<'PY'
 import curses, sys, time
 items = ["Option A", "Option B", "Option C"]
+log = open(sys.argv[1], "w")
 def main(scr):
     curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
     curses.mouseinterval(0)
@@ -3651,9 +3652,11 @@ def main(scr):
             _, x, y, _, b = curses.getmouse()
         except curses.error:
             continue
-        # ncurses versions differ in which of press/click/release they report;
-        # act once per click on whichever arrives first.
-        if b & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED):
+        log.write("x=%d y=%d bstate=%#x\n" % (x, y, b)); log.flush()
+        # ncurses versions differ in which of press/click/release they report
+        # (and may merge quick clicks into double/triple clicks); act once per
+        # click on whichever arrives first.
+        if b & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON1_TRIPLE_CLICKED):
             pressed = True
         elif b & curses.BUTTON1_RELEASED:
             if pressed:
@@ -3665,13 +3668,13 @@ def main(scr):
         elif y == 7 and 4 <= x <= 11: return " ".join(str(i + 1) for i, c in enumerate(checked) if c)
 print("RESULT:" + curses.wrapper(main)); sys.stdout.flush(); time.sleep(20)
 PY
-  "$HOLD_BIN" -dt --name cl -- python3 "$TEST_ROOT/checklist.py" >/dev/null || return 1
+  "$HOLD_BIN" -dt --name cl -- python3 "$TEST_ROOT/checklist.py" "$TEST_ROOT/mouse-events.log" >/dev/null || return 1
   "$HOLD_BIN" wait cl --match 'OK' --timeout 15000 || { "$HOLD_BIN" peek cl --json >&2; "$HOLD_BIN" logs cl >&2; return 1; }
   "$HOLD_BIN" wait cl --idle 300 --timeout 5000 || { "$HOLD_BIN" peek cl >&2; return 1; }
   "$HOLD_BIN" send cl --mouse click,8,4 --wait 300 || return 1
   "$HOLD_BIN" wait cl --match '[X] Option B' --timeout 5000 || { "$HOLD_BIN" peek cl --json >&2; return 1; }
   "$HOLD_BIN" send cl --mouse click,6,7 || return 1
-  "$HOLD_BIN" wait cl --match 'RESULT:2' --timeout 8000 || { "$HOLD_BIN" peek cl >&2; return 1; }
+  "$HOLD_BIN" wait cl --match 'RESULT:2' --timeout 8000 || { "$HOLD_BIN" peek cl >&2; echo "mouse events:" >&2; cat "$TEST_ROOT/mouse-events.log" >&2; return 1; }
   "$HOLD_BIN" end cl >/dev/null 2>&1 || true
 }
 
