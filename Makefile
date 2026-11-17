@@ -44,16 +44,19 @@ TEST_OBJS := $(patsubst src/%.c,obj-test/%.o,$(SRCS)) $(VTERM_OBJS)
 INCLUDES := -Iinclude -Ithird_party/libvterm/include
 ALL_CPPFLAGS := $(CPPFLAGS) $(EXTRA_CPPFLAGS) $(INCLUDES) $(VERSION_CPPFLAG)
 TEST_CPPFLAGS := -DHOLD_TESTING -DHOLD_BOOT_ID_PATH='"/tmp/hold_test_boot_id"'
+# Each object records the headers it read (obj/x.d), so editing a header
+# (font_data.h, console.h, ...) rebuilds what uses it.
+DEPFLAGS := -MMD -MP
 
 all: hold
 
 obj/vterm/%.o: third_party/libvterm/src/%.c
 	@mkdir -p $(dir $@)
-	$(CC) -Ithird_party/libvterm/include $(VTERM_CFLAGS) -c -o $@ $<
+	$(CC) -Ithird_party/libvterm/include $(VTERM_CFLAGS) $(DEPFLAGS) -c -o $@ $<
 
 obj/%.o: src/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(ALL_CPPFLAGS) $(CFLAGS) -c -o $@ $<
+	$(CC) $(ALL_CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c -o $@ $<
 
 # A static link uses its own build of paths.c that never references getpwuid
 # (glibc cannot load NSS modules into a static binary, and warns).
@@ -61,7 +64,7 @@ STATIC_OBJS := $(if $(strip $(STATIC_LDFLAGS)),$(filter-out obj/platform/paths.o
 
 obj/platform/paths-static.o: src/platform/paths.c
 	@mkdir -p $(dir $@)
-	$(CC) $(ALL_CPPFLAGS) -DHOLD_STATIC_LINK $(CFLAGS) -c -o $@ $<
+	$(CC) $(ALL_CPPFLAGS) -DHOLD_STATIC_LINK $(DEPFLAGS) $(CFLAGS) -c -o $@ $<
 
 hold: $(STATIC_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(STATIC_LDFLAGS) -o $@ $(STATIC_OBJS)
@@ -71,7 +74,7 @@ hold-dynamic: $(OBJS)
 
 obj-test/%.o: src/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) -c -o $@ $<
+	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(DEPFLAGS) $(CFLAGS) -c -o $@ $<
 
 test: $(TEST_OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(TEST_LDFLAGS) -o hold $(TEST_OBJS)
@@ -81,7 +84,7 @@ test: $(TEST_OBJS)
 	@bash tests/test_release_installer.sh
 	@$(MAKE) test-040
 
-screen-test: $(VTERM_OBJS)
+screen-test: tests/screen_test.c src/screen/screen.c $(wildcard include/hold/*.h) $(VTERM_OBJS)
 	$(CC) $(ALL_CPPFLAGS) $(TEST_CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o screen-test tests/screen_test.c src/screen/screen.c $(VTERM_OBJS)
 	@./screen-test
 
@@ -102,6 +105,8 @@ ci:
 # Layer dependency-direction lint, shared verbatim with the GitHub CI job.
 lint:
 	@bash scripts/lint_layers.sh
+
+-include $(wildcard obj/*.d obj/*/*.d obj-test/*.d obj-test/*/*.d)
 
 clean:
 	rm -f hold hold-dynamic screen-test
