@@ -82,7 +82,9 @@ static int console_socket_in_dir(const char *sock_path, bool bind_listener) {
         if (!err && chmod(addr.sun_path, 0600) != 0) {
             err = errno;
         }
-        if (!err && listen(fd, 1) != 0) {
+        /* A deep queue: many clients at once (parallel waits, agents) must
+         * queue, not be refused - macOS refuses a connect when it is full. */
+        if (!err && listen(fd, SOMAXCONN) != 0) {
             err = errno;
         }
         if (err) {

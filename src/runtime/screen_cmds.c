@@ -59,12 +59,24 @@ static int no_screen(const struct screen_target *t) {
 
 /* One control request, retried while the broker answers "error busy" (it
  * serves a bounded number of clients and turns the rest away without acting,
- * so retrying is safe); backs off for up to 10 s. -1 with errno when the
+ * so retrying is safe) or a running call's socket refuses the connection
+ * (its accept queue is full); backs off for up to 10 s. -1 with errno when the
  * broker cannot be reached; *reply stays "error busy" if it never frees up. */
 static int control_quiet(const struct screen_target *t, const char *req, size_t len, unsigned char **reply, size_t *reply_len) {
     long delay_ms = 20, waited_ms = 0;
     for (;;) {
-        if (hold_console_request(t->r.console_sock, req, len, reply, reply_len) != 0) return -1;
+        if (hold_console_request(t->r.console_sock, req, len, reply, reply_len) != 0) {
+            /* A running call's broker refusing means its accept queue is
+             * full (macOS refuses instead of queueing): back off and retry. */
+            if (errno != ECONNREFUSED || t->st != STATE_RUNNING || waited_ms >= 10000) return -1;
+            int saved = errno;
+            struct timespec sl = {.tv_sec = delay_ms / 1000, .tv_nsec = (delay_ms % 1000) * 1000000L};
+            nanosleep(&sl, NULL);
+            waited_ms += delay_ms;
+            delay_ms = delay_ms * 2 > 500 ? 500 : delay_ms * 2;
+            errno = saved;
+            continue;
+        }
         if (strcmp((const char *)*reply, "error busy\n") != 0 || waited_ms >= 10000) return 0;
         free(*reply);
         *reply = NULL;

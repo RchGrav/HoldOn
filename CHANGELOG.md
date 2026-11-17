@@ -12,6 +12,10 @@
   `--replay`.
 - `send`, `resize`, and `msg` on an ended call said "no call matches"; they
   now say the call has ended (exit 8), like `peek` and `wait`.
+- On macOS, a burst of clients on one call (parallel `wait`s) got
+  "Connection refused": the console socket listened with a queue of 1, which
+  Linux masks by blocking and macOS refuses. It now queues SOMAXCONN, and a
+  refused connect to a running call backs off and retries.
 - More than 16 clients at once on one call (say, many parallel `wait`s) got
   "Connection reset by peer". The broker now serves 64 and answers the rest
   "busy"; the client backs off and retries for up to 10 s.
