@@ -141,8 +141,9 @@ mode, window title, an output counter, and how long the screen has been idle.
 ## Screenshots agents can read
 
 `hold peek <call> --image screen.png` renders the live screen to a PNG with
-true colors, bold/underline/inverse, box drawing, Braille, CJK, and emoji —
-plus overlays designed for vision models:
+true colors, bold/underline/inverse, box drawing, Braille, every modern
+script (Hebrew, Arabic, Indic, Thai, CJK, ...), and anti-aliased emoji — plus
+overlays designed for vision models:
 
 - **Coordinate rulers** on the top and left (`┬` / `├` ticks, labeled), with a
   one-cell gutter so they never touch the content.
@@ -153,6 +154,23 @@ plus overlays designed for vision models:
 - **A footer** spelling it out: `CURSOR: col 31, row 4   SIZE: 80x24`.
 
 ![A whiptail checklist driven entirely by hold send: Down, Space, Down, Space.](docs/images/whiptail-form.png)
+
+Real, busy TUIs work the same way. Here an agent staged files in lazygit with
+`a`, opened the commit dialog with `c`, and typed the summary with
+`hold send` — emoji included:
+
+![lazygit driven through hold: files staged, the commit dialog open, and the summary typed by hold send.](docs/images/lazygit.png)
+
+And a live full-screen animation — astroterm's sky over New York, with
+Braille constellation lines and colored planets. It redraws only the cells
+that change, so `hold wait --idle` still finds a quiet moment to capture:
+
+![astroterm (a terminal planetarium) rendered by hold peek --image: an azimuthal grid, Braille constellations, Saturn, Neptune, and the Moon.](docs/images/astroterm.png)
+
+24-bit color comes through exactly. In bit, a logo designer, the text, font,
+gradient colors, and shadow were all set with `hold send`:
+
+![bit (a terminal logo designer) driven through hold: the word "hold" in a magenta-to-cyan 24-bit gradient with a shadow, above rounded control panels.](docs/images/bit-gradient.png)
 
 `--scale N`, `--no-ruler`, and `--no-footer` adjust it. After a program exits,
 `hold peek` still shows its **last screen** — a crash is diagnosable at once.
@@ -334,8 +352,9 @@ feeds the same bytes to a headless terminal — vendored
 `peek`, `send`, `wait`, `resize`, and `msg` talk to the broker over the
 call's private Unix socket (owner-only, peer UID checked). When the program
 exits, the broker saves its final screen beside the log. The screenshot
-renderer and its PNG encoder are built in; glyphs come from a subset of
-[GNU Unifont](third_party/unifont/). Details:
+renderer and its PNG encoder are built in; glyphs come from
+[GNU Unifont](third_party/unifont/) and, for emoji,
+[Noto Emoji](third_party/noto-emoji/). Details:
 [docs/screen.md](docs/screen.md) · [docs/console.md](docs/console.md) ·
 [docs/SPEC.md](docs/SPEC.md).
 
@@ -346,7 +365,7 @@ renderer and its PNG encoder are built in; glyphs come from a subset of
 | `hold [-d] [-t] [-i] [--name N] -- CMD…` | place a call (foreground, detached, on a PTY) |
 | `hold peek CALL [--ruler] [--json] [--image F]` | the screen as text, JSON, or PNG |
 | `hold send CALL [TEXT] [-k KEY] [--paste T] [--mouse A,C,R] [--wait MS]` | type, press, paste, click |
-| `hold wait CALL [--idle MS] [--match T \| --regex R] [--since SEQ]` | block until it settles, shows text, or exits |
+| `hold wait CALL [--idle [MS]] [--match T \| --regex R] [--since SEQ]` | block until it settles, shows text, or exits |
 | `hold resize CALL COLS ROWS` | resize its terminal (SIGWINCH) |
 | `hold msg CALL TEXT` | message an agent; it can reply the same way |
 | `hold list` · `hold ps` · `hold inspect CALL` | what is running, and everything known about it |
@@ -382,7 +401,8 @@ between agents. (It began life as *sigmund*: signal guardian.)
 ---
 
 Apache-2.0. Vendored: [libvterm](third_party/libvterm/) (MIT),
-[GNU Unifont](third_party/unifont/) subset (SIL OFL 1.1).
+[GNU Unifont](third_party/unifont/) subset and
+[Noto Emoji](third_party/noto-emoji/) masks (both SIL OFL 1.1).
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 <sub>Keywords: agent TUI tester, TUI testing, terminal UI automation, headless

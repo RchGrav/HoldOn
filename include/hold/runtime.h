@@ -78,6 +78,11 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
                            const struct hold_store *system_store,
                            int argc,
                            char **argv);
+/* Returned by a verb whose own parser met -h/--help (it alone can tell a
+ * help flag from, say, send --text --help): the CLI prints the command's
+ * help. Never an exit status. */
+#define HOLD_RC_SHOW_HELP 1000
+
 /* The screen verbs (src/runtime/screen_cmds.c): argv holds the target and
  * the verb's own flags. */
 int hold_cmd_peek_action(const struct hold_invocation *inv, const struct hold_store *user_store,

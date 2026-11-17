@@ -60,13 +60,13 @@ static const char help_kill[] =
 static const char help_tail[] =
     "Follow a call's live output. Shorthand for hold logs <target> -f.\n";
 static const char help_logs[] =
-    "Print a call's captured output as plain text. -f follows a running call until it ends; -n N prints the newest N lines; --filter TEXT keeps lines containing TEXT; --similar LINE keeps lines shaped like LINE; --replay re-emits the output with its recorded timing. For the live screen of a TTY call, use hold peek.\n";
+    "Print a call's captured output as plain text. -f follows a running call until it ends; -n N prints the newest N lines. For the live screen of a TTY call, use hold peek.\n";
 static const char help_peek[] =
-    "Show a TTY call's screen as it is right now. By default prints the visible screen as plain text, one line per row. --ruler adds column and row numbers. --json adds the cursor, terminal modes, title, output counter and idle time. --image FILE writes a color PNG with a coordinate ruler (the cursor's column and row marked in red; --no-ruler drops it); --cursor-ring circles the cursor and --scale N enlarges it. After a call ends, peek shows its last screen. --last-alt shows the last full-screen (alternate-screen) frame a program like vim or less displayed before it switched back.\n";
+    "Show a TTY call's screen as it is right now. By default prints the visible screen as plain text, one line per row. --ruler adds column and row numbers. --json adds the cursor, terminal modes, title, output counter and idle time. --image FILE writes a color PNG with a coordinate ruler (the cursor's column and row marked in red; --no-ruler drops it); --cursor-ring circles the cursor and --scale N enlarges it. Run hold wait first (or hold send --wait) so you do not read a half-drawn frame. After a call ends, peek shows its last screen. --last-alt shows the last full-screen (alternate-screen) frame a program like vim or less displayed before it switched back.\n";
 static const char help_send[] =
-    "Type into a TTY call without attaching. Arguments are applied in order: TEXT is typed literally (--text TEXT for text starting with -), -k KEY presses a key (Enter, Tab, Escape, Up, Down, Left, Right, Home, End, PageUp, PageDown, Delete, F1-F24, Space, with C- M- S- modifiers such as C-c or M-x), --keys \"K1 K2\" presses several, --enter presses Enter, --paste TEXT pastes (bracketed when the program asked for it; - reads stdin), --stdin types stdin, and --mouse ACTION,COL,ROW[,BUTTON] sends a mouse event (click, press, release, move, drag, scroll-up, scroll-down; exit 9 if the program has mouse reporting off). Keys are encoded for the program's current modes. --wait MS then waits until the program has answered and gone quiet for MS (bounded by --timeout, default 10s). --seq prints the output counter for hold wait --since.\n";
+    "Type into a TTY call without attaching. Arguments are applied in order: TEXT is typed literally (--text TEXT for text starting with -), -k KEY presses a key (Enter, Tab, Escape, Backspace, Up, Down, Left, Right, Home, End, PageUp, PageDown, Insert, Delete, F1-F24, Space, with C- M- S- modifiers such as C-c or M-x), --keys \"K1 K2\" presses several, --enter presses Enter, --paste TEXT pastes (bracketed when the program asked for it; - reads stdin), --stdin types stdin, and --mouse ACTION,COL,ROW[,BUTTON] sends a mouse event (click, press, release, move, drag, scroll-up, scroll-down; exit 9 if the program has mouse reporting off). Keys are encoded for the program's current modes. --wait MS then waits until the program has answered and gone quiet for MS (bounded by --timeout, default 10s). --seq prints the output counter for hold wait --since.\n";
 static const char help_wait[] =
-    "Block until a condition holds. --idle MS: the program has drawn something and the screen then stays quiet for MS (counted from when the wait began; with --since SEQ, output after SEQ is required). --match TEXT / --regex RE: the text is on the screen (already there counts, unless --since SEQ: then only after output past SEQ). --exit or no condition: the call ends; prints its exit code (docker wait). Screen conditions time out after 30s unless --timeout MS says otherwise (0 = never). Exit status: 0 met, 7 timed out, 8 the call ended first.\n";
+    "Block until a condition holds, so a script or agent never has to guess with sleep. Wait before you peek: right after a send, the screen may be only half drawn (hold send --wait MS sends and waits in one step). --idle [MS]: the program has drawn something and the screen then stays quiet for MS, 500 if MS is left out (counted from when the wait began; with --since SEQ, output after SEQ is required). Silence before the first output never counts, so on a program that prints nothing (cat, a quiet server) --idle runs to the timeout, with or without --since 0; use --match, --exit or peek there. --match TEXT / --regex RE: the text is on the screen (already there counts, unless --since SEQ: then only after output past SEQ). --exit or no condition: the call ends; prints its exit code (docker wait). Screen conditions time out after 30s unless --timeout MS says otherwise (0 = never). Exit status: 0 met, 7 timed out, 8 the call ended first.\n";
 static const char help_resize[] =
     "Resize a TTY call's terminal to <cols> <rows> (or <cols>x<rows>). The program receives SIGWINCH and the screen hold peek shows reflows with it.\n";
 static const char help_msg[] =
@@ -110,16 +110,17 @@ static const struct hold_cli_command_spec command_specs[] = {
      "usage: hold kill [--print] [--all] <target>...", NULL, help_kill},
     {"tail", NULL, 1, 1, 0, "usage: hold tail <target>", NULL, help_tail},
     {"logs", NULL, 1, -1, 0,
-     "usage: hold logs <target> [--follow|-f] [--tail|-n N] [--filter TEXT] [--similar LINE] [--replay]", NULL, help_logs},
+     "usage: hold logs <target> [--follow|-f] [--tail|-n N]", NULL, help_logs},
     {"inspect", NULL, 1, 1, 0, "usage: hold inspect <target>", NULL, help_inspect},
     {"ports", NULL, 1, 1, 0, "usage: hold ports <target>", NULL, help_ports},
     {"stats", NULL, 1, 1, SPEC_NOSTREAM, "usage: hold stats <target> [--no-stream]", NULL, help_stats},
     {"peek", NULL, 1, -1, 0,
      "usage: hold peek <target> [--json] [--ruler] [--last-alt] [--image FILE [--no-ruler] [--cursor-ring] [--scale N]]", NULL, help_peek},
     {"send", NULL, 1, -1, 0,
-     "usage: hold send <target> [TEXT]... [-k KEY]... [--enter] [--paste TEXT] [--mouse ACTION,COL,ROW] [--wait MS]", NULL, help_send},
+     "usage: hold send <target> [TEXT]... [--text TEXT] [-k KEY]... [--keys \"K1 K2\"] [--enter] [--paste TEXT|-]\n"
+     "                 [--mouse ACTION,COL,ROW[,BUTTON]] [--stdin] [--wait MS [--timeout MS]] [--seq]", NULL, help_send},
     {"wait", NULL, 1, -1, 0,
-     "usage: hold wait <target> [--idle MS] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]", NULL, help_wait},
+     "usage: hold wait <target> [--idle [MS]] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]", NULL, help_wait},
     {"msg", NULL, 1, -1, 0,
      "usage: hold msg <target> TEXT... [--stdin] [--now] [--settle MS] [--timeout MS] [--no-enter]", NULL, help_msg},
     {"resize", NULL, 1, 3, 0, "usage: hold resize <target> <cols> <rows>", NULL, help_resize},

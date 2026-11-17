@@ -17,6 +17,7 @@
 
 #define WAIT_EXIT_TIMEOUT 7
 #define WAIT_EXIT_ENDED 8
+#define WAIT_IDLE_DEFAULT_MS 500
 #define SEND_EXIT_MOUSE_OFF 9 /* the program has mouse reporting off */
 
 struct screen_target {
@@ -55,10 +56,33 @@ static int no_screen(const struct screen_target *t) {
     return 5;
 }
 
+/* One control request, retried while the broker answers "error busy" (it
+ * serves a bounded number of clients and turns the rest away without acting,
+ * so retrying is safe); backs off for up to 10 s. -1 with errno when the
+ * broker cannot be reached; *reply stays "error busy" if it never frees up. */
+static int control_quiet(const struct screen_target *t, const char *req, size_t len, unsigned char **reply, size_t *reply_len) {
+    long delay_ms = 20, waited_ms = 0;
+    for (;;) {
+        if (hold_console_request(t->r.console_sock, req, len, reply, reply_len) != 0) return -1;
+        if (strcmp((const char *)*reply, "error busy\n") != 0 || waited_ms >= 10000) return 0;
+        free(*reply);
+        *reply = NULL;
+        struct timespec sl = {.tv_sec = delay_ms / 1000, .tv_nsec = (delay_ms % 1000) * 1000000L};
+        nanosleep(&sl, NULL);
+        waited_ms += delay_ms;
+        delay_ms = delay_ms * 2 > 500 ? 500 : delay_ms * 2;
+    }
+}
+
 /* Send one control request; *reply is the malloc'd reply. rc 0 when the
  * broker answered, else a nonzero exit status (message printed). */
 static int control(const struct screen_target *t, const char *req, size_t len, unsigned char **reply, size_t *reply_len) {
-    if (hold_console_request(t->r.console_sock, req, len, reply, reply_len) != 0) {
+    if (control_quiet(t, req, len, reply, reply_len) != 0) {
+        if (errno == EMSGSIZE) {
+            fprintf(stderr, "hold: %s: too much text for one request (limit about %u KiB); split it across several sends\n",
+                    t->label, HOLD_CONSOLE_MAX_REQUEST / 2 / 1024);
+            return 1;
+        }
         fprintf(stderr, "hold: cannot reach %s's console: %s\n", t->label, strerror(errno));
         return 3;
     }
@@ -67,7 +91,8 @@ static int control(const struct screen_target *t, const char *req, size_t len, u
 
 static int reply_error(const struct screen_target *t, const unsigned char *reply) {
     const char *msg = (const char *)reply;
-    if (!strncmp(msg, "error ", 6)) msg += 6;
+    if (!strcmp(msg, "error busy\n")) msg = "busy: too many clients at once; try again\n";
+    else if (!strncmp(msg, "error ", 6)) msg += 6;
     fprintf(stderr, "hold: %s: %.*s\n", t->label, (int)strcspn(msg, "\n"), msg);
     return 1;
 }
@@ -96,7 +121,7 @@ static int load_snapshot(const struct screen_target *t, struct hold_snapshot *sn
         unsigned char *reply = NULL;
         size_t len = 0;
         const char *req = last_alt ? "peek alt=1" : "peek";
-        if (hold_console_request(t->r.console_sock, req, strlen(req), &reply, &len) == 0) {
+        if (control_quiet(t, req, strlen(req), &reply, &len) == 0) {
             int rc = 0;
             if (len >= 3 && !memcmp(reply, "ok\n", 3)) {
                 if (hold_snapshot_parse(reply + 3, len - 3, snap) != 0) {
@@ -262,8 +287,7 @@ static int peek_action_impl(const struct hold_invocation *inv,
                 return 1;
             }
         } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
-            fputs(peek_usage, stdout);
-            return 0;
+            return HOLD_RC_SHOW_HELP;
         } else if (a[0] == '-' && a[1]) {
             fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, peek_usage);
             return 1;
@@ -455,8 +479,7 @@ static int send_action_impl(const struct hold_invocation *inv,
         } else if (!strcmp(a, "--seq")) {
             print_seq = true;
         } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
-            fputs(send_usage, stdout);
-            rc = 0;
+            rc = HOLD_RC_SHOW_HELP;
             goto out;
         } else {
             fprintf(stderr, "hold: error: unknown flag '%s' (send text starting with - via --text)\n%s", a, send_usage);
@@ -568,7 +591,7 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
 }
 
 static const char wait_usage[] =
-    "usage: hold wait <target> [--idle MS] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]\n";
+    "usage: hold wait <target> [--idle [MS]] [--match TEXT | --regex RE] [--since SEQ] [--exit] [--timeout MS]\n";
 
 static int wait_action_impl(const struct hold_invocation *inv,
                          const struct hold_store *user_store,
@@ -580,7 +603,13 @@ static int wait_action_impl(const struct hold_invocation *inv,
     long idle = -1, timeout = -1;
     for (int i = 0; i < argc; i++) {
         const char *a = argv[i];
-        if (!strcmp(a, "--idle") || !strcmp(a, "--timeout")) {
+        if (!strcmp(a, "--idle") &&
+            (i + 1 >= argc || argv[i + 1][0] == '-' || (!token && parse_duration_ms(argv[i + 1]) < 0))) {
+            /* Bare --idle (next is a flag, the target, or nothing): the
+             * documented 500 ms settle time. Once the target is known, the
+             * next word must be a duration, so a typo still says so. */
+            idle = WAIT_IDLE_DEFAULT_MS;
+        } else if (!strcmp(a, "--idle") || !strcmp(a, "--timeout")) {
             if (need_value(i, argc, a) != 0) return 1;
             long v = parse_duration_ms(argv[++i]);
             if (v < 0) {
@@ -603,8 +632,7 @@ static int wait_action_impl(const struct hold_invocation *inv,
         } else if (!strcmp(a, "--exit")) {
             want_exit = true;
         } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
-            fputs(wait_usage, stdout);
-            return 0;
+            return HOLD_RC_SHOW_HELP;
         } else if (a[0] == '-' && a[1]) {
             fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, wait_usage);
             return 1;
@@ -695,10 +723,8 @@ int hold_cmd_resize_action(const struct hold_invocation *inv,
                            const struct hold_store *system_store,
                            int argc,
                            char **argv) {
-    if (argc >= 1 && (!strcmp(argv[0], "-h") || !strcmp(argv[0], "--help"))) {
-        fputs(resize_usage, stdout);
-        return 0;
-    }
+    for (int i = 0; i < argc; i++)
+        if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) return HOLD_RC_SHOW_HELP;
     int cols = 0, rows = 0;
     char x = 0;
     if (argc == 2 && sscanf(argv[1], "%d%c%d", &cols, &x, &rows) == 3 && (x == 'x' || x == 'X')) {
@@ -771,8 +797,7 @@ static int msg_action_impl(const struct hold_invocation *inv,
         } else if (!strcmp(a, "--stdin")) {
             from_stdin = true;
         } else if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
-            fputs(msg_usage, stdout);
-            rc = 0;
+            rc = HOLD_RC_SHOW_HELP;
             goto out;
         } else if (a[0] == '-' && a[1]) {
             fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, msg_usage);

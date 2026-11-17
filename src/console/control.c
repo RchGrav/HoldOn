@@ -27,8 +27,9 @@ int hold_console_request(const char *sock_path, const char *request, size_t requ
                          unsigned char **reply, size_t *reply_len) {
     *reply = NULL;
     *reply_len = 0;
-    if (request_len > UINT32_MAX) {
-        errno = E2BIG;
+    if (request_len > HOLD_CONSOLE_MAX_REQUEST) {
+        /* The broker would refuse it mid-write (a bare EPIPE here); say why. */
+        errno = EMSGSIZE;
         return -1;
     }
     int fd = hold_connect_console_socket(sock_path);

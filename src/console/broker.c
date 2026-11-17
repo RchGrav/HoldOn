@@ -22,8 +22,7 @@
  * When the target exits, the final screen is written beside the log so the
  * last frame stays inspectable after the socket is gone. */
 
-#define BROKER_MAX_CONTROL 16
-#define BROKER_CONTROL_MAX_REQUEST (1u << 20)
+#define BROKER_MAX_CONTROL 64
 #define BROKER_WRITE_TIMEOUT_MS 5000
 /* A connection silent this long is a read-only raw attach (e.g. socat -u). */
 #define BROKER_SNIFF_MS 250
@@ -192,6 +191,9 @@ static void apply_size(struct broker *b, int rows, int cols, bool by_agent) {
     (void)ioctl(b->master, TIOCSWINSZ, &ws);
     hold_screen_resize(b->screen, rows, cols);
     b->size_by_agent = by_agent;
+    /* The last mouse event's cell may not exist at the new size (or now
+     * shows something else): stop reporting it. */
+    b->have_mouse = false;
 }
 
 static int exit_code_of(int st) {
@@ -831,7 +833,7 @@ static void read_control(struct broker *b, struct control_client *c) {
     c->len += (size_t)n;
     if (c->len < 4) return;
     uint32_t want = console_load_be32(c->buf);
-    if (want > BROKER_CONTROL_MAX_REQUEST) {
+    if (want > HOLD_CONSOLE_MAX_REQUEST) {
         control_replyf(c, "error request too large\n");
         return;
     }
@@ -1054,7 +1056,16 @@ static void broker_serve(struct broker *b) {
                 int slot = -1;
                 for (int i = 0; i < BROKER_MAX_CONTROL && slot < 0; i++)
                     if (ctl[i].fd < 0) slot = i;
-                if (set_fd_nonblocking(next) != 0 || !authorize_client(b, next) || slot < 0) {
+                if (set_fd_nonblocking(next) != 0 || !authorize_client(b, next)) {
+                    close(next);
+                } else if (slot < 0) {
+                    /* Full: say so in protocol, so the client knows nothing
+                     * was done and can retry, instead of seeing a bare reset. */
+                    static const char busy[] = "error busy\n";
+                    unsigned char frame[4 + sizeof(busy) - 1];
+                    console_store_be32(frame, (uint32_t)(sizeof(busy) - 1));
+                    memcpy(frame + 4, busy, sizeof(busy) - 1);
+                    (void)!write(next, frame, sizeof(frame));
                     close(next);
                 } else {
                     /* Every connection starts undecided; its first bytes

@@ -689,6 +689,7 @@ int hold_cli_main(int argc, char **argv) {
         hold_usage();
         rc = 1;
     }
+    if (rc == HOLD_RC_SHOW_HELP) rc = hold_show_help(canon);
     free(cmd_argv);
     return rc;
 }

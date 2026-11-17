@@ -1,5 +1,64 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `--help` after the target (`hold wait NAME --help`, the order agents type)
+  printed only the usage line for `peek`, `send`, `wait`, `resize`, `msg`, and
+  `logs`; it now prints the full help. `hold resize NAME --help` failed with
+  exit 1.
+- `hold logs --help` still listed the removed `--filter`, `--similar`, and
+  `--replay`.
+- `send`, `resize`, and `msg` on an ended call said "no call matches"; they
+  now say the call has ended (exit 8), like `peek` and `wait`.
+- More than 16 clients at once on one call (say, many parallel `wait`s) got
+  "Connection reset by peer". The broker now serves 64 and answers the rest
+  "busy"; the client backs off and retries for up to 10 s.
+- `send`/`msg` text over about 512 KiB failed with "Broken pipe"; it now
+  fails up front and says to split the text across several sends.
+- A call name could start with `-`, and such a call could never be targeted.
+  Names starting with `-` are now rejected.
+- `peek --image` drew Hebrew, Arabic, Armenian, Georgian, Indic scripts,
+  Ethiopic, Vietnamese, legacy-computing sextants, and math letters as
+  missing-glyph boxes: the font now keeps all of Unifont's Basic Multilingual
+  Plane plus those upper-plane blocks (binary +0.5 MB). Glyphs Unifont draws
+  16 pixels wide in a single terminal cell (Ethiopic, Devanagari, some math
+  letters) lost their right half; they are now squeezed into the cell.
+- `peek --image` drew emoji as Unifont's 1-bit line art; double-width emoji
+  now come from Noto Emoji (monochrome, SIL OFL 1.1), rasterized at build
+  time into anti-aliased 32x32 masks and drawn in the cell's color (binary
+  +0.55 MB). Invisible characters - variation selectors (the U+FE0F after
+  most emoji), zero-width space and joiner, bidi controls - drew Unifont's
+  labelled boxes over their cell; they now draw nothing.
+- `peek --image` drew rounded box corners (`╭╮╰╯`, used by lazygit, Claude
+  Code, and most modern TUIs) as square ones; they are now anti-aliased arcs.
+- The 16 ANSI colors in screenshots come from VS Code's Dark+ terminal
+  palette instead of libvterm's saturated defaults, whose blue (0,0,224) was
+  nearly invisible on the dark background (1.8:1 contrast); every color but
+  black now reads at 3:1 or better. 256-color and 24-bit colors are unchanged.
+- After `hold resize`, screenshots kept reporting the last mouse event's cell,
+  which might no longer exist (`MOUSE: col 60` on a 60-column screen); a
+  resize now clears it.
+- `send --help` did not list `Backspace` (or `Insert`) among the keys.
+- Editing a header did not rebuild the objects that use it (the Makefile had
+  no dependency tracking); objects now record their headers (`-MMD`).
+- `peek --image` held the image twice while encoding; it now filters in place,
+  halving peak memory (a 1000x1000 screen: 787 MB to 408 MB) with identical
+  output.
+
+### Changed
+
+- `hold wait --idle` takes an optional value: a bare `--idle` means 500 ms,
+  wherever it appears (`hold wait --idle NAME` works).
+- The README shows hold driving real TUIs: lazygit (staging and a commit
+  typed with `hold send`), astroterm, and bit (24-bit gradients); the
+  whiptail screenshot is re-rendered with the new palette.
+- `wait --help` says to wait before you peek, and that `--idle` never passes
+  on a program that prints nothing (`cat`, a quiet server), even with
+  `--since 0`. `peek --help` says to wait first. `send`'s usage line lists all
+  of its flags.
+
 ## 0.8.1 - Review fixes — 2026-11-17
 
 ### Fixed

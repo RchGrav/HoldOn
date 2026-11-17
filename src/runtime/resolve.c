@@ -55,11 +55,9 @@ bool hold_record_matches_alias_intent(const char *command, const struct hold_run
     }
     /* Screen verbs resolve any matching call and then explain what it lacks
      * (no TTY, already ended) rather than claiming nothing matched. */
-    if (!strcmp(command, "inspect") || !strcmp(command, "wait") || !strcmp(command, "peek")) {
+    if (!strcmp(command, "inspect") || !strcmp(command, "wait") || !strcmp(command, "peek") ||
+        !strcmp(command, "send") || !strcmp(command, "resize") || !strcmp(command, "msg")) {
         return true;
-    }
-    if (!strcmp(command, "send") || !strcmp(command, "resize") || !strcmp(command, "msg")) {
-        return st == STATE_RUNNING;
     }
     if (!strcmp(command, "prune")) {
         return st == STATE_EXITED || st == STATE_FAILED || st == STATE_STALE;

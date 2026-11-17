@@ -467,8 +467,7 @@ int hold_cmd_view_action(const struct hold_invocation *inv,
         } else if (!strcmp(a, "--plain") || !strcmp(a, "--print") || !strcmp(a, "-p")) {
             /* output is always plain; accepted for older scripts */
         } else if (!strcmp(a, "--help") || !strcmp(a, "-h")) {
-            fputs(logs_usage, stdout);
-            return 0;
+            return HOLD_RC_SHOW_HELP;
         } else if (a[0] == '-' && a[1]) {
             fprintf(stderr, "hold: error: unknown flag '%s'\n%s", a, logs_usage);
             return 5;

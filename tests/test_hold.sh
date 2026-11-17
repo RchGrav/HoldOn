@@ -3769,6 +3769,102 @@ test_wait_match_since_ignores_stale_screen() {
   "$HOLD_BIN" end stale >/dev/null 2>&1 || true
 }
 
+# Screenshot fidelity: a rounded corner is an arc - it reaches the bottom and
+# right edge midpoints like a square corner does, but leaves the cell centre
+# (where a square corner's lines would meet) empty.
+test_peek_image_rounded_corner() {
+  "$HOLD_BIN" -dt --name arc -- /bin/sh -c 'printf "\342\225\255\n"; sleep 20' >/dev/null || return 1
+  "$HOLD_BIN" wait arc --idle 300 --timeout 5000 || return 1
+  W=$(actor_dir) || return 1
+  "$HOLD_BIN" peek arc --image "$W/a.png" --scale 2 --no-ruler --no-footer || return 1
+  python3 - "$W/a.png" <<'PY' || return 1
+import struct, sys, zlib
+d = open(sys.argv[1], "rb").read()
+w, h = struct.unpack(">II", d[16:24]); pos, idat = 8, b""
+while pos < len(d):
+    n, = struct.unpack(">I", d[pos:pos + 4])
+    if d[pos + 4:pos + 8] == b"IDAT": idat += d[pos + 8:pos + 8 + n]
+    pos += 12 + n
+raw = zlib.decompress(idat); st = w * 3 + 1; px = []
+for y in range(h):
+    line = bytearray(raw[y * st + 1:(y + 1) * st])
+    for i in range(3, len(line)): line[i] = (line[i] + line[i - 3]) & 255
+    px.append(line)
+at = lambda x, y: bytes(px[y][x * 3:x * 3 + 3])
+bg = at(15, 31)   # scale 2: the cell is 16x32; its bottom-right corner is empty
+assert at(7, 31) != bg, "corner does not reach the bottom edge"
+assert at(15, 15) != bg, "corner does not reach the right edge"
+assert at(7, 15) == bg, "square corner: the centre is inked"
+PY
+  "$HOLD_BIN" end arc >/dev/null 2>&1 || true
+}
+
+# Screenshot fidelity: a double-width emoji draws the anti-aliased Noto mask
+# (many shades, not 1-bit), and invisible characters draw nothing: a
+# variation selector, zero-width space, or joiner leaves the cell unchanged.
+test_peek_image_emoji_and_invisibles() {
+  # row 0: U+2705 U+FE0F   row 1: U+2705   row 2: a U+200B   row 3: a
+  "$HOLD_BIN" -dt --name invis -- /bin/sh -c 'printf "\342\234\205\357\270\217\n\342\234\205\na\342\200\213\na\n"; sleep 20' >/dev/null || return 1
+  "$HOLD_BIN" wait invis --idle 300 --timeout 5000 || return 1
+  W=$(actor_dir) || return 1
+  "$HOLD_BIN" peek invis --image "$W/i.png" --scale 2 --no-ruler --no-footer || return 1
+  python3 - "$W/i.png" <<'PY' || return 1
+import struct, sys, zlib
+d = open(sys.argv[1], "rb").read()
+w, h = struct.unpack(">II", d[16:24]); pos, idat = 8, b""
+while pos < len(d):
+    n, = struct.unpack(">I", d[pos:pos + 4])
+    if d[pos + 4:pos + 8] == b"IDAT": idat += d[pos + 8:pos + 8 + n]
+    pos += 12 + n
+raw = zlib.decompress(idat); st = w * 3 + 1; px = []
+for y in range(h):
+    line = bytearray(raw[y * st + 1:(y + 1) * st])
+    for i in range(3, len(line)): line[i] = (line[i] + line[i - 3]) & 255
+    px.append(line)
+def cell(row, width):  # scale 2: cells are 16x32 px
+    return [bytes(px[row * 32 + y][:16 * width * 3]) for y in range(32)]
+assert cell(0, 2) == cell(1, 2), "a variation selector changed the emoji cell"
+assert cell(2, 1) == cell(3, 1), "a zero-width space drew something"
+shades = {line[i:i + 3] for line in cell(1, 2) for i in range(0, len(line), 3)}
+assert len(shades) > 4, "emoji not anti-aliased: %d shades" % len(shades)
+PY
+  "$HOLD_BIN" end invis >/dev/null 2>&1 || true
+}
+
+# Screenshot fidelity: scripts beyond Latin/CJK draw real glyphs (Hebrew,
+# Ethiopic - a wide Unifont glyph in a single cell - a sextant, a math letter),
+# and a wide glyph squeezed into one cell keeps ink in both halves.
+test_peek_image_draws_other_scripts() {
+  # U+05D0 alef, U+1230 se, U+1FB00 sextant, U+1D400 bold A, U+E000 (private: missing)
+  "$HOLD_BIN" -dt --name scripts -- /bin/sh -c 'printf "\327\220\n\341\210\260\n\360\237\254\200\n\360\235\220\200\n\356\200\200\n"; sleep 20' >/dev/null || return 1
+  "$HOLD_BIN" wait scripts --idle 300 --timeout 5000 || return 1
+  W=$(actor_dir) || return 1
+  "$HOLD_BIN" peek scripts --image "$W/s.png" --scale 1 --no-ruler --no-footer || return 1
+  python3 - "$W/s.png" <<'PY' || return 1
+import struct, sys, zlib
+d = open(sys.argv[1], "rb").read()
+w, h = struct.unpack(">II", d[16:24]); pos, idat = 8, b""
+while pos < len(d):
+    n, = struct.unpack(">I", d[pos:pos + 4])
+    if d[pos + 4:pos + 8] == b"IDAT": idat += d[pos + 8:pos + 8 + n]
+    pos += 12 + n
+raw = zlib.decompress(idat); st = w * 3 + 1; px = []
+for y in range(h):
+    line = bytearray(raw[y * st + 1:(y + 1) * st])
+    for i in range(3, len(line)): line[i] = (line[i] + line[i - 3]) & 255
+    px.append(line)
+def cell(row):  # the 8x16 block of the single cell at column 0
+    return [bytes(px[row * 16 + y][:8 * 3]) for y in range(16)]
+missing = cell(4)
+for row, name in enumerate(["hebrew", "ethiopic", "sextant", "math"]):
+    assert cell(row) != missing, name + " drawn as the missing-glyph box"
+bg = bytes(px[0][0:3])
+ink_x = {x for line in cell(1) for x in range(8) if line[x * 3:x * 3 + 3] != bg}
+assert ink_x and min(ink_x) < 4 <= max(ink_x), "ethiopic not squeezed into its cell: ink at %s" % sorted(ink_x)
+PY
+  "$HOLD_BIN" end scripts >/dev/null 2>&1 || true
+}
+
 # Screenshot fidelity: CJK and emoji draw real glyphs, not the missing box.
 test_peek_image_draws_cjk_and_emoji() {
   "$HOLD_BIN" -dt --name glyphs -- /bin/sh -c 'printf "\347\225\214\n\360\237\232\200\n\356\200\200\n\342\240\277\n"; sleep 20' >/dev/null || return 1
@@ -3912,6 +4008,72 @@ test_wait_idle_settles() {
   "$HOLD_BIN" wait settle --idle 400 --timeout 8000 || return 1
   "$HOLD_BIN" peek settle | grep -qx 'step 5' || { "$HOLD_BIN" peek settle >&2; return 1; }
   "$HOLD_BIN" end settle >/dev/null 2>&1 || true
+}
+
+# wait: a bare --idle (before the target, before a flag, or last) means 500 ms.
+test_wait_bare_idle() {
+  "$HOLD_BIN" -dt --name bare -- /bin/sh -c 'echo ready; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait --idle bare || return 1
+  "$HOLD_BIN" wait bare --idle --timeout 3000 || return 1
+  "$HOLD_BIN" wait bare --idle || return 1
+  "$HOLD_BIN" wait --help | grep -q '500 if MS is left out' || return 1
+  "$HOLD_BIN" end bare >/dev/null 2>&1 || true
+}
+
+# --help after the target prints the full help (usage and prose), exit 0.
+test_help_after_target() {
+  local v out
+  for v in peek send wait resize msg logs; do
+    out=$("$HOLD_BIN" "$v" some_call --help) || { echo "$v: --help after target failed" >&2; return 1; }
+    [ "$(printf '%s\n' "$out" | grep -c .)" -ge 2 ] || { echo "$v: usage only, no help text" >&2; return 1; }
+  done
+  ! "$HOLD_BIN" logs --help | grep -q -- '--filter' || { echo "logs help lists removed --filter" >&2; return 1; }
+}
+
+# send/resize/msg on an ended call say it ended (exit 8), not "no call matches".
+test_screen_verbs_on_ended_call() {
+  "$HOLD_BIN" -dt --name gone -- /bin/sh -c 'echo bye' >/dev/null || return 1
+  "$HOLD_BIN" wait gone >/dev/null || return 1
+  local v rc
+  for v in "send gone hi" "resize gone 50 10" "msg gone hi"; do
+    set +e
+    $HOLD_BIN $v 2>"$TEST_ROOT/gone.err"; rc=$?
+    set -e
+    [ "$rc" -eq 8 ] && grep -q 'has ended' "$TEST_ROOT/gone.err" || { cat "$TEST_ROOT/gone.err" >&2; echo "$v: rc $rc, want 8" >&2; return 1; }
+  done
+  "$HOLD_BIN" purge gone >/dev/null 2>&1 || true
+}
+
+# A call name may not start with '-' (it could never be targeted).
+test_name_rejects_leading_dash() {
+  if "$HOLD_BIN" -d --name -lead -- true >/dev/null 2>&1; then echo "accepted -lead" >&2; return 1; fi
+  "$HOLD_BIN" -d --rm --name mid-dash -- true >/dev/null || return 1
+}
+
+# More text than one control request holds fails up front with a clear message.
+test_send_too_large_says_so() {
+  "$HOLD_BIN" -dt --name big -- sleep 30 >/dev/null || return 1
+  set +e
+  head -c 700000 /dev/zero | tr '\0' y | "$HOLD_BIN" send big --paste - 2>"$TEST_ROOT/big.err"; rc=$?
+  set -e
+  [ "$rc" -eq 1 ] && grep -q 'too much text' "$TEST_ROOT/big.err" || { cat "$TEST_ROOT/big.err" >&2; echo "rc $rc" >&2; return 1; }
+  head -c 100000 /dev/zero | tr '\0' y | "$HOLD_BIN" send big --paste - || return 1
+  "$HOLD_BIN" end big >/dev/null 2>&1 || true
+}
+
+# More waiters than the broker has control slots: the rest are told "busy",
+# back off, and still get their answer.
+test_wait_more_clients_than_slots() {
+  "$HOLD_BIN" -dt --name crowd -- /bin/sh -c 'echo start; sleep 2; echo GO; sleep 30' >/dev/null || return 1
+  "$HOLD_BIN" wait crowd --match start --timeout 5000 >/dev/null || return 1
+  local i fails=0
+  for i in $(seq 1 72); do
+    ( "$HOLD_BIN" wait crowd --match GO --timeout 20000 >/dev/null 2>"$TEST_ROOT/crowd.$i.err" || echo fail >"$TEST_ROOT/crowd.$i.fail" ) &
+  done
+  wait
+  for i in $(seq 1 72); do [ -e "$TEST_ROOT/crowd.$i.fail" ] && { fails=$((fails + 1)); cat "$TEST_ROOT/crowd.$i.err" >&2; }; done
+  "$HOLD_BIN" end crowd >/dev/null 2>&1 || true
+  [ "$fails" -eq 0 ] || { echo "$fails of 72 waiters failed" >&2; return 1; }
 }
 
 # resize: the program gets SIGWINCH and the screen reports the new size.
@@ -4144,6 +4306,12 @@ run_test "send encodes arrows for the program's cursor-key mode" test_send_keys_
 run_test "send --paste brackets only when the program asked" test_send_paste_brackets_when_requested
 run_test "wait times out (7), sees early exit (8), and prints exit codes" test_wait_timeout_ended_and_exit_code
 run_test "wait --idle settles after output stops" test_wait_idle_settles
+run_test "wait: bare --idle means 500 ms" test_wait_bare_idle
+run_test "--help after the target prints the full help" test_help_after_target
+run_test "send/resize/msg on an ended call say it ended" test_screen_verbs_on_ended_call
+run_test "call names may not start with a dash" test_name_rejects_leading_dash
+run_test "send: too much text fails with a clear message" test_send_too_large_says_so
+run_test "wait: more clients than broker slots still get answers" test_wait_more_clients_than_slots
 run_test "resize delivers SIGWINCH and updates the screen" test_resize_delivers_sigwinch
 run_test "peek --image writes a well-formed PNG" test_peek_image_png
 run_test "peek shows the last screen after exit; purge removes it" test_peek_after_exit_and_purge
@@ -4163,6 +4331,9 @@ run_test "micro: click, double-click, drag select, wheel" test_micro_mouse_editi
 run_test "wait --idle needs first output; symlinked programs keep their name" test_wait_idle_needs_first_output_and_symlink_launch
 run_test "wait --match --since ignores a stale screen" test_wait_match_since_ignores_stale_screen
 run_test "peek --image draws CJK and emoji glyphs" test_peek_image_draws_cjk_and_emoji
+run_test "peek --image draws Hebrew, Ethiopic, sextants, math letters" test_peek_image_draws_other_scripts
+run_test "peek --image: Noto emoji, and invisible characters draw nothing" test_peek_image_emoji_and_invisibles
+run_test "peek --image draws rounded corners as arcs" test_peek_image_rounded_corner
 run_test "msg --settle works in both spellings" test_msg_settle_flag
 run_test "peek --last-alt keeps a full-screen program's last frame" test_peek_last_alt_frame
 

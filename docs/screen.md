@@ -15,7 +15,7 @@ attributes, the cursor, and the program's input modes.
 | --- | --- |
 | `src/screen/screen.c` | The terminal wrapper: feed, resize, snapshot, mode-aware key/paste/mouse encoding, the HSNAP1 format, plain text, repaint. Depends on core only. |
 | `src/screen/render.c` | Snapshot to PNG: 8x16 cells (GNU Unifont subset, procedural box drawing/blocks/Braille), ruler, cursor ring, mouse reticle, footer, and a small deflate encoder. |
-| `src/console/broker.c` | Owns the PTY; one attach client plus up to 16 control clients; waits, queued messages, the final screen. |
+| `src/console/broker.c` | Owns the PTY; one attach client plus up to 64 control clients (more are answered "busy" and retry); waits, queued messages, the final screen. |
 | `src/console/control.c` | The client side of a control request. |
 | `src/runtime/screen_cmds.c` | `hold peek / send / wait / resize / msg`. |
 

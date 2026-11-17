@@ -35,9 +35,14 @@ void hold_run_console_broker(int parent_pipe,
                         const char *exec_path,
                         unsigned short init_rows,
                         unsigned short init_cols);
+/* Largest control request the broker accepts. Text in send/msg/wait --match
+ * travels hex-encoded, so about half of this is usable text. */
+#define HOLD_CONSOLE_MAX_REQUEST (1u << 20)
+
 /* One control request to a call's broker (hold peek/send/wait/resize): the
  * reply (NUL-terminated, malloc'd) begins with a text status line; peek's
- * carries an HSNAP1 snapshot after it. -1 with errno on connect/IO failure. */
+ * carries an HSNAP1 snapshot after it. -1 with errno on connect/IO failure
+ * (EMSGSIZE: longer than HOLD_CONSOLE_MAX_REQUEST). */
 int hold_console_request(const char *sock_path, const char *request, size_t request_len,
                          unsigned char **reply, size_t *reply_len);
 

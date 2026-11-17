@@ -34,7 +34,8 @@ bool hold_valid_id_prefix(const char *id) {
 bool hold_valid_alias(const char *alias) {
     if (!alias) return false;
     size_t len = strlen(alias);
-    if (len == 0 || len > ALIAS_MAX_LEN || hold_valid_id(alias)) return false;
+    /* A leading dash would read as a flag wherever the name is a target. */
+    if (len == 0 || len > ALIAS_MAX_LEN || alias[0] == '-' || hold_valid_id(alias)) return false;
     for (size_t i = 0; i < len; i++) {
         unsigned char c = (unsigned char)alias[i];
         if (!(isalnum(c) || c == '_' || c == '-')) return false;
