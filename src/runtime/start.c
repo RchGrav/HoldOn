@@ -265,7 +265,10 @@ static int wait_serving_control(pid_t child, pid_t group, int ctl, volatile sig_
         }
         if (stop && *stop) kill(child, SIGTERM);
         struct pollfd p[2] = {{.fd = g_chld_pipe[0], .events = POLLIN}, {.fd = ctl, .events = POLLIN}};
-        if (poll(p, 2, 1000) <= 0) continue; /* the timeout only guards a lost wakeup */
+        /* SIGCHLD wakes us through the self-pipe, and waitpid runs before every
+         * poll, so an exit is never missed; the long timeout is only a backstop
+         * (an idle background call should not wake every second). */
+        if (poll(p, 2, 60000) <= 0) continue;
         char drain[64];
         while (read(g_chld_pipe[0], drain, sizeof(drain)) > 0) continue;
         if (p[1].revents & POLLIN) {

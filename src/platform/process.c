@@ -435,8 +435,16 @@ bool hold_pid_has_file_open(pid_t pid, uint64_t dev, uint64_t ino) {
 
 uint64_t hold_current_pid_ns(void) {
 #if defined(__linux__)
-    struct stat st;
-    if (stat("/proc/self/ns/pid", &st) == 0) return (uint64_t)st.st_ino;
-#endif
+    /* A process never changes PID namespace; hold list asks once per record. */
+    static uint64_t cached;
+    static bool known;
+    if (!known) {
+        struct stat st;
+        cached = stat("/proc/self/ns/pid", &st) == 0 ? (uint64_t)st.st_ino : 0;
+        known = true;
+    }
+    return cached;
+#else
     return 0;
+#endif
 }
