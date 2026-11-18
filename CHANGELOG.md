@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The console works where Unix sockets are denied. Some sandboxes
+  (ChatGPT's code environment among them) refuse `socket(AF_UNIX)`, so every
+  `-t` call failed before its program started. The broker now serves the
+  same console over FIFOs there — automatically when `socket`, `bind`, or
+  `listen` is denied, or forced with `HOLD_CONSOLE_TRANSPORT=fifo` — with
+  nothing given up: peek, send, wait, resize, msg with verified senders
+  (the claimed pid must hold the channel open), attach with detach and
+  reattach, and root driving a user's call. The first version was drafted in
+  that sandbox; see docs/console.md.
+
+### Fixed
+
+- A program that closed its terminal but kept running left its console
+  unanswered: `peek` stalled 5-8 s and could report the call as ended. The
+  broker now stops listening as soon as no more output can come and saves
+  the final screen first; `peek` shows it at once and says the program still
+  runs, `send` says why it cannot deliver (exit 8), and `wait --exit` still
+  gets the exit code.
+- `peek` falling back to the saved screen now says when the console was
+  unreachable for another reason, instead of claiming the call ended.
+- On macOS, `hold attach` with stdin from `/dev/null` spun at full CPU:
+  macOS `poll()` reports character devices as invalid (`POLLNVAL`), which the
+  attach loop ignored. It now reads the end of input.
+
 ## 0.8.2 - Field-tested — 2026-11-17
 
 ### Fixed

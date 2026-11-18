@@ -46,6 +46,10 @@ void hold_run_console_broker(int parent_pipe,
 int hold_console_request(const char *sock_path, const char *request, size_t request_len,
                          unsigned char **reply, size_t *reply_len);
 
+/* Remove FIFO-console exchange directories ("<endpoint>.XXXXXX") left by
+ * clients that died mid-handshake. */
+void hold_remove_fifo_exchanges(const char *endpoint_path);
+
 /* The attach client: connect to a call's console socket and bridge the
  * terminal until the detach chord (Ctrl-P Ctrl-Q by default) or the call ends. */
 int hold_run_native_console(const char *sock_path);

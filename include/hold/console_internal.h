@@ -57,8 +57,11 @@ static inline void console_store_be16(unsigned char *p, uint16_t v) {
 /* socket.c: the with_console_dir seam (bind/connect via a short relative
  * sun_path from inside the console directory) and peer-uid authn. */
 int hold_make_console_listener(const char *sock_path, int *fifo_writer);
+/* fifo.c: the console over FIFOs where Unix sockets are denied. A channel
+ * is a read fd (returned) and a write fd (*output; the same fd for a socket). */
+int hold_make_fifo_listener(const char *path, int *writer);
 int hold_open_channel(const char *path, char kind, int *output);
-int hold_fifo_accept(int listener, const char *path, char *kind, int *output);
+int hold_fifo_accept(int listener, const char *path, char *kind, int *output, uid_t *peer_uid, pid_t *peer_pid);
 int hold_console_peer_uid(int fd, uid_t *uid_out);
 int hold_console_peer_pid(int fd, pid_t *pid_out);
 int hold_connect_console_socket(const char *sock_path);

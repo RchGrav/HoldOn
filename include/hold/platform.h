@@ -54,6 +54,10 @@ int hold_scan_listening_sockets(const unsigned long long *inodes, size_t count,
  * of its ancestors (bounded walk). Used to verify a hold msg sender. */
 int hold_proc_parent_pid(pid_t pid, pid_t *ppid_out);
 bool hold_pid_has_ancestor(pid_t pid, pid_t ancestor);
+/* Whether process pid holds the file (dev, ino) open: how a FIFO console
+ * verifies the pid a client claims, as a socket's peer credentials would.
+ * Linux scans /proc/<pid>/fd, macOS asks libproc; false where neither. */
+bool hold_pid_has_file_open(pid_t pid, uint64_t dev, uint64_t ino);
 int hold_resolve_binary_path(const char *argv0, char *out, size_t n);
 int hold_find_binary_path(const char *argv0, char *out, size_t n);
 int hold_absolute_existing_path_from_cwd(const char *token, const char *cwd, char *out, size_t n);

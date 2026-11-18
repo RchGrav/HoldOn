@@ -449,6 +449,7 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
         if (r->has_console && strcmp(r->console_sock, sock_path) != 0)
             fprintf(stderr, "hold: warning: record %s names a console socket outside the store; left untouched: %s\n", r->id, r->console_sock);
         unlink(sock_path);
+        hold_remove_fifo_exchanges(sock_path); /* a FIFO console's half-made channels */
     }
 }
 

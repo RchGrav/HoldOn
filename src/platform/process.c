@@ -390,3 +390,45 @@ int hold_group_exists(pid_t pgid) {
     if (kill(-pgid, 0) == 0 || errno == EPERM) return 1;
     return errno == ESRCH ? 0 : -1;
 }
+
+bool hold_pid_has_file_open(pid_t pid, uint64_t dev, uint64_t ino) {
+    if (pid <= 0) return false;
+#if defined(__APPLE__)
+    int bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, NULL, 0);
+    if (bytes <= 0) return false;
+    struct proc_fdinfo *fds = malloc((size_t)bytes);
+    if (!fds) return false;
+    bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, fds, bytes);
+    bool found = false;
+    for (int i = 0; bytes > 0 && i < bytes / (int)sizeof(*fds) && !found; i++) {
+        if (fds[i].proc_fdtype != PROX_FDTYPE_VNODE) continue;
+        struct vnode_fdinfo vi;
+        if (proc_pidfdinfo(pid, fds[i].proc_fd, PROC_PIDFDVNODEINFO, &vi, sizeof(vi)) == (int)sizeof(vi) &&
+            (uint64_t)vi.pvi.vi_stat.vst_dev == dev && (uint64_t)vi.pvi.vi_stat.vst_ino == ino)
+            found = true;
+    }
+    free(fds);
+    return found;
+#elif defined(__linux__)
+    char dir[64];
+    snprintf(dir, sizeof(dir), "/proc/%ld/fd", (long)pid);
+    DIR *d = opendir(dir);
+    if (!d) return false;
+    bool found = false;
+    struct dirent *e;
+    while (!found && (e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        char path[96];
+        struct stat st;
+        if (snprintf(path, sizeof(path), "%s/%s", dir, e->d_name) < (int)sizeof(path) && stat(path, &st) == 0 &&
+            (uint64_t)st.st_dev == dev && (uint64_t)st.st_ino == ino)
+            found = true;
+    }
+    closedir(d);
+    return found;
+#else
+    (void)dev;
+    (void)ino;
+    return false;
+#endif
+}

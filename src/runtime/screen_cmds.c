@@ -19,6 +19,7 @@
 #define WAIT_EXIT_TIMEOUT 7
 #define WAIT_EXIT_ENDED 8
 #define WAIT_IDLE_DEFAULT_MS 500
+#define WAIT_CONSOLE_CLOSED (-2) /* run_wait: the console closed; never an exit status */
 #define SEND_EXIT_MOUSE_OFF 9 /* the program has mouse reporting off */
 
 struct screen_target {
@@ -89,8 +90,27 @@ static int control_quiet(const struct screen_target *t, const char *req, size_t 
 
 /* Send one control request; *reply is the malloc'd reply. rc 0 when the
  * broker answered, else a nonzero exit status (message printed). */
+/* The call's state now (t->st is from when the command started). */
+static bool still_running(const struct screen_target *t) {
+    struct hold_run_record cur;
+    char path[HOLD_PATH_MAX], boot[128];
+    if (hold_load_record_by_id(t->target.store.record_dir, t->r.id, &cur, path, sizeof(path)) != 0) return false;
+    bool running = hold_eval_state(&cur, hold_boot_id_or_null(boot)) == STATE_RUNNING;
+    hold_free_run_record(&cur);
+    return running;
+}
+
 static int control(const struct screen_target *t, const char *req, size_t len, unsigned char **reply, size_t *reply_len) {
     if (control_quiet(t, req, len, reply, reply_len) != 0) {
+        if (errno == ENOENT) {
+            /* The broker stops listening once no more output can come. */
+            if (still_running(t))
+                fprintf(stderr, "hold: %s closed its terminal, so its console takes no more requests "
+                                "(the program is still running; hold peek shows its last screen)\n", t->label);
+            else
+                fprintf(stderr, "hold: %s has ended\n", t->label);
+            return WAIT_EXIT_ENDED;
+        }
         if (errno == EMSGSIZE) {
             fprintf(stderr, "hold: %s: too much text for one request (limit about %u KiB); split it across several sends\n",
                     t->label, HOLD_CONSOLE_MAX_REQUEST / 2 / 1024);
@@ -134,7 +154,9 @@ static int load_snapshot(const struct screen_target *t, struct hold_snapshot *sn
         unsigned char *reply = NULL;
         size_t len = 0;
         const char *req = last_alt ? "peek alt=1" : "peek";
-        if (control_quiet(t, req, strlen(req), &reply, &len) == 0) {
+        int got = control_quiet(t, req, strlen(req), &reply, &len);
+        int err = errno;
+        if (got == 0) {
             int rc = 0;
             if (len >= 3 && !memcmp(reply, "ok\n", 3)) {
                 if (hold_snapshot_parse(reply + 3, len - 3, snap) != 0) {
@@ -147,7 +169,15 @@ static int load_snapshot(const struct screen_target *t, struct hold_snapshot *sn
             free(reply);
             return rc;
         }
-        /* The call may have just ended: fall through to the saved frame. */
+        /* The console has closed: the program ended, or closed its terminal
+         * and runs on. Either way its last screen is saved. Anything else is
+         * a console we cannot reach: say so, then show what was saved. */
+        if (err != ENOENT)
+            fprintf(stderr, "hold: cannot reach %s's console (%s); showing its last saved screen\n", t->label,
+                    strerror(err));
+        else if (still_running(t))
+            fprintf(stderr, "hold: note: %s closed its terminal; this is its last screen (the program is still running)\n",
+                    t->label);
     }
     if (last_alt) {
         if (read_saved_frame(t, ".altscreen", snap) == 0) return 0;
@@ -163,7 +193,11 @@ static int load_snapshot(const struct screen_target *t, struct hold_snapshot *sn
         }
         return 0;
     }
-    fprintf(stderr, "hold: %s has ended and left no saved screen - see 'hold logs %s'\n", t->label, t->label);
+    if (still_running(t))
+        fprintf(stderr, "hold: %s's console is not answering and left no saved screen - see 'hold logs %s'\n", t->label,
+                t->label);
+    else
+        fprintf(stderr, "hold: %s has ended and left no saved screen - see 'hold logs %s'\n", t->label, t->label);
     return 5;
 }
 
@@ -531,6 +565,11 @@ static int send_action_impl(const struct hold_invocation *inv,
                 char args[160];
                 snprintf(args, sizeof(args), "wait idle=%ld since=%llu timeout=%ld", wait_ms ? wait_ms : 1, sv, timeout_ms);
                 rc = run_wait(&t, args, false);
+                if (rc == WAIT_CONSOLE_CLOSED) {
+                    fprintf(stderr, "hold: %s %s after the input arrived\n", t.label,
+                            still_running(&t) ? "closed its terminal" : "ended");
+                    rc = WAIT_EXIT_ENDED;
+                }
             }
             /* An undelivered mouse event is a failed step for a script. */
             if (mouse_off && rc == 0) rc = SEND_EXIT_MOUSE_OFF;
@@ -550,8 +589,14 @@ out:
 static int run_wait(const struct screen_target *t, const char *args, bool print_exit) {
     unsigned char *reply = NULL;
     size_t len = 0;
-    int rc = control(t, args, strlen(args), &reply, &len);
-    if (rc != 0) return rc;
+    /* A closed console (the program ended, or closed its terminal) is not an
+     * error here: the caller decides from the record or the last screen. */
+    if (control_quiet(t, args, strlen(args), &reply, &len) != 0) {
+        if (errno == ENOENT) return WAIT_CONSOLE_CLOSED;
+        fprintf(stderr, "hold: cannot reach %s's console: %s\n", t->label, strerror(errno));
+        return 3;
+    }
+    int rc = 0;
     const char *r = (const char *)reply;
     const char *ec = strstr(r, "exit_code=");
     int code = ec ? atoi(ec + 10) : 0;
@@ -607,6 +652,31 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
         struct timespec sl = {.tv_sec = 0, .tv_nsec = 100 * 1000000L};
         nanosleep(&sl, NULL);
     }
+}
+
+/* Does the saved final screen show TEXT (or match RE)? */
+static bool saved_screen_matches(const struct screen_target *t, const char *match, bool regex) {
+    struct hold_snapshot snap;
+    if (read_saved_screen(t, &snap) != 0) return false;
+    bool hit = false;
+    char *text = NULL;
+    size_t n = 0;
+    FILE *f = open_memstream(&text, &n);
+    if (f) {
+        hold_snapshot_write_text(&snap, f, false);
+        fclose(f);
+        if (!regex && text && strstr(text, match)) hit = true;
+        if (regex && text) {
+            regex_t re;
+            if (regcomp(&re, match, REG_EXTENDED | REG_NOSUB | REG_NEWLINE) == 0) {
+                hit = regexec(&re, text, 0, NULL, 0) == 0;
+                regfree(&re);
+            }
+        }
+    }
+    free(text);
+    hold_snapshot_free(&snap);
+    return hit;
 }
 
 static const char wait_usage[] =
@@ -699,27 +769,7 @@ static int wait_action_impl(const struct hold_invocation *inv,
     }
     if (t.st != STATE_RUNNING) {
         /* Ended: a match may still hold on the final frame. */
-        struct hold_snapshot snap;
-        rc = WAIT_EXIT_ENDED;
-        if (match && read_saved_screen(&t, &snap) == 0) {
-            char *text = NULL;
-            size_t n = 0;
-            FILE *f = open_memstream(&text, &n);
-            if (f) {
-                hold_snapshot_write_text(&snap, f, false);
-                fclose(f);
-                if (!regex && text && strstr(text, match)) rc = 0;
-                if (regex && text) {
-                    regex_t re;
-                    if (regcomp(&re, match, REG_EXTENDED | REG_NOSUB | REG_NEWLINE) == 0) {
-                        if (regexec(&re, text, 0, NULL, 0) == 0) rc = 0;
-                        regfree(&re);
-                    }
-                }
-            }
-            free(text);
-            hold_snapshot_free(&snap);
-        }
+        rc = match && saved_screen_matches(&t, match, regex) ? 0 : WAIT_EXIT_ENDED;
         if (rc != 0) fprintf(stderr, "hold: %s has already ended\n", t.label);
         close_screen_target(&t);
         return rc;
@@ -741,12 +791,26 @@ static int wait_action_impl(const struct hold_invocation *inv,
     rc |= rb_str(&b, num);
     rc = rc ? 1 : run_wait(&t, b.p, !screen_cond);
     free(b.p);
-    if (!screen_cond) {
+    if (rc == WAIT_CONSOLE_CLOSED) {
+        if (!screen_cond) {
+            /* The record (or an --rm call's exit note) says when it ends. */
+            rc = wait_record_exit(&t, timeout);
+        } else if (match && saved_screen_matches(&t, match, regex)) {
+            rc = 0; /* the last screen is final, and it shows the text */
+        } else {
+            if (still_running(&t))
+                fprintf(stderr, "hold: %s closed its terminal before the condition held (the program is still running)\n",
+                        t.label);
+            else
+                fprintf(stderr, "hold: %s ended before the condition held\n", t.label);
+            rc = WAIT_EXIT_ENDED;
+        }
+    } else if (!screen_cond && rc == 3) {
         /* The broker can vanish with its call before answering (an --rm
          * call removed as it ended): the record, or its exit note, says. */
-        if (rc == 3) rc = wait_record_exit(&t, timeout);
-        if (rc == 0) hold_auto_remove_settle(&t.target.store, t.r.id, 2000);
+        rc = wait_record_exit(&t, timeout);
     }
+    if (!screen_cond && rc == 0) hold_auto_remove_settle(&t.target.store, t.r.id, 2000);
     close_screen_target(&t);
     return rc;
 }

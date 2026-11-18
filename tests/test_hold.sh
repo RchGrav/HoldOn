@@ -52,6 +52,13 @@ skip_note() { echo "SKIP: $1"; SKIPS=$((SKIPS + 1)); }
 # PASS. It returns sentinel 77, which run_test maps to SKIP (or to FAIL when
 # HOLD_REQUIRE_ROOT_TESTS=1, so CI cannot silently no-op the root lane).
 skip() { [ -n "${1:-}" ] && echo "  (skipped: $1)" >&2; return 77; }
+# Tests of the Unix-socket console's own mechanics (socket files, raw socket
+# clients) do not apply when the suite runs with HOLD_CONSOLE_TRANSPORT=fifo;
+# the FIFO console has its own tests below.
+socket_console_only() {
+  [ "${HOLD_CONSOLE_TRANSPORT:-}" != fifo ] || { skip "socket console only"; return; }
+  [ -z "${HOLD_TEST_SOCKETS_DENIED:-}" ] || { skip "Unix sockets are denied in this run"; return; }
+}
 # An optional program (vim, tmux, ...) is missing: always a plain skip, even
 # under HOLD_REQUIRE_ROOT_TESTS=1, which exists to catch skipped root tests.
 skip_tool() { echo "  (skipped: $1)" >&2; return 78; }
@@ -183,6 +190,7 @@ as_user() {
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
     HOLD_FAKE_SUDO_RC \
+    HOLD_CONSOLE_TRANSPORT \
     HOLD_CALL_ID \
     HOLD_CALL_NAME \
     HOLD_CALL_PARENT \
@@ -213,7 +221,8 @@ as_root() {
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
-    HOLD_FAKE_SUDO_RC; do
+    HOLD_FAKE_SUDO_RC \
+    HOLD_CONSOLE_TRANSPORT; do
     if [ "${!name+x}" = x ]; then
       env_args+=("$name=${!name}")
     fi
@@ -244,7 +253,8 @@ as_sudo_from_user() {
     HOLD_TEST_FAIL_RECORD_WRITE \
     HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
     HOLD_FAKE_SUDO_ARGV \
-    HOLD_FAKE_SUDO_RC; do
+    HOLD_FAKE_SUDO_RC \
+    HOLD_CONSOLE_TRANSPORT; do
     if [ "${!name+x}" = x ]; then
       env_args+=("$name=${!name}")
     fi
@@ -1250,6 +1260,7 @@ test_console_broker_term_forwards_to_target() {
 }
 
 test_console_socket_lives_in_store_dir() {
+  socket_console_only || return $?
   # The console socket must live inside the store's console directory, never in
   # /tmp, even though the harness's store path is longer than the AF_UNIX
   # sun_path limit (~104). This exercises the relative-bind path.
@@ -1439,6 +1450,7 @@ EOF
 }
 
 test_console_rejects_unrelated_peer_uid_before_replay() {
+  socket_console_only || return $?
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
   [ -n "$SUDO_BIN" ] || skip "sudo unavailable"
   id nobody >/dev/null 2>&1 || skip "no nobody user"
@@ -1489,6 +1501,7 @@ test_console_rejects_unrelated_peer_uid_before_replay() {
 }
 
 test_console_can_reattach_after_detach() {
+  socket_console_only || return $?
   local out id store record sock helper
   out=$("$HOLD_BIN" --console /bin/sh -c 'while read line; do echo "seen:$line"; [ "$line" = done ] && exit 0; done' 2>&1) || {
     printf '%s\n' "$out" >&2
@@ -3706,6 +3719,7 @@ test_send_mouse_legacy_clamp_is_reported() {
 # tmux under Hold: prefix chord split, mouse pane focus, prefix detach.
 test_tmux_prefix_mouse_and_detach() {
   command -v tmux >/dev/null 2>&1 || skip_tool "tmux not installed"
+  [ -z "${HOLD_TEST_SOCKETS_DENIED:-}" ] || skip "tmux itself needs Unix sockets"
   local sock
   sock="$(actor_dir)/tmux.sock" || return 1
   "$HOLD_BIN" -dt --name tx -- tmux -S "$sock" -f /dev/null new-session \; set -g mouse on >/dev/null || return 1
@@ -4134,6 +4148,101 @@ test_wait_more_clients_than_slots() {
   [ "$fails" -eq 0 ] || { echo "$fails of 72 waiters failed" >&2; return 1; }
 }
 
+# The FIFO console (for environments that deny Unix sockets) keeps everything:
+# peek/send/resize, a verified msg sender, attach/detach/reattach, and a
+# half-made channel is swept with the call.
+test_fifo_console_full_capability() {
+  local ep mid n
+  HOLD_CONSOLE_TRANSPORT=fifo "$HOLD_BIN" -dt --name ff -- /bin/sh -c 'stty -echo; echo ready; while IFS= read -r l; do printf "GOT %s\n" "$l"; done' >/dev/null || return 1
+  ep=$("$HOLD_BIN" inspect ff | sed -n 's/.*"console_sock": "\(.*\)",/\1/p')
+  [ -p "$ep" ] || { ls -l "$ep" >&2; echo "the console endpoint is not a FIFO" >&2; return 1; }
+  "$HOLD_BIN" wait ff --match ready --timeout 5000 || return 1
+  "$HOLD_BIN" resize ff 200 24 || return 1
+  "$HOLD_BIN" send ff hello --enter --wait 300 >/dev/null || return 1
+  "$HOLD_BIN" peek ff | grep -qx 'GOT hello' || { "$HOLD_BIN" peek ff >&2; return 1; }
+  "$HOLD_BIN" -dt --name fw -- /bin/sh -c "\"$HOLD_REAL_BIN\" msg ff 'from worker'; sleep 5" >/dev/null || return 1
+  "$HOLD_BIN" wait ff --match 'from worker' --timeout 10000 || { "$HOLD_BIN" peek ff >&2; return 1; }
+  mid=$("$HOLD_BIN" peek ff | sed -n 's/^GOT \[msg \([0-9a-f]\{6\}\) from fw;.*/\1/p' | head -1)
+  "$HOLD_BIN" msg ff --received "$mid" | grep -qx 'from: fw (verified)' || { "$HOLD_BIN" peek ff >&2; echo "sender not verified over FIFO" >&2; return 1; }
+  for n in 1 2; do
+    "$HOLD_BIN" -dt --name "fv$n" -- "$HOLD_REAL_BIN" attach ff >/dev/null || return 1
+    "$HOLD_BIN" wait "fv$n" --idle --timeout 5000 >/dev/null || return 1
+    "$HOLD_BIN" send "fv$n" "via-attach-$n" --enter --wait 300 >/dev/null || return 1
+    "$HOLD_BIN" send "fv$n" -k C-p -k C-q >/dev/null || return 1
+    [ "$("$HOLD_BIN" wait "fv$n" --exit --timeout 5000)" = 0 ] || { echo "attach $n did not detach cleanly" >&2; return 1; }
+  done
+  [ "$("$HOLD_BIN" peek ff | grep -c '^GOT via-attach-')" = 2 ] || { "$HOLD_BIN" peek ff >&2; return 1; }
+  mkdir "$ep.abcdef" && mkfifo "$ep.abcdef/in" "$ep.abcdef/out" || return 1
+  "$HOLD_BIN" end ff fw >/dev/null 2>&1 || true
+  "$HOLD_BIN" purge ff >/dev/null || return 1
+  [ ! -e "$ep.abcdef" ] || { echo "half-made channel left behind" >&2; return 1; }
+}
+
+# A program that closes its terminal but runs on: the console stops taking
+# requests at once (no stall), peek shows the last screen and says the program
+# still runs, send says why it cannot, and wait --exit still gets the code.
+test_console_closed_terminal_is_reported() {
+  # On macOS a running session leader keeps its controlling terminal (and
+  # cannot drop it: TIOCNOTTY fails), so the terminal stays open until the
+  # program exits; the condition only arises on Linux-like systems.
+  [ "$(uname -s)" != Darwin ] || skip "a running macOS session leader keeps its terminal"
+  local mode start
+  for mode in socket fifo; do
+    HOLD_CONSOLE_TRANSPORT=$mode "$HOLD_BIN" -dt --name "ct$mode" -- /bin/sh -c 'echo before-close; exec </dev/null >/dev/null 2>&1; sleep 3; exit 4' >/dev/null || return 1
+    "$HOLD_BIN" wait "ct$mode" --match before-close --timeout 5000 || return 1
+    sleep 0.3
+    start=$SECONDS
+    "$HOLD_BIN" peek "ct$mode" >"$TEST_ROOT/ct.out" 2>"$TEST_ROOT/ct.err" || { cat "$TEST_ROOT/ct.err" >&2; return 1; }
+    [ $((SECONDS - start)) -le 1 ] || { echo "$mode: peek stalled $((SECONDS - start))s" >&2; return 1; }
+    grep -qx before-close "$TEST_ROOT/ct.out" && grep -q 'still running' "$TEST_ROOT/ct.err" || { cat "$TEST_ROOT/ct.out" "$TEST_ROOT/ct.err" >&2; return 1; }
+    set +e
+    "$HOLD_BIN" send "ct$mode" x 2>"$TEST_ROOT/ct.err"; rc=$?
+    set -e
+    [ "$rc" -eq 8 ] && grep -q 'closed its terminal' "$TEST_ROOT/ct.err" || { cat "$TEST_ROOT/ct.err" >&2; echo "$mode: send rc $rc, want 8" >&2; return 1; }
+    [ "$("$HOLD_BIN" wait "ct$mode" --exit --timeout 10000)" = 4 ] || { echo "$mode: wait --exit lost the code" >&2; return 1; }
+  done
+}
+
+# FIFO console access: root drives a user's call (as the socket console lets
+# it), and an unrelated user gets nothing even with the directories opened up.
+test_fifo_console_access() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "no root actor"
+  [ -n "$SUDO_BIN" ] || skip "sudo unavailable"
+  command -v python3 >/dev/null 2>&1 || skip "python3 unavailable"
+  local id ep cdir ack
+  HOLD_CONSOLE_TRANSPORT=fifo "$HOLD_BIN" -dt --name fa -- /bin/sh -c 'echo SECRET-OUTPUT; while IFS= read -r l; do echo "got:$l"; done' >/dev/null || return 1
+  "$HOLD_BIN" wait fa --match SECRET-OUTPUT --timeout 5000 || return 1
+  id=$("$HOLD_BIN" inspect fa | sed -n 's/^  "id": "\(.*\)",$/\1/p')
+  ep=$("$HOLD_BIN" inspect fa | sed -n 's/.*"console_sock": "\(.*\)",/\1/p')
+  as_sudo_from_user "$HOLD_REAL_BIN" send "user:$id" from-root --enter --wait 300 >/dev/null || { echo "root could not drive the user's FIFO call" >&2; return 1; }
+  "$HOLD_BIN" peek fa | grep -qx 'got:from-root' || { "$HOLD_BIN" peek fa >&2; return 1; }
+  if id nobody >/dev/null 2>&1 && "$SUDO_BIN" -n -u nobody true >/dev/null 2>&1; then
+    cdir=$(dirname "$ep")
+    chmod 0711 "$ACTOR_HOME" "$ACTOR_HOME/.local" "$ACTOR_HOME/.local/state" "$HOME/.local/state/hold" || return 1
+    chmod 0733 "$cdir" && chmod 0622 "$ep" || return 1
+    ack=$("$SUDO_BIN" -n -u nobody env -i PATH=/usr/bin:/bin python3 - "$ep" <<'PY'
+import os, select, sys, tempfile
+ep = sys.argv[1]
+lst = os.open(ep, os.O_WRONLY | os.O_NONBLOCK)
+x = tempfile.mkdtemp(prefix=os.path.basename(ep) + ".", dir=os.path.dirname(ep))
+os.mkfifo(x + "/in", 0o600); os.mkfifo(x + "/out", 0o600)
+os.open(x + "/in", os.O_RDONLY | os.O_NONBLOCK); os.open(x + "/in", os.O_WRONLY | os.O_NONBLOCK)
+resp = os.open(x + "/out", os.O_RDONLY | os.O_NONBLOCK)
+os.write(lst, ("C" + x[-6:] + "%010d" % os.getpid()).encode())
+r, _, _ = select.select([resp], [], [], 2)
+sys.stdout.write(repr(os.read(resp, 64) if r else b""))
+for f in ("in", "out"): os.unlink(x + "/" + f)
+os.rmdir(x)
+PY
+)
+    chmod 0700 "$cdir" && chmod 0600 "$ep" || return 1
+    case "$ack" in *R*|*SECRET*) echo "an unrelated user was answered: $ack" >&2; return 1 ;; esac
+  fi
+  "$HOLD_BIN" send fa owner-ok --enter --wait 300 >/dev/null || return 1
+  "$HOLD_BIN" peek fa | grep -qx 'got:owner-ok' || return 1
+  "$HOLD_BIN" end fa >/dev/null 2>&1 || true
+}
+
 # resize: the program gets SIGWINCH and the screen reports the new size.
 test_resize_delivers_sigwinch() {
   "$HOLD_BIN" -dt --name sized -- /bin/sh -c 'trap "echo SIZE:\$(stty size)" WINCH; echo ready; while :; do sleep 0.1; done' >/dev/null || return 1
@@ -4181,9 +4290,11 @@ test_peek_after_exit_and_purge() {
   "$HOLD_BIN" wait gone --timeout 5000 >/dev/null || return 1
   "$HOLD_BIN" peek gone | grep -qx 'last words' || return 1
   "$HOLD_BIN" peek gone --json | grep -q '"running": false' || return 1
-  ls "$HOME"/.local/state/hold/*.screen >/dev/null 2>&1 || return 1
+  local id
+  id=$("$HOLD_BIN" inspect gone | sed -n 's/^  "id": "\(.*\)",$/\1/p')
+  [ -f "$HOME/.local/state/hold/$id.screen" ] || return 1
   "$HOLD_BIN" purge gone >/dev/null 2>&1 || return 1
-  ! ls "$HOME"/.local/state/hold/*.screen >/dev/null 2>&1 || return 1
+  [ ! -e "$HOME/.local/state/hold/$id.screen" ] || return 1
 }
 
 # Calls without a TTY have no screen; the verbs say so.
@@ -4394,6 +4505,9 @@ run_test "peek --image draws CJK and emoji glyphs" test_peek_image_draws_cjk_and
 run_test "peek --image draws Hebrew, Ethiopic, sextants, math letters" test_peek_image_draws_other_scripts
 run_test "peek --image: Noto emoji, and invisible characters draw nothing" test_peek_image_emoji_and_invisibles
 run_test "peek --image draws rounded corners as arcs" test_peek_image_rounded_corner
+run_test "the FIFO console keeps full capability" test_fifo_console_full_capability
+run_test "a closed terminal is reported at once, in both console modes" test_console_closed_terminal_is_reported
+run_test "FIFO console: root drives a user's call; others get nothing" test_fifo_console_access
 run_test "msg --settle works in both spellings" test_msg_settle_flag
 run_test "peek --last-alt keeps a full-screen program's last frame" test_peek_last_alt_frame
 

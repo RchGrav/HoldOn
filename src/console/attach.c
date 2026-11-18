@@ -110,6 +110,14 @@ int hold_run_native_console(const char *sock_path) {
 
     int rc = 0;
     bool stdin_open = true;
+    /* macOS poll() never reports end-of-file on a FIFO, so over the FIFO
+     * console (a separate write fd) a quiet pass probes with a non-blocking
+     * read: 0 means the broker has gone. */
+#if defined(__APPLE__)
+    bool probe_fifo = writer != sock;
+#else
+    bool probe_fifo = false;
+#endif
     struct hold_term_detach detach;
     hold_term_detach_init(&detach, g_detach_keys, g_detach_key_count);
     if (hold_write_all(writer, CONSOLE_ATTACH_MAGIC, CONSOLE_ATTACH_MAGIC_LEN) != 0) {
@@ -136,7 +144,9 @@ int hold_run_native_console(const char *sock_path) {
             pfds[nfds++] = (struct pollfd){.fd = STDIN_FILENO, .events = POLLIN};
         }
 
-        int sr = poll(pfds, nfds, hold_term_detach_timeout_ms(&detach));
+        int wait_ms = hold_term_detach_timeout_ms(&detach);
+        if (probe_fifo && (wait_ms < 0 || wait_ms > 250)) wait_ms = 250;
+        int sr = poll(pfds, nfds, wait_ms);
         if (sr < 0) {
             if (errno == EINTR) {
                 continue;
@@ -152,7 +162,9 @@ int hold_run_native_console(const char *sock_path) {
             if (sr == 0) continue;
         }
 
-        if (stdin_idx >= 0 && (pfds[stdin_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
+        /* POLLNVAL too: macOS poll() rejects character devices such as
+         * /dev/null; reading one then reports its end, instead of spinning. */
+        if (stdin_idx >= 0 && (pfds[stdin_idx].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
             unsigned char buf[4096];
             ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
             if (n > 0) {
@@ -178,7 +190,7 @@ int hold_run_native_console(const char *sock_path) {
                     rc = 3;
                     break;
                 }
-            } else if (n == 0) {
+            } else if (n == 0 || errno == EBADF) { /* end of input, or none at all (stdin closed) */
                 if (hold_term_detach_flush(&detach, attach_data_sink, &writer) != 0) {
                     rc = 3;
                     break;
@@ -195,9 +207,15 @@ int hold_run_native_console(const char *sock_path) {
             }
         }
 
-        if (pfds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+        bool probe = probe_fifo && !(pfds[0].revents & (POLLIN | POLLHUP | POLLERR));
+        if ((pfds[0].revents & (POLLIN | POLLHUP | POLLERR)) || probe) {
             char buf[4096];
+            int flags = probe ? fcntl(sock, F_GETFL) : -1;
+            if (flags >= 0) (void)fcntl(sock, F_SETFL, flags | O_NONBLOCK);
             ssize_t n = read(sock, buf, sizeof(buf));
+            int read_errno = errno;
+            if (flags >= 0) (void)fcntl(sock, F_SETFL, flags);
+            errno = read_errno;
             if (n > 0) {
                 if (hold_write_all(STDOUT_FILENO, buf, (size_t)n) != 0) {
                     rc = 3;
@@ -205,7 +223,7 @@ int hold_run_native_console(const char *sock_path) {
                 }
             } else if (n == 0) {
                 break;
-            } else if (errno != EINTR) {
+            } else if (errno != EINTR && errno != EAGAIN) {
                 rc = 3;
                 break;
             }

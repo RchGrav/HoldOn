@@ -46,6 +46,21 @@ jobs:
       - name: Build and run the suite as root (it acts as a throwaway user per test)
         run: sudo env -u SUDO_USER -u SUDO_UID -u SUDO_GID -u SUDO_COMMAND PATH="$PATH" make test CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
 
+  fifo-console:
+    name: Linux FIFO console lanes (forced, and with Unix sockets denied)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the TUIs the screen tests drive
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tmux whiptail vim-tiny
+      - name: Suite with every console forced onto FIFOs
+        run: HOLD_CONSOLE_TRANSPORT=fifo make test CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2"
+      - name: Suite with Unix sockets denied, as some sandboxes do (the fallback runs for real)
+        run: |
+          cc -shared -fPIC -o socket-ban.so tests/socket_ban_shim.c -ldl
+          LD_PRELOAD="$PWD/socket-ban.so" HOLD_TEST_SOCKETS_DENIED=1 bash tests/test_hold.sh
+
   macos-runtime:
     name: macOS runtime test (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}

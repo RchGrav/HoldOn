@@ -395,7 +395,8 @@ program's pseudo-terminal, appends every output byte to the call's log, and
 feeds the same bytes to a headless terminal — vendored
 [libvterm](third_party/libvterm/) — so it always knows the exact screen.
 `peek`, `send`, `wait`, `resize`, and `msg` talk to the broker over the
-call's private Unix socket (owner-only, peer UID checked). When the program
+call's private Unix socket (owner-only, peer UID checked), or over private
+FIFOs where a sandbox denies Unix sockets. When the program
 exits, the broker saves its final screen beside the log. The screenshot
 renderer and its PNG encoder are built in; glyphs come from
 [GNU Unifont](third_party/unifont/) and, for emoji,
@@ -439,6 +440,13 @@ see all); signals are delivered only after identity re-validation; `msg`
 headers say whether the sender was verified (who sent it — not whether the
 content is safe to act on), and `hold msg --received ID` tells a real
 message from a header that is only text. hold never elevates on its own.
+
+**Does it work in sandboxes that block Unix sockets?** Yes. Where
+`socket(AF_UNIX)` is denied (ChatGPT's code environment is one), each call's
+console runs over FIFOs instead, automatically, with nothing given up: peek,
+send, wait, msg with verified senders, and attach all work.
+`HOLD_CONSOLE_TRANSPORT=fifo` forces that mode anywhere. Details:
+[docs/console.md](docs/console.md#where-unix-sockets-are-denied).
 
 **What happens if my agent's shell is killed?** Nothing bad. A call and the
 small helpers that log it and record its exit live in their own sessions, so

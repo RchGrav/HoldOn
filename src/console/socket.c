@@ -30,7 +30,7 @@ int hold_format_console_sock_path(const struct hold_store *store,
  * returning — the broker forks and execs the target after this call, and that
  * process must run in the caller's original cwd, so fchdir failure is fatal
  * (never launch the target in the wrong directory). */
-static int console_socket_in_dir(const char *sock_path, bool bind_listener, int *fifo_writer) {
+static int console_socket_in_dir(const char *sock_path, bool bind_listener) {
     struct sockaddr_un addr;
     char dir[HOLD_PATH_MAX];
     const char *slash = strrchr(sock_path, '/');
@@ -53,21 +53,9 @@ static int console_socket_in_dir(const char *sock_path, bool bind_listener, int 
     int err = 0;
     int cwd_fd = -1;
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0 && fifo_writer && (errno == EPERM || errno == EACCES || errno == EAFNOSUPPORT)) {
-        if (mkfifo(sock_path, 0600) < 0) return -1;
-        int flags = O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
-        fd = open(sock_path, flags | O_RDONLY);
-        if (fd >= 0) {
-            *fifo_writer = open(sock_path, flags | O_WRONLY);
-            if (*fifo_writer >= 0) return fd;
-            close(fd);
-        }
-        int saved = errno;
-        unlink(sock_path);
-        errno = saved;
+    if (fd < 0) {
         return -1;
     }
-    if (fd < 0) return -1;
 #ifdef HOLD_NEED_SOCKET_CLOEXEC
     if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
         err = errno;
@@ -121,18 +109,33 @@ out:
     return fd;
 }
 
+/* A sandbox's refusal of Unix-domain sockets, as opposed to a real fault. */
+static bool sockets_denied(int err) {
+    return err == EPERM || err == EACCES || err == EAFNOSUPPORT;
+}
+
+/* The broker's endpoint: a Unix socket, or — where sockets are denied, or
+ * HOLD_CONSOLE_TRANSPORT=fifo asks for it — a FIFO at the same path (see
+ * fifo.c). *fifo_writer is -1 for a socket, else the broker's own writer
+ * that keeps the FIFO open. Clients pick the transport by the file type. */
 int hold_make_console_listener(const char *sock_path, int *fifo_writer) {
-    return console_socket_in_dir(sock_path, true, fifo_writer);
+    *fifo_writer = -1;
+    const char *want = getenv("HOLD_CONSOLE_TRANSPORT");
+    if (!(want && !strcmp(want, "fifo"))) {
+        int fd = console_socket_in_dir(sock_path, true);
+        if (fd >= 0 || !sockets_denied(errno)) return fd;
+    }
+    return hold_make_fifo_listener(sock_path, fifo_writer);
 }
 
 int hold_connect_console_socket(const char *sock_path) {
     struct stat st;
-    if (stat(sock_path, &st) != 0 || !S_ISSOCK(st.st_mode)) {
-        fprintf(stderr, "hold: console socket is not available\n");
+    if (stat(sock_path, &st) != 0) return -1; /* ENOENT: the console has closed */
+    if (!S_ISSOCK(st.st_mode)) {
         errno = ENOTSOCK;
         return -1;
     }
-    int fd = console_socket_in_dir(sock_path, false, NULL);
+    int fd = console_socket_in_dir(sock_path, false);
     if (fd < 0) {
         if (errno == ENAMETOOLONG) {
             fprintf(stderr, "hold: console socket path is too long\n");

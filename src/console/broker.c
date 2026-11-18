@@ -111,7 +111,10 @@ static void broker_cleanup_and_exit(struct broker *b, int exit_code) {
     if (b->listener >= 0) close(b->listener);
     if (b->master >= 0) close(b->master);
     if (b->logfd >= 0) close(b->logfd);
-    if (b->sock_path && *b->sock_path) unlink(b->sock_path);
+    if (b->sock_path && *b->sock_path) {
+        unlink(b->sock_path);
+        hold_remove_fifo_exchanges(b->sock_path); /* clients that died mid-handshake */
+    }
     hold_screen_free(b->screen);
     free(b->last_alt);
     _exit(exit_code);
@@ -161,11 +164,16 @@ static int write_all_wait(int fd, const void *buf, size_t n) {
     return 0;
 }
 
+/* Who may use the console: root, the call's owner, or the user a sudo
+ * launch names. The socket learns the uid from peer credentials, the FIFO
+ * console from who owns the client's private FIFOs. */
+static bool uid_allowed(const struct broker *b, uid_t uid) {
+    return uid == 0 || uid == b->owner_uid || (b->have_allowed_peer_uid && uid == b->allowed_peer_uid);
+}
+
 static bool authorize_client(const struct broker *b, int client) {
     uid_t peer_uid = (uid_t)-1;
-    if (hold_console_peer_uid(client, &peer_uid) == 0 &&
-        (peer_uid == 0 || peer_uid == b->owner_uid ||
-         (b->have_allowed_peer_uid && peer_uid == b->allowed_peer_uid))) {
+    if (hold_console_peer_uid(client, &peer_uid) == 0 && uid_allowed(b, peer_uid)) {
         return true;
     }
     static const char msg[] = "hold: console attach denied\n";
@@ -1118,14 +1126,33 @@ static void broker_serve(struct broker *b) {
             }
             break;
         }
+        bool quiet = pr == 0; /* nothing happened: the exit check below uses this */
+#if defined(__APPLE__)
+        /* macOS poll() never reports end-of-file on a FIFO: on a quiet pass,
+         * let the FIFO clients' (non-blocking) reads find out who hung up. */
+        if (pr == 0 && b->fifo_writer >= 0) {
+            for (int i = 0; i < BROKER_MAX_CONTROL; i++)
+                if (ctl_idx[i] >= 0) pfds[ctl_idx[i]].revents = POLLIN;
+            if (client_idx >= 0) pfds[client_idx].revents = POLLIN;
+            pr = 1;
+        }
+#endif
 
         if (pr > 0 && (pfds[listener_idx].revents & POLLIN)) {
             bool fifo = b->fifo_writer >= 0;
             int output = -1;
             char kind = 0;
-            int next = fifo ? hold_fifo_accept(b->listener, b->sock_path, &kind, &output)
+            uid_t fifo_uid = (uid_t)-1;
+            pid_t fifo_pid = 0;
+            int next = fifo ? hold_fifo_accept(b->listener, b->sock_path, &kind, &output, &fifo_uid, &fifo_pid)
                             : accept(b->listener, NULL, NULL);
             if (!fifo) output = next;
+            if (next >= 0 && fifo && !uid_allowed(b, fifo_uid)) {
+                (void)!write(output, "D", 1);
+                close(output);
+                close(next);
+                next = -1;
+            }
             if (next >= 0) {
                 int slot = -1;
                 for (int i = 0; i < BROKER_MAX_CONTROL && slot < 0; i++)
@@ -1165,6 +1192,7 @@ static void broker_serve(struct broker *b) {
                     ctl[slot].accepted_ms = now_ms();
                     ctl[slot].gen = ++b->next_gen;
                     if (fifo) {
+                        ctl[slot].peer_pid = fifo_pid; /* verified: it holds the request FIFO open */
                         if (write(output, "R", 1) != 1) drop_control(&ctl[slot]);
                     } else if (hold_console_peer_pid(next, &ctl[slot].peer_pid) != 0) ctl[slot].peer_pid = 0;
                 }
@@ -1232,10 +1260,20 @@ static void broker_serve(struct broker *b) {
             cl.needs_repaint = false;
             if (repaint_attach(b, &cl) != 0) drop_attach(&cl);
         }
-        if (pr == 0 && b->target_done) {
+        if (quiet && b->target_done) {
             break;
         }
     }
+
+    /* No more output can come (the program exited, or closed its terminal
+     * and may run on). Stop taking requests at once, so a client never waits
+     * on a console that will not answer, and save the screen before waiting
+     * for the program: peek then shows this final screen right away. */
+    if (b->sock_path && *b->sock_path) unlink(b->sock_path);
+    if (b->listener >= 0) close(b->listener);
+    if (b->fifo_writer >= 0) close(b->fifo_writer);
+    b->listener = b->fifo_writer = -1;
+    write_final_screen(b);
 
     reap_target(b, true);
     if (b->target_done && !target_marked && b->store && b->run_id && *b->run_id) {
@@ -1251,6 +1289,8 @@ static void broker_serve(struct broker *b) {
             }
         }
     }
+    /* Again, now that the program has been reaped: the saved screen then
+     * records how it exited (the early copy may have said it was running). */
     write_final_screen(b);
     /* Pending waiters learn the outcome: their condition may still hold on
      * the final screen, else they see the exit. */
