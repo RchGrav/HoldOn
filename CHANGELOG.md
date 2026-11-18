@@ -42,6 +42,12 @@
   looking at its process group (anyone can), instead of trusting the public
   entry's hint, so nothing has to stay behind to update it.
 
+- A TTY call's environment describes hold's terminal, not the launcher's:
+  `TERM` is always `xterm-256color` (an explicit `-e TERM=` still wins), and
+  `TMUX`, `TMUX_PANE`, `STY`, `WINDOW`, and `TERM_PROGRAM` are dropped.
+  Launched from inside byobu, hollywood saw `TMUX` and drew its panes in the
+  caller's session, leaving hold's screen blank.
+
 ### Removed
 
 - The log pump: a separate process that copied each non-TTY call's output
