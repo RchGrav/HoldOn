@@ -46,6 +46,12 @@ void hold_run_console_broker(int parent_pipe,
 int hold_console_request(const char *sock_path, const char *request, size_t request_len,
                          unsigned char **reply, size_t *reply_len);
 
+/* Whether hold's fallback is selected: HOLD_CONSOLE_TRANSPORT=fifo, or Unix
+ * sockets are denied (some sandboxes refuse them). Only then do calls carry
+ * the cross-shell machinery (supervisor lock, -d control FIFO); otherwise the
+ * original broker and blocking waiter run untouched. */
+bool hold_console_fallback_selected(void);
+
 /* Remove FIFO-console exchange directories ("<endpoint>.XXXXXX") left by
  * clients that died mid-handshake. */
 void hold_remove_fifo_exchanges(const char *endpoint_path);

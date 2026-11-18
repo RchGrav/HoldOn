@@ -95,29 +95,34 @@ static int validate_signal_target(const char *id,
 
 /* ---- end/stop/kill ---------------------------------------------------- */
 
-/* The call runs where this shell cannot see its pid (another PID namespace):
- * follow the chain of command and ask its supervisor - the broker, over the
- * console, or a -d call's waiter, over its control FIFO - to signal it.
- * 0 when asked, -1 when no supervisor answers. */
-static int signal_through_supervisor(const struct hold_store *store, const struct hold_run_record *r, int sig) {
-    if (r->has_console) {
-        char req[32];
-        snprintf(req, sizeof(req), "signal sig=%d", sig);
-        unsigned char *reply = NULL;
-        size_t len = 0;
-        bool ok = hold_console_request(r->console_sock, req, strlen(req), &reply, &len) == 0 && reply &&
-                  strncmp((const char *)reply, "ok", 2) == 0;
-        free(reply);
-        return ok ? 0 : -1;
-    }
-    char path[HOLD_PATH_MAX];
-    if (hold_checked_snprintf(path, sizeof(path), "%s/%s.ctl", store->console_dir, r->id) != 0) return -1;
-    int fd = open(path, O_WRONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) return -1;
-    unsigned char b = (unsigned char)sig;
-    ssize_t n = write(fd, &b, 1);
-    close(fd);
-    return n == 1 ? 0 : -1;
+/* A TTY call running where this shell cannot see its pid (another PID
+ * namespace): follow the chain of command and ask its broker - which can see
+ * its program - to signal it. 0 when asked, -1 when no broker answers. */
+static int signal_through_broker(const struct hold_run_record *r, int sig) {
+    char req[32];
+    snprintf(req, sizeof(req), "signal sig=%d", sig);
+    unsigned char *reply = NULL;
+    size_t len = 0;
+    bool ok = hold_console_request(r->console_sock, req, strlen(req), &reply, &len) == 0 && reply &&
+              strncmp((const char *)reply, "ok", 2) == 0;
+    free(reply);
+    return ok ? 0 : -1;
+}
+
+/* Why this shell cannot end a call it can see in the store but not as a
+ * process: it runs (or ran) in another PID namespace. */
+static void not_running_here(const struct hold_run_record *r, bool can_tell) {
+    const char *label = r->has_name && r->name[0] ? r->name : r->id;
+    if (can_tell)
+        fprintf(stderr,
+                "hold: %s is not running in this environment: it runs in another PID namespace (the shell that "
+                "started it), and can be ended only from there. Calls started with -dt can be ended from any shell.\n",
+                label);
+    else
+        fprintf(stderr,
+                "hold: %s is not running in this environment, and this shell cannot tell whether it still runs in "
+                "the one that started it (no exit was recorded). End it from there; to drop the record, "
+                "hold purge %s --force.\n", label, label);
 }
 
 /* Whether the call has stopped running, as this shell can tell, within ms. */
@@ -151,18 +156,20 @@ static int signal_one(const struct hold_store *store,
     char boot[128];
     int rc = 0;
     if (hold_call_elsewhere(&r, hold_boot_id_or_null(boot))) {
-        if (print_cmd) {
-            fprintf(stderr, "hold: %s runs in another PID namespace, so its pid means nothing here and there is no "
-                            "kill command to print; hold end/kill reach it through its supervisor\n", id);
+        if (!r.has_console || print_cmd) {
+            /* A -d call has no broker to ask (it stays the minimal mode), and
+             * there is no kill command to print for a pid that means nothing
+             * here. */
+            not_running_here(&r, true);
             rc = 3;
             goto out;
         }
-        if (signal_through_supervisor(store, &r, sig) != 0) {
-            *already_done = true; /* no supervisor answered: it has ended */
+        if (signal_through_broker(&r, sig) != 0) {
+            *already_done = true; /* no broker answered: it has ended */
             goto out;
         }
         if (!graceful || call_ended_within(store, id, STOP_TIMEOUT_MS)) goto out;
-        if (signal_through_supervisor(store, &r, SIGKILL) != 0 || call_ended_within(store, id, 1000)) goto out;
+        if (signal_through_broker(&r, SIGKILL) != 0 || call_ended_within(store, id, 1000)) goto out;
         rc = 4;
         goto out;
     }
@@ -215,6 +222,28 @@ int hold_cmd_signal_action(const struct hold_invocation *inv,
     for (int i = 0; i < argc; i++) {
         struct hold_resolved_target *one = NULL;
         int none = 0;
+        /* A call from another PID namespace that this shell cannot judge does
+         * not match a running-only target; say why instead of "no match". */
+        if (!print_cmd && !hold_token_resolves(inv, user_store, system_store, command, argv[i]) &&
+            hold_token_resolves(inv, user_store, system_store, "inspect", argv[i])) {
+            struct hold_resolved_target t;
+            bool hit = false;
+            if (hold_resolve_single(inv, user_store, system_store, "inspect", "inspect", argv[i], &t, &hit) == 0 && hit) {
+                struct hold_run_record r;
+                char path[HOLD_PATH_MAX], boot[128];
+                if (hold_load_record_by_id(t.store.record_dir, t.id, &r, path, sizeof(path)) == 0) {
+                    uint64_t here = hold_current_pid_ns();
+                    bool foreign = r.pid_ns != 0 && here != 0 && r.pid_ns != here;
+                    bool unknown = hold_eval_state(&r, hold_boot_id_or_null(boot)) == STATE_UNKNOWN;
+                    if (foreign && unknown) not_running_here(&r, false);
+                    hold_free_run_record(&r);
+                    if (foreign && unknown) {
+                        free(targets);
+                        return 3;
+                    }
+                }
+            }
+        }
         int rc = hold_resolve_action_token(inv, user_store, system_store, command, argv[i], all, &one, &none);
         if (rc != 0) {
             free(one);

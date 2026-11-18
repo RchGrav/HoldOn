@@ -4282,6 +4282,77 @@ test_inspect_reports_observed_state() {
   "$HOLD_BIN" purge killed >/dev/null 2>&1 || true
 }
 
+# The cross-shell machinery rides only on the fallback (Unix sockets denied,
+# or HOLD_CONSOLE_TRANSPORT=fifo). On a normal host a plain -d call is the
+# original: no control FIFO, no lifetime lock on its log, and a waiter blocked
+# in waitpid until the child exits. Under the fallback it carries both.
+test_plain_d_waiter_is_original_unless_fallback() {
+  local id pid waiter log ctl fallback=0
+  [ "${HOLD_CONSOLE_TRANSPORT:-}" = fifo ] || [ -n "${HOLD_TEST_SOCKETS_DENIED:-}" ] && fallback=1
+  "$HOLD_BIN" -d --name plainwait -- sleep 6000 >/dev/null || return 1
+  sleep 0.3
+  id=$("$HOLD_BIN" inspect plainwait | sed -n 's/^  "id": "\(.*\)",$/\1/p')
+  pid=$("$HOLD_BIN" inspect plainwait | sed -n 's/^  "pid": \([0-9]*\),$/\1/p')
+  waiter=$(ps -o ppid= -p "$pid" | tr -d ' ')
+  log=$(log_path "$id") || return 1
+  ctl="$(dirname "$log")/console/$id.ctl"
+  local locked
+  locked=$(python3 -c 'import fcntl,sys
+f = open(sys.argv[1])
+try:
+    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB); print("free")
+except OSError:
+    print("held")' "$log") || return 1
+  if [ "$fallback" -eq 1 ]; then
+    [ -p "$ctl" ] || { echo "fallback: no control FIFO" >&2; return 1; }
+    [ "$locked" = held ] || { echo "fallback: log not locked" >&2; return 1; }
+  else
+    [ ! -e "$ctl" ] || { echo "normal host: a control FIFO appeared" >&2; return 1; }
+    [ "$locked" = free ] || { echo "normal host: the log is locked" >&2; return 1; }
+    if [ "$(uname -s)" = Linux ] && [ -r "/proc/$waiter/wchan" ]; then
+      [ "$(cat "/proc/$waiter/wchan")" = do_wait ] || { echo "normal host: waiter not blocked in waitpid ($(cat "/proc/$waiter/wchan"))" >&2; return 1; }
+    fi
+  fi
+  "$HOLD_BIN" end plainwait >/dev/null || return 1
+  [ "$("$HOLD_BIN" wait plainwait)" = 143 ] || return 1
+  [ ! -e "$ctl" ] || { echo "control FIFO left behind" >&2; return 1; }
+  "$HOLD_BIN" purge plainwait >/dev/null 2>&1 || true
+}
+
+# A plain -d call is the minimal mode everywhere: no control FIFO, and a
+# waiter blocked in waitpid until the child exits. On a normal host it holds no
+# lock on its log either; under the fallback (Unix sockets denied, or
+# HOLD_CONSOLE_TRANSPORT=fifo) a passive lifetime lock on the log lets shells in
+# other PID namespaces see it running.
+test_plain_d_waiter_is_original_unless_fallback() {
+  local id pid waiter log locked fallback=0
+  if [ "${HOLD_CONSOLE_TRANSPORT:-}" = fifo ] || [ -n "${HOLD_TEST_SOCKETS_DENIED:-}" ]; then fallback=1; fi
+  "$HOLD_BIN" -d --name plainwait -- sleep 6000 >/dev/null || return 1
+  sleep 0.3
+  id=$("$HOLD_BIN" inspect plainwait | sed -n 's/^  "id": "\(.*\)",$/\1/p')
+  pid=$("$HOLD_BIN" inspect plainwait | sed -n 's/^  "pid": \([0-9]*\),$/\1/p')
+  waiter=$(ps -o ppid= -p "$pid" | tr -d ' ')
+  log=$(log_path "$id") || return 1
+  [ ! -e "$(dirname "$log")/console/$id.ctl" ] || { echo "a control FIFO appeared" >&2; return 1; }
+  if [ "$(uname -s)" = Linux ] && [ -r "/proc/$waiter/wchan" ]; then
+    [ "$(cat "/proc/$waiter/wchan")" = do_wait ] || { echo "waiter not blocked in waitpid: $(cat "/proc/$waiter/wchan")" >&2; return 1; }
+  fi
+  locked=$(python3 -c 'import fcntl,sys
+f = open(sys.argv[1])
+try:
+    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB); print("free")
+except OSError:
+    print("held")' "$log") || return 1
+  if [ "$fallback" -eq 1 ]; then
+    [ "$locked" = held ] || { echo "fallback: the log is not locked" >&2; return 1; }
+  else
+    [ "$locked" = free ] || { echo "normal host: the log is locked" >&2; return 1; }
+  fi
+  "$HOLD_BIN" end plainwait >/dev/null || return 1
+  [ "$("$HOLD_BIN" wait plainwait)" = 143 ] || return 1
+  "$HOLD_BIN" purge plainwait >/dev/null 2>&1 || true
+}
+
 # Another PID namespace (some sandboxes give each shell its own): pids from
 # the launching shell mean nothing there, so hold follows the chain of command -
 # a supervisor lock says the call is alive, and end/kill/send go through its
@@ -4302,24 +4373,38 @@ test_other_pid_namespace_follows_chain_of_command() {
   as_root unshare --pid --fork --mount-proc true 2>/dev/null || skip "unshare --pid unavailable"
   local out
   # Launched here, driven and stopped from another namespace.
-  "$HOLD_BIN" -dt --name nst -- /bin/sh -c 'stty -echo; while IFS= read -r l; do echo "got:$l"; done' >/dev/null || return 1
-  "$HOLD_BIN" -d --name nsd -- /bin/sh -c 'trap "exit 7" TERM; sleep 300 & wait' >/dev/null || return 1
+  # Only calls launched under the fallback carry the machinery: force it.
+  HOLD_CONSOLE_TRANSPORT=fifo "$HOLD_BIN" -dt --name nst -- /bin/sh -c 'stty -echo; while IFS= read -r l; do echo "got:$l"; done' >/dev/null || return 1
+  HOLD_CONSOLE_TRANSPORT=fifo "$HOLD_BIN" -d --name nsd -- /bin/sh -c 'trap "exit 7" TERM; sleep 300 & wait' >/dev/null || return 1
   sleep 0.4
   out=$(in_new_pid_ns /bin/sh -c '
     "$1" list | grep -Eq "Up .* nst$" && "$1" list | grep -Eq "Up .* nsd$" || { echo "not shown as running"; exit 1; }
     "$1" send nst from-ns --enter --wait 300 >/dev/null && "$1" peek nst | grep -qx got:from-ns || { echo "send/peek failed"; exit 1; }
-    "$1" end nsd >/dev/null && [ "$("$1" wait nsd)" = 7 ] || { echo "end of the -d call failed"; exit 1; }
+    # -d stays minimal (no broker): from here it can only be told apart, not ended.
+    if msg=$("$1" end nsd 2>&1); then echo "ended a -d call from another namespace"; exit 1; fi
+    case "$msg" in *"not running in this environment"*) ;; *) echo "no explanation for -d: $msg"; exit 1 ;; esac
     "$1" kill nst >/dev/null && [ "$("$1" wait nst)" = 137 ] || { echo "kill of the TTY call failed"; exit 1; }
     echo ok' sh "$HOLD_REAL_BIN" 2>/dev/null) || true
   [ "$out" = ok ] || { echo "from another namespace: $out" >&2; return 1; }
+  "$HOLD_BIN" end nsd >/dev/null && [ "$("$HOLD_BIN" wait nsd)" = 7 ] || { echo "end of the -d call at home failed" >&2; return 1; }
   # Launched in a namespace that then ends (its processes die with it): reported
   # as ended, and wait does not hang on an exit nobody will record.
-  in_new_pid_ns /bin/sh -c '"$1" -d --name nsgone -- sleep 300 >/dev/null; sleep 0.5' sh "$HOLD_REAL_BIN" || return 1
+  in_new_pid_ns /bin/sh -c 'HOLD_CONSOLE_TRANSPORT=fifo "$1" -d --name nsgone -- sleep 300 >/dev/null; sleep 0.5' sh "$HOLD_REAL_BIN" || return 1
   sleep 0.3
-  "$HOLD_BIN" list -a | grep -Eq 'Exited \(\?\).* nsgone$' || { "$HOLD_BIN" list -a >&2; return 1; }
+  # This shell cannot see it and nothing answers for it: Unknown, not Exited -
+  # sweeps leave it alone, a plain purge by name says why, --force removes it.
+  "$HOLD_BIN" list -a | grep -Eq 'Unknown.* nsgone$' || { "$HOLD_BIN" list -a >&2; return 1; }
   local start=$SECONDS
   [ "$("$HOLD_BIN" wait nsgone 2>/dev/null)" = -1 ] && [ $((SECONDS - start)) -le 5 ] || { echo "wait hung or misreported" >&2; return 1; }
-  "$HOLD_BIN" purge nst >/dev/null 2>&1; "$HOLD_BIN" purge nsd >/dev/null 2>&1; "$HOLD_BIN" purge nsgone >/dev/null 2>&1 || true
+  "$HOLD_BIN" purge >/dev/null 2>&1 || true
+  "$HOLD_BIN" list -a | grep -q ' nsgone$' || { echo "a sweep removed a call it could not judge" >&2; return 1; }
+  if "$HOLD_BIN" purge nsgone 2>"$TEST_ROOT/nsgone.err"; then echo "purge removed an unknown call without --force" >&2; return 1; fi
+  grep -q 'another PID namespace' "$TEST_ROOT/nsgone.err" || { cat "$TEST_ROOT/nsgone.err" >&2; return 1; }
+  if "$HOLD_BIN" end nsgone 2>"$TEST_ROOT/nsgone-end.err"; then echo "end claimed an unknown call" >&2; return 1; fi
+  grep -q "not running in this environment" "$TEST_ROOT/nsgone-end.err" || { cat "$TEST_ROOT/nsgone-end.err" >&2; return 1; }
+  "$HOLD_BIN" purge nsgone --force >/dev/null || return 1
+  ! "$HOLD_BIN" list -a | grep -q ' nsgone$' || return 1
+  # (nst and nsd had ended, so the sweep above already removed them)
 }
 
 # resize: the program gets SIGWINCH and the screen reports the new size.
@@ -4586,6 +4671,8 @@ run_test "peek --image: Noto emoji, and invisible characters draw nothing" test_
 run_test "peek --image draws rounded corners as arcs" test_peek_image_rounded_corner
 run_test "peek --image wraps the footer on narrow screens" test_peek_image_footer_wraps_on_narrow_screens
 run_test "inspect reports the observed state, keeping the recorded one" test_inspect_reports_observed_state
+run_test "a plain -d waiter is the original unless the fallback is selected" test_plain_d_waiter_is_original_unless_fallback
+run_test "a plain -d waiter is the original unless the fallback is selected" test_plain_d_waiter_is_original_unless_fallback
 run_test "another PID namespace: status and control go through the supervisor" test_other_pid_namespace_follows_chain_of_command
 run_test "the FIFO console keeps full capability" test_fifo_console_full_capability
 run_test "a closed terminal is reported at once, in both console modes" test_console_closed_terminal_is_reported

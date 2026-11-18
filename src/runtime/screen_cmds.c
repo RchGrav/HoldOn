@@ -653,8 +653,8 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
             if (unstamped_since.tv_sec == 0) unstamped_since = now;
             long gone_ms = (now.tv_sec - unstamped_since.tv_sec) * 1000 + (now.tv_nsec - unstamped_since.tv_nsec) / 1000000;
             if (gone_ms >= 2000) {
-                fprintf(stderr, "hold: %s ended without recording its exit status (its supervisor was killed too)\n",
-                        t->label);
+                fprintf(stderr, "hold: %s's exit was never recorded, and no supervisor answers for it (it most "
+                                "likely ended along with the shell that started it)\n", t->label);
                 printf("-1\n");
                 return 0;
             }

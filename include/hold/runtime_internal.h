@@ -16,6 +16,11 @@ void hold_rollback_spawned_group(pid_t pid, pid_t pgid);
 bool hold_wait_target_group_gone(const struct hold_run_record *r, int timeout_ms);
 const char *hold_state_str(enum run_state s);
 int hold_prune_one_run(const struct hold_store *store, const char *id, const char *boot, bool allow_stale, bool *removed);
+/* As above; allow_unknown also removes a call this shell cannot judge (one
+ * from another PID namespace whose end was never recorded) - only for a
+ * targeted purge --force. */
+int hold_prune_one_run_ex(const struct hold_store *store, const char *id, const char *boot, bool allow_stale,
+                          bool allow_unknown, bool *removed);
 /* --rm: wait (up to timeout_ms) for the call's reaper to stamp its exit,
  * then remove it, so the verb that ended or awaited it returns with the
  * name free. No-op for calls without --rm or already gone. */

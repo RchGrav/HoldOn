@@ -451,8 +451,6 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
         unlink(sock_path);
         hold_remove_fifo_exchanges(sock_path); /* a FIFO console's half-made channels */
     }
-    char ctl_path[HOLD_PATH_MAX]; /* a -d call's control FIFO (see start.c) */
-    if (hold_checked_snprintf(ctl_path, sizeof(ctl_path), "%s/%s.ctl", store->console_dir, r->id) == 0) unlink(ctl_path);
 }
 
 /* An --rm call's exit note: ".<id>.exit.tmp" holding "<code> <name>". The
@@ -529,11 +527,30 @@ void hold_auto_remove_settle(const struct hold_store *store, const char *id, int
 }
 
 int hold_prune_one_run(const struct hold_store *store, const char *id, const char *boot, bool allow_stale, bool *removed) {
+    return hold_prune_one_run_ex(store, id, boot, allow_stale, false, removed);
+}
+
+int hold_prune_one_run_ex(const struct hold_store *store, const char *id, const char *boot, bool allow_stale,
+                          bool allow_unknown, bool *removed) {
     struct hold_run_record r;
     char path[HOLD_PATH_MAX];
     if (hold_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) return 5;
     enum run_state st = hold_eval_state(&r, boot ? boot : NULL);
-    if (st != STATE_EXITED && st != STATE_FAILED && !(allow_stale && st == STATE_STALE)) {
+    uint64_t here = hold_current_pid_ns();
+    if (st == STATE_UNKNOWN && !allow_unknown && r.pid_ns != 0 && here != 0 && r.pid_ns != here) {
+        fprintf(stderr,
+                "hold: error: call %s was started in another PID namespace and this shell cannot tell whether it "
+                "ended (no exit was recorded, and no supervisor answers); purge it from the shell that started it, "
+                "or remove it anyway with --force\n", id);
+        hold_free_run_record(&r);
+        return 2;
+    }
+    if (st == STATE_UNKNOWN && !allow_unknown) {
+        fprintf(stderr, "hold: error: call %s is %s and cannot be purged\n", id, hold_state_str(st));
+        hold_free_run_record(&r);
+        return 2;
+    }
+    if (st != STATE_EXITED && st != STATE_FAILED && st != STATE_UNKNOWN && !(allow_stale && st == STATE_STALE)) {
         fprintf(stderr, "hold: error: call %s is %s and cannot be purged\n", id, hold_state_str(st));
         hold_free_run_record(&r);
         return 2;
@@ -649,7 +666,6 @@ static int cmd_prune_store_all(const struct hold_store *store, bool include_stal
     sweep_orphaned_artifacts(store, store->log_dir, ".altscreen", stats);
     sweep_orphaned_artifacts(store, store->log_dir, ".msgs", stats);
     sweep_orphaned_artifacts(store, store->console_dir, ".sock", stats);
-    sweep_orphaned_artifacts(store, store->console_dir, ".ctl", stats);
     sweep_orphaned_artifacts(store, store->public_dir, ".json", stats);
     sweep_tmp_litter(store->record_dir);
     sweep_tmp_litter(store->public_dir);
@@ -765,7 +781,7 @@ int hold_cmd_purge_action(const struct hold_invocation *inv, const struct hold_s
             }
         }
         bool removed = false;
-        rc = hold_prune_one_run(&targets[i].store, targets[i].id, boot_id, true, &removed);
+        rc = hold_prune_one_run_ex(&targets[i].store, targets[i].id, boot_id, true, force, &removed);
         if (removed) removed_count++;
         if (rc > worst) worst = rc;
     }

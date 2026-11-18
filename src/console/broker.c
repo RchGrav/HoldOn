@@ -1370,7 +1370,9 @@ void hold_run_console_broker(int parent_pipe,
     if (b.logfd < 0) {
         broker_fail_errno(&b, errno);
     }
-    hold_supervisor_lock_log(log_path); /* "alive", for shells that cannot see our pid */
+    /* "alive", for shells that cannot see our pid - only when the fallback
+     * was selected (our listener is a FIFO); the socket broker is untouched. */
+    if (b.fifo_writer >= 0) hold_supervisor_lock_log(log_path);
 
     /* The one spawn engine puts the target on a fresh PTY (setsid + TIOCSCTTY
      * + dup2 x3 + exec behind the errno handshake). On failure nothing is

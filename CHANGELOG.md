@@ -19,13 +19,16 @@
   filesystem: a call's pid means nothing in another shell, so hold showed a
   running call as `Exited (?)`, `send` refused it, `end` could not find it,
   and `wait` hung. hold now records the launching namespace and, from any
-  other, follows the chain of command: the call's supervisor (its broker, or a
-  `-d` call's waiter) holds a lock on the call's log while it lives, so `list`
-  shows it running; `send`, `peek`, and `wait` go through the broker as
-  always; and `end`/`kill` ask the supervisor to signal its program (a
-  `signal` console request, or a `-d` call's control FIFO). A call whose
-  namespace ended with it is reported as ended, and `wait` says its exit was
-  never recorded instead of waiting forever.
+  other, never consults the pid. Under the fallback (Unix sockets denied, or
+  forced), a call's supervisor holds a passive lock on its log for life, so
+  `list` shows it running; `send`, `peek`, and `wait` go through the broker as
+  always; `end`/`kill` of a `-dt` call ask the broker to signal its program.
+  A plain `-d` call stays minimal: from another shell `end` says it is not
+  running in this environment. A call this shell cannot judge reads
+  `Unknown`: purge sweeps leave it alone, a targeted `purge --force` removes
+  it, and `wait` says its exit was never recorded instead of waiting forever.
+  Without the fallback, the socket broker and the blocking `-d` waiter run
+  exactly as before.
 
 ### Fixed
 

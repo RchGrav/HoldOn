@@ -114,6 +114,26 @@ static bool sockets_denied(int err) {
     return err == EPERM || err == EACCES || err == EAFNOSUPPORT;
 }
 
+bool hold_console_fallback_selected(void) {
+    const char *want = getenv("HOLD_CONSOLE_TRANSPORT");
+    if (want && !strcmp(want, "fifo")) return true;
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return sockets_denied(errno);
+    bool denied = false;
+#if defined(__linux__)
+    /* socket() alone can pass where bind/listen are refused: try both on a
+     * throwaway abstract address, which touches no file. */
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    int len = snprintf(addr.sun_path + 1, sizeof(addr.sun_path) - 1, "hold-probe-%ld", (long)getpid());
+    socklen_t alen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1 + (size_t)len);
+    if (bind(fd, (struct sockaddr *)&addr, alen) != 0 || listen(fd, 1) != 0) denied = sockets_denied(errno);
+#endif
+    close(fd);
+    return denied;
+}
+
 /* The broker's endpoint: a Unix socket, or — where sockets are denied, or
  * HOLD_CONSOLE_TRANSPORT=fifo asks for it — a FIFO at the same path (see
  * fifo.c). *fifo_writer is -1 for a socket, else the broker's own writer

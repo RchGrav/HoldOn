@@ -105,7 +105,10 @@ static enum run_state eval_state(const struct hold_run_record *r, const char *cu
         return STATE_FAILED;
     if (r->has_boot && current_boot && strcmp(r->boot_id, current_boot) != 0) return STATE_STALE;
     if (r->has_exit_code) return STATE_EXITED;
-    if (!supervisor_holds_log(r)) return STATE_EXITED; /* ended, its exit never recorded */
+    /* No stamp and no supervisor answering: most likely it ended with its
+     * namespace - but this shell cannot know, so it says so (and purge's
+     * sweeps leave it alone). */
+    if (!supervisor_holds_log(r)) return STATE_UNKNOWN;
     if (elsewhere) *elsewhere = true;
     return STATE_RUNNING;
 }
