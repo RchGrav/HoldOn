@@ -4262,6 +4262,26 @@ PY
   "$HOLD_BIN" end fa >/dev/null 2>&1 || true
 }
 
+# inspect reports what hold observes, as list does: a call killed together with
+# its reaper (as a sandbox that ends a tool call might) was never stamped, so its
+# record still says running - inspect shows "exited" and keeps "recorded_state".
+test_inspect_reports_observed_state() {
+  local pid reaper
+  "$HOLD_BIN" -d --name killed -- sleep 60 >/dev/null || return 1
+  sleep 0.3
+  pid=$("$HOLD_BIN" inspect killed | sed -n 's/^  "pid": \([0-9]*\),$/\1/p')
+  reaper=$(ps -o ppid= -p "$pid" | tr -d ' ')
+  [ -n "$pid" ] && [ -n "$reaper" ] || return 1
+  kill -KILL "$reaper" "$pid" 2>/dev/null || as_root kill -KILL "$reaper" "$pid" || return 1
+  sleep 0.5
+  "$HOLD_BIN" list -a | grep -Eq "Exited \(\?\).* killed$" || { "$HOLD_BIN" list -a >&2; return 1; }
+  "$HOLD_BIN" inspect killed >"$TEST_ROOT/killed.json" || return 1
+  grep -q '"state": "exited"' "$TEST_ROOT/killed.json" && grep -q '"recorded_state": "running"' "$TEST_ROOT/killed.json" ||
+    { cat "$TEST_ROOT/killed.json" >&2; return 1; }
+  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$TEST_ROOT/killed.json" || return 1
+  "$HOLD_BIN" purge killed >/dev/null 2>&1 || true
+}
+
 # resize: the program gets SIGWINCH and the screen reports the new size.
 test_resize_delivers_sigwinch() {
   "$HOLD_BIN" -dt --name sized -- /bin/sh -c 'trap "echo SIZE:\$(stty size)" WINCH; echo ready; while :; do sleep 0.1; done' >/dev/null || return 1
@@ -4525,6 +4545,7 @@ run_test "peek --image draws Hebrew, Ethiopic, sextants, math letters" test_peek
 run_test "peek --image: Noto emoji, and invisible characters draw nothing" test_peek_image_emoji_and_invisibles
 run_test "peek --image draws rounded corners as arcs" test_peek_image_rounded_corner
 run_test "peek --image wraps the footer on narrow screens" test_peek_image_footer_wraps_on_narrow_screens
+run_test "inspect reports the observed state, keeping the recorded one" test_inspect_reports_observed_state
 run_test "the FIFO console keeps full capability" test_fifo_console_full_capability
 run_test "a closed terminal is reported at once, in both console modes" test_console_closed_terminal_is_reported
 run_test "FIFO console: root drives a user's call; others get nothing" test_fifo_console_access

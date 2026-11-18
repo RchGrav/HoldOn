@@ -364,31 +364,46 @@ static char *build_stdio_object(pid_t pid) {
 /* Print the record file as a one-object JSON array. With a live "Stdio"
  * object, splice it in before the object's closing brace: the record is a
  * single top-level object, so the last '}' in the file is its terminator. */
-static int write_inspect(const char *path, const char *stdio_obj) {
+/* The record as stored, with what hold observes now: "state" is the evaluated
+ * state (as hold list shows it) and, when the record says otherwise - a call
+ * killed before its exit was stamped still reads "running" - the stored value
+ * is kept as "recorded_state". A running call also gets its live stdio. */
+static int write_inspect(const char *path, const char *observed, const char *stdio_obj) {
     char *buf = NULL;
     if (hold_read_owned_file_no_symlink(path, &buf) != 0 || !buf) return -1;
-    int rc = 0;
-    if (stdio_obj) {
-        char *close = strrchr(buf, '}');
-        if (!close) {
-            free(buf);
-            return -1;
+    char recorded[32] = "";
+    char *val = strstr(buf, "\"state\": \"");
+    if (val) {
+        val += strlen("\"state\": \"");
+        char *q = strchr(val, '"');
+        if (q && (size_t)(q - val) < sizeof(recorded) && strncmp(val, observed, (size_t)(q - val)) != 0) {
+            memcpy(recorded, val, (size_t)(q - val));
+            recorded[q - val] = '\0';
         }
-        /* Trim whitespace before the closing brace so the spliced comma lands
-         * right after the last existing value. */
-        while (close > buf &&
-               (close[-1] == '\n' || close[-1] == ' ' || close[-1] == '\t' || close[-1] == '\r'))
-            close--;
-        *close = '\0';
-        if (fputs("[\n", stdout) == EOF || fputs(buf, stdout) == EOF ||
-            fputs(",\n", stdout) == EOF || fputs(stdio_obj, stdout) == EOF ||
-            fputs("\n}\n]\n", stdout) == EOF)
-            rc = -1;
-    } else {
-        if (fputs("[\n", stdout) == EOF || fputs(buf, stdout) == EOF ||
-            fputs("\n]\n", stdout) == EOF)
-            rc = -1;
     }
+    char *close = strrchr(buf, '}');
+    if (!close) {
+        free(buf);
+        return -1;
+    }
+    /* Trim whitespace before the closing brace so spliced fields follow the
+     * last existing value directly. */
+    while (close > buf && (close[-1] == '\n' || close[-1] == ' ' || close[-1] == '\t' || close[-1] == '\r')) close--;
+    *close = '\0';
+    int rc = 0;
+    if (fputs("[\n", stdout) == EOF) rc = -1;
+    if (rc == 0 && recorded[0] && val) {
+        /* the stored value, replaced by the observed one */
+        char *q = strchr(val, '"');
+        if (fwrite(buf, 1, (size_t)(val - buf), stdout) != (size_t)(val - buf) || fputs(observed, stdout) == EOF ||
+            fputs(q, stdout) == EOF)
+            rc = -1;
+        if (rc == 0 && printf(",\n  \"recorded_state\": \"%s\"", recorded) < 0) rc = -1;
+    } else if (rc == 0 && fputs(buf, stdout) == EOF) {
+        rc = -1;
+    }
+    if (rc == 0 && stdio_obj && (fputs(",\n", stdout) == EOF || fputs(stdio_obj, stdout) == EOF)) rc = -1;
+    if (rc == 0 && fputs("\n}\n]\n", stdout) == EOF) rc = -1;
     free(buf);
     return rc;
 }
@@ -411,7 +426,7 @@ int hold_cmd_inspect_action(const struct hold_invocation *inv,
     /* Live fd targets are observable state, added only for a running call whose
      * leader still exists; ended calls fall back to the verbatim record. */
     char *stdio_obj = st == STATE_RUNNING && r.pid > 1 ? build_stdio_object(r.pid) : NULL;
-    rc = write_inspect(path, stdio_obj);
+    rc = write_inspect(path, hold_state_str(st), stdio_obj);
     free(stdio_obj);
     hold_free_run_record(&r);
     if (rc != 0) hold_die_errno("hold: failed to inspect run record");

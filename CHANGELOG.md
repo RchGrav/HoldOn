@@ -24,6 +24,10 @@
   gets the exit code.
 - `peek` falling back to the saved screen now says when the console was
   unreachable for another reason, instead of claiming the call ended.
+- `hold inspect` printed the stored record, so a call killed together with
+  its reaper (never stamped) read `"state": "running"` while `hold list`
+  showed `Exited (?)`. inspect now reports the observed state, as list does,
+  and keeps the stored one as `"recorded_state"` when they differ.
 - On a narrow screen, the screenshot footer (`CURSOR … SIZE … MOUSE …`) was
   wider than the terminal and stretched the image into an empty band beside
   it; it now wraps onto lines within the screen's width.
