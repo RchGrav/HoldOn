@@ -101,14 +101,23 @@ static void child_identity_prepare(const char *id, const char *name, bool tty) {
     g_child_identity.tty = tty;
 }
 
-/* A TTY call runs on Hold's xterm-compatible terminal: when the launcher had
- * no usable TERM (cron, CI, systemd, sudo: unset, "dumb", or "unknown"), say so, as docker run
- * -t does. Applied before the recipe env, so an explicit -e TERM=... wins. */
+/* A TTY call runs on Hold's own xterm-compatible terminal, never on the
+ * launcher's, so its environment describes that terminal: TERM is
+ * xterm-256color (as docker run -t sets TERM for its terminal), and the
+ * variables naming the launcher's terminal or multiplexer go. A program that
+ * sees TMUX believes it runs inside that tmux and acts on it - hollywood
+ * opened its panes in the caller's byobu, leaving hold's screen blank.
+ * Applied before the recipe env, so an explicit -e wins. Plain calls are
+ * left alone. */
 static int apply_default_term(void) {
     if (!g_child_identity.tty) return 0;
-    const char *term = getenv("TERM");
-    /* "unknown" is what sudo and login set when there is no terminal type. */
-    if (term && *term && strcmp(term, "dumb") != 0 && strcmp(term, "unknown") != 0) return 0;
+    static const char *const launcher_terminal[] = {
+        "TMUX", "TMUX_PANE",           /* tmux (and byobu on tmux) */
+        "STY", "WINDOW",               /* GNU screen */
+        "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
+    };
+    for (size_t i = 0; i < sizeof(launcher_terminal) / sizeof(launcher_terminal[0]); i++)
+        if (unsetenv(launcher_terminal[i]) != 0) return -1;
     return setenv("TERM", "xterm-256color", 1);
 }
 

@@ -3649,8 +3649,11 @@ test_msg_between_calls() {
   "$HOLD_BIN" end lead worker >/dev/null 2>&1 || true
 }
 
-# A TTY call gets a usable TERM when the launcher had none (cron, CI), but an
-# explicit -e TERM=... wins and plain calls are left alone.
+# A TTY call's environment describes hold's terminal, not the launcher's: TERM
+# is xterm-256color whatever the launcher had (none under cron/CI, or its own
+# terminal's), and tmux/screen variables are dropped - a program seeing TMUX
+# acts on the caller's tmux. An explicit -e TERM=... wins; plain calls are
+# left alone.
 test_tty_call_defaults_term() {
   # /usr/bin/env directly: some /bin/sh (macOS) set TERM=dumb themselves.
   env -u TERM "$HOLD_BIN" -dt --name t1 -- /usr/bin/env >/dev/null || return 1
@@ -3658,14 +3661,20 @@ test_tty_call_defaults_term() {
   TERM=unknown "$HOLD_BIN" -dt --name t5 -- /usr/bin/env >/dev/null || return 1
   env -u TERM "$HOLD_BIN" -dt -e TERM=vt100 --name t3 -- /usr/bin/env >/dev/null || return 1
   env -u TERM "$HOLD_BIN" -d --name t4 -- /usr/bin/env >/dev/null || return 1
-  for c in t1 t2 t3 t4 t5; do "$HOLD_BIN" wait "$c" --timeout 5000 >/dev/null || return 1; done
-  "$HOLD_BIN" logs t5 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || return 1
+  TERM=screen-256color TMUX=/tmp/tmux-x/default,1,0 TMUX_PANE=%1 STY=1.pts TERM_PROGRAM=tmux \
+    "$HOLD_BIN" -dt --name t6 -- /usr/bin/env >/dev/null || return 1
+  TMUX=/tmp/tmux-x/default,1,0 "$HOLD_BIN" -d --name t7 -- /usr/bin/env >/dev/null || return 1
+  for c in t1 t2 t3 t4 t5 t6 t7; do "$HOLD_BIN" wait "$c" --timeout 5000 >/dev/null || { echo "wait $c failed" >&2; return 1; }; done
+  "$HOLD_BIN" logs t5 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || { echo t5 >&2; "$HOLD_BIN" logs t5 >&2; return 1; }
   # logs, not peek: the environment can scroll past the 24-row screen
   "$HOLD_BIN" logs t1 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || { "$HOLD_BIN" logs t1 >&2; return 1; }
-  "$HOLD_BIN" logs t2 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || return 1
-  "$HOLD_BIN" logs t3 | tr -d '\r' | grep -qx 'TERM=vt100' || return 1
+  "$HOLD_BIN" logs t2 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || { echo t2 >&2; "$HOLD_BIN" logs t2 >&2; return 1; }
+  "$HOLD_BIN" logs t3 | tr -d '\r' | grep -qx 'TERM=vt100' || { echo t3 >&2; "$HOLD_BIN" logs t3 >&2; return 1; }
   # A plain (non -t) call is left alone: hold injects nothing.
   ! "$HOLD_BIN" logs t4 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || return 1
+  "$HOLD_BIN" logs t6 | tr -d '\r' | grep -qx 'TERM=xterm-256color' || { "$HOLD_BIN" logs t6 >&2; return 1; }
+  ! "$HOLD_BIN" logs t6 | tr -d '\r' | grep -Eq '^(TMUX|TMUX_PANE|STY|TERM_PROGRAM)=' || { "$HOLD_BIN" logs t6 >&2; return 1; }
+  "$HOLD_BIN" logs t7 | grep -q '^TMUX=/tmp/tmux-x/default,1,0$' || { "$HOLD_BIN" logs t7 >&2; return 1; }
 }
 
 # Arrow keys and mouse events move a real program's cursor (vim, mouse=a).
