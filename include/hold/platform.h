@@ -58,6 +58,9 @@ bool hold_pid_has_ancestor(pid_t pid, pid_t ancestor);
  * verifies the pid a client claims, as a socket's peer credentials would.
  * Linux scans /proc/<pid>/fd, macOS asks libproc; false where neither. */
 bool hold_pid_has_file_open(pid_t pid, uint64_t dev, uint64_t ino);
+/* This process's PID namespace (the inode of /proc/self/ns/pid), 0 where there
+ * are no PID namespaces (macOS) or it cannot be read. */
+uint64_t hold_current_pid_ns(void);
 int hold_resolve_binary_path(const char *argv0, char *out, size_t n);
 int hold_find_binary_path(const char *argv0, char *out, size_t n);
 int hold_absolute_existing_path_from_cwd(const char *token, const char *cwd, char *out, size_t n);

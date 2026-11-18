@@ -66,6 +66,7 @@ struct hold_run_record {
     bool has_console;
     bool saved;
     bool auto_remove; /* --rm: removed as soon as it ends */
+    uint64_t pid_ns;  /* Linux: the launching PID namespace (inode of /proc/self/ns/pid); 0 = unknown */
     struct hold_recipe recipe;
     bool has_observed;
     char observed_exe[HOLD_PATH_MAX];

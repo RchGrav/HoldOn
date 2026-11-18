@@ -4282,6 +4282,46 @@ test_inspect_reports_observed_state() {
   "$HOLD_BIN" purge killed >/dev/null 2>&1 || true
 }
 
+# Another PID namespace (some sandboxes give each shell its own): pids from
+# the launching shell mean nothing there, so hold follows the chain of command -
+# a supervisor lock says the call is alive, and end/kill/send go through its
+# broker or waiter. Run as the test user inside `unshare --pid`.
+in_new_pid_ns() {
+  local env_args=("HOME=$ACTOR_HOME" "HOLD_TEST_SYSTEM_STATE_DIR=$HOLD_TEST_SYSTEM_STATE_DIR"
+    "HOLD_TEST_INVOKING_HOME=$ACTOR_HOME" "PATH=$PATH")
+  local name
+  for name in HOLD_BOOT_ID_PATH HOLD_TEST_HOME_ROOT HOLD_CONSOLE_TRANSPORT; do
+    if [ "${!name+x}" = x ]; then env_args+=("$name=${!name}"); fi
+  done
+  as_root unshare --pid --fork --mount-proc "$SUDO_BIN" -n -u "$TEST_USER" env "${env_args[@]}" "$@"
+}
+
+test_other_pid_namespace_follows_chain_of_command() {
+  [ "$(uname -s)" = Linux ] || skip "PID namespaces are Linux"
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] && [ -n "$SUDO_BIN" ] || skip "needs root to make a PID namespace"
+  as_root unshare --pid --fork --mount-proc true 2>/dev/null || skip "unshare --pid unavailable"
+  local out
+  # Launched here, driven and stopped from another namespace.
+  "$HOLD_BIN" -dt --name nst -- /bin/sh -c 'stty -echo; while IFS= read -r l; do echo "got:$l"; done' >/dev/null || return 1
+  "$HOLD_BIN" -d --name nsd -- /bin/sh -c 'trap "exit 7" TERM; sleep 300 & wait' >/dev/null || return 1
+  sleep 0.4
+  out=$(in_new_pid_ns /bin/sh -c '
+    "$1" list | grep -Eq "Up .* nst$" && "$1" list | grep -Eq "Up .* nsd$" || { echo "not shown as running"; exit 1; }
+    "$1" send nst from-ns --enter --wait 300 >/dev/null && "$1" peek nst | grep -qx got:from-ns || { echo "send/peek failed"; exit 1; }
+    "$1" end nsd >/dev/null && [ "$("$1" wait nsd)" = 7 ] || { echo "end of the -d call failed"; exit 1; }
+    "$1" kill nst >/dev/null && [ "$("$1" wait nst)" = 137 ] || { echo "kill of the TTY call failed"; exit 1; }
+    echo ok' sh "$HOLD_REAL_BIN" 2>/dev/null) || true
+  [ "$out" = ok ] || { echo "from another namespace: $out" >&2; return 1; }
+  # Launched in a namespace that then ends (its processes die with it): reported
+  # as ended, and wait does not hang on an exit nobody will record.
+  in_new_pid_ns /bin/sh -c '"$1" -d --name nsgone -- sleep 300 >/dev/null; sleep 0.5' sh "$HOLD_REAL_BIN" || return 1
+  sleep 0.3
+  "$HOLD_BIN" list -a | grep -Eq 'Exited \(\?\).* nsgone$' || { "$HOLD_BIN" list -a >&2; return 1; }
+  local start=$SECONDS
+  [ "$("$HOLD_BIN" wait nsgone 2>/dev/null)" = -1 ] && [ $((SECONDS - start)) -le 5 ] || { echo "wait hung or misreported" >&2; return 1; }
+  "$HOLD_BIN" purge nst >/dev/null 2>&1; "$HOLD_BIN" purge nsd >/dev/null 2>&1; "$HOLD_BIN" purge nsgone >/dev/null 2>&1 || true
+}
+
 # resize: the program gets SIGWINCH and the screen reports the new size.
 test_resize_delivers_sigwinch() {
   "$HOLD_BIN" -dt --name sized -- /bin/sh -c 'trap "echo SIZE:\$(stty size)" WINCH; echo ready; while :; do sleep 0.1; done' >/dev/null || return 1
@@ -4546,6 +4586,7 @@ run_test "peek --image: Noto emoji, and invisible characters draw nothing" test_
 run_test "peek --image draws rounded corners as arcs" test_peek_image_rounded_corner
 run_test "peek --image wraps the footer on narrow screens" test_peek_image_footer_wraps_on_narrow_screens
 run_test "inspect reports the observed state, keeping the recorded one" test_inspect_reports_observed_state
+run_test "another PID namespace: status and control go through the supervisor" test_other_pid_namespace_follows_chain_of_command
 run_test "the FIFO console keeps full capability" test_fifo_console_full_capability
 run_test "a closed terminal is reported at once, in both console modes" test_console_closed_terminal_is_reported
 run_test "FIFO console: root drives a user's call; others get nothing" test_fifo_console_access

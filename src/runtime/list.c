@@ -451,6 +451,8 @@ static void unlink_call_artifacts(const struct hold_store *store, const struct h
         unlink(sock_path);
         hold_remove_fifo_exchanges(sock_path); /* a FIFO console's half-made channels */
     }
+    char ctl_path[HOLD_PATH_MAX]; /* a -d call's control FIFO (see start.c) */
+    if (hold_checked_snprintf(ctl_path, sizeof(ctl_path), "%s/%s.ctl", store->console_dir, r->id) == 0) unlink(ctl_path);
 }
 
 /* An --rm call's exit note: ".<id>.exit.tmp" holding "<code> <name>". The
@@ -647,6 +649,7 @@ static int cmd_prune_store_all(const struct hold_store *store, bool include_stal
     sweep_orphaned_artifacts(store, store->log_dir, ".altscreen", stats);
     sweep_orphaned_artifacts(store, store->log_dir, ".msgs", stats);
     sweep_orphaned_artifacts(store, store->console_dir, ".sock", stats);
+    sweep_orphaned_artifacts(store, store->console_dir, ".ctl", stats);
     sweep_orphaned_artifacts(store, store->public_dir, ".json", stats);
     sweep_tmp_litter(store->record_dir);
     sweep_tmp_litter(store->public_dir);

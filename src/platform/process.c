@@ -432,3 +432,11 @@ bool hold_pid_has_file_open(pid_t pid, uint64_t dev, uint64_t ino) {
     return false;
 #endif
 }
+
+uint64_t hold_current_pid_ns(void) {
+#if defined(__linux__)
+    struct stat st;
+    if (stat("/proc/self/ns/pid", &st) == 0) return (uint64_t)st.st_ino;
+#endif
+    return 0;
+}

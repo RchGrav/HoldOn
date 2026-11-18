@@ -5,6 +5,7 @@
 #include "hold/core.h"
 #include "hold/platform.h"
 #include "hold/store.h"
+#include "hold/console.h"
 
 static volatile sig_atomic_t g_tail_interrupted = 0;
 
@@ -94,6 +95,46 @@ static int validate_signal_target(const char *id,
 
 /* ---- end/stop/kill ---------------------------------------------------- */
 
+/* The call runs where this shell cannot see its pid (another PID namespace):
+ * follow the chain of command and ask its supervisor - the broker, over the
+ * console, or a -d call's waiter, over its control FIFO - to signal it.
+ * 0 when asked, -1 when no supervisor answers. */
+static int signal_through_supervisor(const struct hold_store *store, const struct hold_run_record *r, int sig) {
+    if (r->has_console) {
+        char req[32];
+        snprintf(req, sizeof(req), "signal sig=%d", sig);
+        unsigned char *reply = NULL;
+        size_t len = 0;
+        bool ok = hold_console_request(r->console_sock, req, strlen(req), &reply, &len) == 0 && reply &&
+                  strncmp((const char *)reply, "ok", 2) == 0;
+        free(reply);
+        return ok ? 0 : -1;
+    }
+    char path[HOLD_PATH_MAX];
+    if (hold_checked_snprintf(path, sizeof(path), "%s/%s.ctl", store->console_dir, r->id) != 0) return -1;
+    int fd = open(path, O_WRONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    unsigned char b = (unsigned char)sig;
+    ssize_t n = write(fd, &b, 1);
+    close(fd);
+    return n == 1 ? 0 : -1;
+}
+
+/* Whether the call has stopped running, as this shell can tell, within ms. */
+static bool call_ended_within(const struct hold_store *store, const char *id, int ms) {
+    for (int waited = 0;; waited += 50) {
+        struct hold_run_record cur;
+        char path[HOLD_PATH_MAX], boot[128];
+        if (hold_load_record_by_id(store->record_dir, id, &cur, path, sizeof(path)) != 0) return true;
+        bool running = hold_eval_state(&cur, hold_boot_id_or_null(boot)) == STATE_RUNNING;
+        hold_free_run_record(&cur);
+        if (!running) return true;
+        if (waited >= ms) return false;
+        struct timespec sl = {.tv_sec = 0, .tv_nsec = 50 * 1000000L};
+        nanosleep(&sl, NULL);
+    }
+}
+
 /* One target: load, validate, then either print the equivalent kill command
  * (--print revalidates with require_live) or deliver sig with the graceful
  * TERM -> revalidate -> KILL escalation. */
@@ -107,8 +148,26 @@ static int signal_one(const struct hold_store *store,
     char path[HOLD_PATH_MAX];
     *already_done = false;
     if (hold_load_record_by_id(store->record_dir, id, &r, path, sizeof(path)) != 0) return 5;
+    char boot[128];
+    int rc = 0;
+    if (hold_call_elsewhere(&r, hold_boot_id_or_null(boot))) {
+        if (print_cmd) {
+            fprintf(stderr, "hold: %s runs in another PID namespace, so its pid means nothing here and there is no "
+                            "kill command to print; hold end/kill reach it through its supervisor\n", id);
+            rc = 3;
+            goto out;
+        }
+        if (signal_through_supervisor(store, &r, sig) != 0) {
+            *already_done = true; /* no supervisor answered: it has ended */
+            goto out;
+        }
+        if (!graceful || call_ended_within(store, id, STOP_TIMEOUT_MS)) goto out;
+        if (signal_through_supervisor(store, &r, SIGKILL) != 0 || call_ended_within(store, id, 1000)) goto out;
+        rc = 4;
+        goto out;
+    }
     enum signal_validation_state state = SIGNAL_TARGET_RUNNING;
-    int rc = validate_signal_target(id, &r, print_cmd, &state);
+    rc = validate_signal_target(id, &r, print_cmd, &state);
     if (rc != 0) goto out;
     if (print_cmd) {
         printf("kill -%s -- -%ld\n", sig == SIGKILL ? "KILL" : "TERM", (long)r.pgid);

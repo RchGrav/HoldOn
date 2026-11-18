@@ -198,6 +198,90 @@ static void sleep_restart_delay(int seconds) {
     }
 }
 
+/* ---- a -d call's control channel ---------------------------------------
+ *
+ * The chain of command for shells that cannot see a call's pid (another PID
+ * namespace): hold end/kill write a signal number, one byte, to the FIFO
+ * <console_dir>/<id>.ctl, and the call's waiter - which can see its program -
+ * signals the program's group. (TTY calls get the same through the broker's
+ * "signal" request.) */
+
+static int g_chld_pipe[2] = {-1, -1};
+
+static void on_sigchld(int sig) {
+    (void)sig;
+    int saved = errno;
+    if (g_chld_pipe[1] >= 0) (void)!write(g_chld_pipe[1], "c", 1);
+    errno = saved;
+}
+
+static bool control_signal_allowed(int sig) {
+    return sig == SIGTERM || sig == SIGKILL || sig == SIGINT || sig == SIGHUP;
+}
+
+/* The FIFO's read end (and our own writer, so it never reports EOF); -1 if it
+ * cannot be made - the call then simply has no remote control. */
+static int open_call_control(const struct hold_store *store, const char *id, char *path, size_t n) {
+    if (hold_checked_snprintf(path, n, "%s/%s.ctl", store->console_dir, id) != 0) return -1;
+    unlink(path);
+    if (mkfifo(path, 0600) != 0) return -1;
+    int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW);
+    if (fd >= 0 && open(path, O_WRONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW) >= 0) return fd;
+    if (fd >= 0) close(fd);
+    unlink(path);
+    return -1;
+}
+
+/* waitpid(child) that also serves the control FIFO. SIGCHLD wakes the poll
+ * through a self-pipe, so an exit is seen at once. *stop (the restart
+ * supervisor's flag) re-sends TERM to the child, as its plain wait did. */
+static int wait_serving_control(pid_t child, pid_t group, int ctl, volatile sig_atomic_t *stop) {
+    int status = 0;
+    if (ctl < 0 || pipe(g_chld_pipe) != 0) {
+        while (waitpid(child, &status, 0) < 0) {
+            if (errno == EINTR) {
+                if (stop && *stop) kill(child, SIGTERM);
+                continue;
+            }
+            return 127 << 8;
+        }
+        return status;
+    }
+    for (int i = 0; i < 2; i++) {
+        (void)fcntl(g_chld_pipe[i], F_SETFL, fcntl(g_chld_pipe[i], F_GETFL) | O_NONBLOCK);
+        (void)fcntl(g_chld_pipe[i], F_SETFD, FD_CLOEXEC);
+    }
+    struct sigaction sa, old;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = on_sigchld;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGCHLD, &sa, &old);
+    for (;;) {
+        pid_t w = waitpid(child, &status, WNOHANG);
+        if (w == child) break;
+        if (w < 0 && errno != EINTR) {
+            status = 127 << 8;
+            break;
+        }
+        if (stop && *stop) kill(child, SIGTERM);
+        struct pollfd p[2] = {{.fd = g_chld_pipe[0], .events = POLLIN}, {.fd = ctl, .events = POLLIN}};
+        if (poll(p, 2, 1000) <= 0) continue; /* the timeout only guards a lost wakeup */
+        char drain[64];
+        while (read(g_chld_pipe[0], drain, sizeof(drain)) > 0) continue;
+        if (p[1].revents & POLLIN) {
+            unsigned char req[16];
+            ssize_t n = read(ctl, req, sizeof(req));
+            for (ssize_t i = 0; i < n; i++)
+                if (control_signal_allowed(req[i])) (void)kill(-group, req[i]);
+        }
+    }
+    sigaction(SIGCHLD, &old, NULL);
+    close(g_chld_pipe[0]);
+    close(g_chld_pipe[1]);
+    g_chld_pipe[0] = g_chld_pipe[1] = -1;
+    return status;
+}
+
 /* Exit persistence: rc 1 (record purged after load) is FINAL — never
  * resurrect a call the user just removed. Only rc -1 retries (covers a
  * fast exit before the parent has written the record). */
@@ -233,6 +317,11 @@ static void run_restart_supervisor(const struct hold_store *store,
     sigaction(SIGHUP, &sa, NULL);
 
     close(handshake_fd);
+    char log_path[HOLD_PATH_MAX];
+    if (hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) == 0)
+        hold_supervisor_lock_log(log_path);
+    char ctl_path[HOLD_PATH_MAX];
+    int ctl = open_call_control(store, id, ctl_path, sizeof(ctl_path));
     int failures = 0;
     int status = 0;
     bool have_status = false;
@@ -251,14 +340,7 @@ static void run_restart_supervisor(const struct hold_store *store,
             fprintf(stderr, "hold: cannot restart '%s': %s\n", resolved_exec_path, strerror(errno));
             _exit(127);
         }
-        while (waitpid(worker, &status, 0) < 0) {
-            if (errno == EINTR) {
-                if (g_restart_stop) kill(worker, SIGTERM);
-                continue;
-            }
-            status = 127 << 8;
-            break;
-        }
+        status = wait_serving_control(worker, getpgrp(), ctl, &g_restart_stop);
         have_status = true;
         if (g_restart_stop) break;
         if (restart_status_failed(status)) failures++;
@@ -267,6 +349,7 @@ static void run_restart_supervisor(const struct hold_store *store,
         fprintf(stderr, "hold: restarting %s after exit status %d\n", resolved_exec_path, status);
         sleep_restart_delay(restart_delay_seconds);
     }
+    if (ctl >= 0) unlink(ctl_path);
     if (have_status) mark_finished_with_retry(store, id, status);
     _exit(0);
 }
@@ -695,6 +778,10 @@ int hold_perform_start_options(const struct hold_invocation *inv,
                 child_fail_errno(io[HS_W]);
             }
             if (target != 0) {
+                /* The waiter's life is the call's: say so to shells in other
+                 * PID namespaces (taken after the fork: the target never
+                 * holds it). */
+                hold_supervisor_lock_log(log_path);
                 /* Write the target pid BEFORE closing the handshake pipe, so
                  * the parent never sees exec-success without a pid to read. */
                 if (io[TP_W] >= 0) {
@@ -708,12 +795,10 @@ int hold_perform_start_options(const struct hold_invocation *inv,
                 signal(SIGTERM, SIG_IGN);
                 signal(SIGINT, SIG_IGN);
                 signal(SIGHUP, SIG_IGN);
-                int status = 0;
-                while (waitpid(target, &status, 0) < 0) {
-                    if (errno == EINTR) continue;
-                    status = 127 << 8;
-                    break;
-                }
+                char ctl_path[HOLD_PATH_MAX];
+                int ctl = open_call_control(store, id, ctl_path, sizeof(ctl_path));
+                int status = wait_serving_control(target, target, ctl, NULL);
+                if (ctl >= 0) unlink(ctl_path);
                 mark_finished_with_retry(store, id, status);
                 if (WIFEXITED(status)) _exit(WEXITSTATUS(status));
                 if (WIFSIGNALED(status)) _exit(128 + WTERMSIG(status));
@@ -838,6 +923,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         copy_field(&u, r.name, sizeof(r.name), run_name, "hold: call name too long");
     }
     r.auto_remove = opts->auto_remove;
+    r.pid_ns = hold_current_pid_ns();
     if (console_sock[0]) {
         r.has_console = true;
         copy_field(&u, r.console_sock, sizeof(r.console_sock), console_sock, "hold: console socket path too long");

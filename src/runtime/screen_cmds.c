@@ -620,6 +620,7 @@ static int run_wait(const struct screen_target *t, const char *args, bool print_
 static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
     struct timespec start;
     clock_gettime(CLOCK_MONOTONIC, &start);
+    struct timespec unstamped_since = {0, 0};
     for (;;) {
         struct hold_run_record cur;
         char path[HOLD_PATH_MAX];
@@ -641,6 +642,22 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
         if (st != STATE_RUNNING && (has || st == STATE_STALE || st == STATE_FAILED)) {
             printf("%d\n", has ? code : -1);
             return 0;
+        }
+        /* Not running, nothing recorded, and no supervisor holds the call (it
+         * would answer even from another PID namespace): it was killed with
+         * its reaper, and nobody will record an exit. Allow the usual moment
+         * between an exit and its stamp, then say so instead of waiting on. */
+        if (st != STATE_RUNNING && !has) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            if (unstamped_since.tv_sec == 0) unstamped_since = now;
+            long gone_ms = (now.tv_sec - unstamped_since.tv_sec) * 1000 + (now.tv_nsec - unstamped_since.tv_nsec) / 1000000;
+            if (gone_ms >= 2000) {
+                fprintf(stderr, "hold: %s ended without recording its exit status (its supervisor was killed too)\n",
+                        t->label);
+                printf("-1\n");
+                return 0;
+            }
         }
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);

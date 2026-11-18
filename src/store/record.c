@@ -23,6 +23,7 @@
 const struct hold_record_field hold_record_fields[] = {
     F("saved", RF_BOOL, RF_WRONLY, saved),        /* reader shims legacy "Saved" (D-4) */
     F("auto_remove", RF_BOOL, 0, auto_remove),    /* --rm; absent in older records = false */
+    F("pid_ns", RF_U64, 0, pid_ns),               /* launching PID namespace; absent = 0 = unknown */
     F("version", RF_INT, RF_REQ, version),
     S("id", RF_REQ, id),
     S("run_id", RF_WRONLY, run_id),               /* reader defaults run_id <- id */

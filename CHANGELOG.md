@@ -14,6 +14,19 @@
   reattach, and root driving a user's call. The first version was drafted in
   that sandbox; see docs/console.md.
 
+- Calls work across PID namespaces. Some sandboxes (ChatGPT's code
+  environment among them) give each shell its own PID namespace over a shared
+  filesystem: a call's pid means nothing in another shell, so hold showed a
+  running call as `Exited (?)`, `send` refused it, `end` could not find it,
+  and `wait` hung. hold now records the launching namespace and, from any
+  other, follows the chain of command: the call's supervisor (its broker, or a
+  `-d` call's waiter) holds a lock on the call's log while it lives, so `list`
+  shows it running; `send`, `peek`, and `wait` go through the broker as
+  always; and `end`/`kill` ask the supervisor to signal its program (a
+  `signal` console request, or a `-d` call's control FIFO). A call whose
+  namespace ended with it is reported as ended, and `wait` says its exit was
+  never recorded instead of waiting forever.
+
 ### Fixed
 
 - A program that closed its terminal but kept running left its console

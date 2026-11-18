@@ -8,6 +8,9 @@
 
 void hold_report_session_escapees(const struct hold_run_record *r);
 enum run_state hold_eval_state(const struct hold_run_record *r, const char *current_boot);
+/* Running, but its pid is not visible from here (another PID namespace): act
+ * through its supervisor - the broker, or a -d call's reaper. */
+bool hold_call_elsewhere(const struct hold_run_record *r, const char *current_boot);
 int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, bool follow_until_exit);
 void hold_rollback_spawned_group(pid_t pid, pid_t pgid);
 bool hold_wait_target_group_gone(const struct hold_run_record *r, int timeout_ms);

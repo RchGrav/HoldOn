@@ -526,6 +526,23 @@ static void handle_resize(struct broker *b, struct control_client *c, const char
     control_replyf(c, "ok rows=%d cols=%d\n", rows, cols);
 }
 
+/* "signal sig=N": the chain of command for a shell that cannot see our
+ * program's pid (another PID namespace) - hold end/kill ask us, and we signal
+ * the program's process group, which we can always see. */
+static void handle_signal(struct broker *b, struct control_client *c, const char *args) {
+    const char *v = kv_get(args, "sig");
+    int sig = v ? atoi(v) : 0;
+    if (sig != SIGTERM && sig != SIGKILL && sig != SIGINT && sig != SIGHUP) {
+        control_replyf(c, "error unsupported signal\n");
+        return;
+    }
+    if (b->target_done || b->target <= 0 || (kill(-b->target, sig) != 0 && errno == ESRCH)) {
+        control_replyf(c, "error the call has ended\n");
+        return;
+    }
+    control_replyf(c, "ok\n");
+}
+
 static bool screen_matches(struct broker *b, struct wait_request *w) {
     struct hold_snapshot snap;
     if (hold_screen_snapshot(b->screen, &snap) != 0) return false;
@@ -872,6 +889,7 @@ static void dispatch_control(struct broker *b, struct control_client *c) {
     if (!strcmp(req, "peek")) handle_peek(b, c, args);
     else if (!strcmp(req, "send")) handle_send(b, c, rest);
     else if (!strcmp(req, "resize")) handle_resize(b, c, args);
+    else if (!strcmp(req, "signal")) handle_signal(b, c, args);
     else if (!strcmp(req, "msg")) handle_msg(b, c, args, rest);
     else if (!strcmp(req, "wait")) {
         handle_wait(c, args);
@@ -1352,6 +1370,7 @@ void hold_run_console_broker(int parent_pipe,
     if (b.logfd < 0) {
         broker_fail_errno(&b, errno);
     }
+    hold_supervisor_lock_log(log_path); /* "alive", for shells that cannot see our pid */
 
     /* The one spawn engine puts the target on a fresh PTY (setsid + TIOCSCTTY
      * + dup2 x3 + exec behind the errno handshake). On failure nothing is

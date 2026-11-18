@@ -70,3 +70,25 @@ When the program can produce no more output — it exited, or it closed its
 terminal and runs on — the broker stops listening at once (either transport)
 and saves the final screen before waiting for the process, so `hold peek`
 answers immediately with that screen and says whether the program still runs.
+
+## Across PID namespaces
+
+Some sandboxes give each shell its own PID namespace over a shared
+filesystem, so a call's pid means nothing to a shell other than the one that
+launched it: `/proc` and `kill()` only reach the viewer's own namespace. hold
+records the launching namespace (`pid_ns`, the inode of `/proc/self/ns/pid`)
+and, from any other, follows the chain of command instead of trusting a pid:
+
+- **Alive?** The call's supervisor — its broker, or a `-d` call's waiter —
+  holds a shared lock on the call's log for life. A call that looks gone from
+  here, with no exit stamped, is running if that lock is held.
+- **Drive it.** `peek`, `send`, `wait`, `resize`, and `msg` already talk to
+  the broker through the console endpoint, a path both shells reach.
+- **Stop it.** `end`/`kill` ask the supervisor to signal its own program: a
+  `signal sig=N` console request to the broker, or one byte (the signal
+  number) on a `-d` call's control FIFO, `<id>.ctl`, which its waiter serves.
+
+When the launching shell's namespace ends, its processes end with it; hold
+then reports the call ended, and `wait` says its exit status was never
+recorded rather than waiting for a stamp that cannot come. In the launching
+namespace, and on macOS (no PID namespaces), local evidence decides as before.
