@@ -180,11 +180,12 @@ screen is inferred: `hold peek` reads it, `hold inspect` reports where fds
 | captive CLI (`src/runtime/captive.c`) and the `hcli` idea | delete — with profiles gone there is nothing to edit |
 | viewer (`src/viewer/`), the `HLOGIDX` sidecar, `logs --filter/--similar/--replay` | removed in the agent-terminal turn (2026-11): logs are one plain file; `hold logs` prints it (`-f`, `-n`), `grep` filters, `peek` shows the screen |
 | `hold shell` / `hold on` / `hold off` (pre-rename) | removed in the agent-terminal turn (2026-11), with foreground adoption; `-dt` plus the screen verbs replace watching a program by hand |
+| the log pump (a process copying each call's output from a pipe into its log) and the always-on `-d` waiter | removed 2026-11-18: output goes straight into the log, as SPEC section 11 describes; a plain `-d` call leaves nothing behind, and `-w` keeps a waiter where the exit code matters |
 
 ## What stays (the hard-won plumbing)
 
 Hash-derived 64-hex call IDs with generated `adjective_noun` names; the
-raw-log capture path; the console broker, now carrying a headless
+raw log file the program writes directly; the console broker, now carrying a headless
 screen (see [screen.md](screen.md)); the call record store with restart-append; stop/kill escalation
 with target revalidation; the test-suite discipline (every surface shape
 asserted).

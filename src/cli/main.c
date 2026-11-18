@@ -14,6 +14,7 @@
 
 struct cli_run_options {
     bool detach;
+    bool wait;
     bool interactive;
     bool tty;
     bool privileged;
@@ -42,6 +43,7 @@ static struct hold_start_options start_options_from_run(const struct cli_run_opt
         .tail = tail,
         .console_mode = console_mode,
         .auto_remove = run->auto_remove,
+        .wait = run->wait,
         .interactive_stdin = interactive_stdin,
         .argc = argc,
         .argv = argv,
@@ -55,12 +57,17 @@ static struct hold_start_options start_options_from_run(const struct cli_run_opt
 
 static bool parse_docker_run_flag(const char *arg,
                                   bool *detach,
+                                  bool *wait,
                                   bool *interactive,
                                   bool *tty,
                                   bool *privileged) {
     if (!arg || arg[0] != '-') return false;
     if (!strcmp(arg, "-d") || !strcmp(arg, "--detach")) {
         *detach = true;
+        return true;
+    }
+    if (!strcmp(arg, "-w") || !strcmp(arg, "--wait")) {
+        *wait = true;
         return true;
     }
     if (!strcmp(arg, "-i") || !strcmp(arg, "--interactive")) {
@@ -71,10 +78,11 @@ static bool parse_docker_run_flag(const char *arg,
         *tty = true;
         return true;
     }
-    /* Docker-style clusters of the boolean short flags: -it, -dt, -dit, ... */
-    if (arg[1] && arg[1] != '-' && arg[2] && strspn(arg + 1, "dit") == strlen(arg + 1)) {
+    /* Clusters of the boolean short flags: -it, -dt, -dw, -dit, ... */
+    if (arg[1] && arg[1] != '-' && arg[2] && strspn(arg + 1, "ditw") == strlen(arg + 1)) {
         for (const char *p = arg + 1; *p; p++) {
             if (*p == 'd') *detach = true;
+            else if (*p == 'w') *wait = true;
             else if (*p == 'i') *interactive = true;
             else *tty = true;
         }
@@ -311,7 +319,7 @@ static int parse_run_options(int argc,
                              bool *parsed) {
     const char *arg = argv[*index];
     *parsed = true;
-    if (parse_docker_run_flag(arg, &run->detach, &run->interactive, &run->tty, &run->privileged)) {
+    if (parse_docker_run_flag(arg, &run->detach, &run->wait, &run->interactive, &run->tty, &run->privileged)) {
         if (run->privileged) *requested_system = true;
         if (run->tty) *console_mode = true;
         (*index)++;
@@ -576,7 +584,7 @@ int hold_cli_main(int argc, char **argv) {
         if (!force_raw && !run.name && cmd_argc == 1) {
             bool redialed = false;
             int rc = hold_cmd_redial(&inv, &user_store, &system_store, tail, console_mode,
-                                     run.auto_remove, interactive_stdin, explicit_session_mode,
+                                     run.auto_remove, run.wait, interactive_stdin, explicit_session_mode,
                                      run.restart_policy[0] ? run.restart_policy : NULL,
                                      run.restart_delay_seconds, cmd_argv[0], &redialed);
             if (redialed) {

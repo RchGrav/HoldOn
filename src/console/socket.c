@@ -4,6 +4,8 @@
 #include "hold/core.h"
 #include "hold/console_internal.h"
 
+#include <stddef.h> /* offsetof: musl does not pull it in indirectly */
+
 #if !defined(__linux__) && !defined(__APPLE__) && defined(__has_include)
 #if __has_include(<sys/ucred.h>)
 #include <sys/ucred.h>

@@ -43,7 +43,8 @@ screenshots an agent can actually read.
 
 - **A call** is a program you start with hold: `hold -dt --name app -- CMD`.
   `-t` gives it a headless terminal, `-d` returns at once. Every call has a
-  name, an ID, a log, and (once it ends) an exit code.
+  name, an ID, and a log; a TTY call (or one placed with `-dw`) also records
+  its exit code.
 - **Look** with `hold peek`: the screen as text, with `--ruler` coordinates,
   as `--json` state, or as an `--image` PNG.
 - **Act** with `hold send`: text, keys, pastes, and mouse events, encoded for
@@ -351,6 +352,7 @@ after your terminal, script, or CI step moves on.
 
 ```sh
 hold -d python3 -m http.server 8080     # background: prints the call id
+hold -dw make test                      # ...keeping a waiter: hold wait gives the exit code
 hold list                               # your calls, live and past
 hold ps                                 # Docker-style view of what's running
 hold logs web -f                        # follow its output (-n 100: newest lines)
@@ -363,9 +365,12 @@ hold rename web api                     # give it a better name
 hold purge                              # sweep ended calls
 ```
 
-Flags mirror Docker where they exist (and cluster the same way: `-dit`):
+Flags look like Docker's where they exist (and cluster the same way: `-dit`):
 `-d`, `-i`, `-t`, `-e`, `--env-file`, `--name`, `--rm`, `--restart`,
-`--detach-keys`. Every call gets its own session and process group; before any
+`--detach-keys`. A plain `-d` call leaves nothing behind: its output goes
+straight into its log, and no hold process stays to watch it. `-w` keeps a
+small waiter as its parent, which records the exit code (`--rm`, `--restart`,
+foreground and root calls always have one). Every call gets its own session and process group; before any
 signal, hold re-checks the boot ID and the leader's identity, so a recycled PID
 is never killed by mistake. Root or `--system` calls live in a separate system
 store. More than nohup, less than systemd.
@@ -408,7 +413,7 @@ renderer and its PNG encoder are built in; glyphs come from
 
 | Command | What it does |
 | --- | --- |
-| `hold [-d] [-t] [-i] [--name N] -- CMD…` | place a call (foreground, detached, on a PTY) |
+| `hold [-d] [-w] [-t] [-i] [--name N] -- CMD…` | place a call (foreground, detached, recording its exit, on a PTY) |
 | `hold peek CALL [--ruler] [--json] [--image F]` | the screen as text, JSON, or PNG |
 | `hold send CALL [TEXT] [-k KEY] [--paste T] [--mouse A,C,R] [--wait MS]` | type, press, paste, click |
 | `hold wait CALL [--idle [MS]] [--match T \| --regex R] [--since SEQ]` | block until it settles, shows text, or exits |

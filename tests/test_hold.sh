@@ -585,6 +585,10 @@ record_ended_soon() {
   for tries in $(seq 1 60); do
     record=$(record_path "$id" "$store") || return 1
     grep -q '"state": "exited"' "$record" && return 0
+    # A plain -d call records no exit (nothing stays behind to): hold's
+    # observed state says when it has ended.
+    if [ -z "${2:-}" ] && ! grep -q '"wait": true\|"console_sock"' "$record" &&
+      "$HOLD_BIN" inspect "$id" 2>/dev/null | grep -q '^  "state": "exited"'; then return 0; fi
     sleep 0.05
   done
   return 1
@@ -689,7 +693,7 @@ test_exec_failure_no_record() {
 
 test_fast_exit_record_exited() {
   local out id record
-  out=$("$HOLD_BIN" -d /bin/sh -c 'exit 7' 2>&1) || return 1
+  out=$("$HOLD_BIN" -dw /bin/sh -c 'exit 7' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
   record=$(record_path "$id") || return 1
@@ -1845,7 +1849,7 @@ hold = sys.argv[1]
 pid = os.fork()
 if pid == 0:
     os.setsid()  # a fresh group, like a harness running one tool call
-    subprocess.run([hold, "-d", "--name", "grpk", "--", "/bin/sh", "-c", "sleep 0.4; echo late-line; exit 5"],
+    subprocess.run([hold, "-dw", "--name", "grpk", "--", "/bin/sh", "-c", "sleep 0.4; echo late-line; exit 5"],
                    stdout=subprocess.DEVNULL)
     subprocess.run([hold, "-d", "--rm", "--name", "grpr", "--", "/bin/sh", "-c", "sleep 0.4; exit 2"],
                    stdout=subprocess.DEVNULL)
@@ -1931,7 +1935,7 @@ test_list_default_is_full_ledger_live_narrows() {
   me="$TEST_USER" # the acting user (as root, the suite acts as a test user)
   live_out=$("$HOLD_BIN" -d --name ledger_live sleep 300 2>&1) || return 1
   live_id=$(printf '%s\n' "$live_out" | extract_id); [ -n "$live_id" ] || return 1
-  ended_out=$("$HOLD_BIN" -d --name ledger_past /bin/sh -c 'exit 4' 2>&1) || return 1
+  ended_out=$("$HOLD_BIN" -dw --name ledger_past /bin/sh -c 'exit 4' 2>&1) || return 1
   ended_id=$(printf '%s\n' "$ended_out" | extract_id); [ -n "$ended_id" ] || return 1
   record_ended_soon "$ended_id" || return 1
   # Default view: the USER column, then both the live and the past call, each
@@ -2012,7 +2016,7 @@ test_ps_is_docker_machine_wide_running_view() {
   local live_out live_id ended_out ended_id gid=c1cadafeed990000000000000000000000000000000000000000000000000000 rc
   live_out=$("$HOLD_BIN" -d --name ps_live sleep 300 2>&1) || return 1
   live_id=$(printf '%s\n' "$live_out" | extract_id); [ -n "$live_id" ] || return 1
-  ended_out=$("$HOLD_BIN" -d --name ps_past /bin/sh -c 'exit 2' 2>&1) || return 1
+  ended_out=$("$HOLD_BIN" -dw --name ps_past /bin/sh -c 'exit 2' 2>&1) || return 1
   ended_id=$(printf '%s\n' "$ended_out" | extract_id); [ -n "$ended_id" ] || return 1
   record_ended_soon "$ended_id" || return 1
   mkdir -p "$HOLD_TEST_SYSTEM_STATE_DIR/public" || return 1
@@ -2475,7 +2479,7 @@ test_ps_table_humanized_status_and_saved() {
   out=$("$HOLD_BIN" -d --name ps-humanized -- /bin/sh -c 'sleep 30' 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || return 1
-  run_out=$("$HOLD_BIN" -d --name ps-exiter -- /bin/sh -c 'exit 5' 2>&1) || return 1
+  run_out=$("$HOLD_BIN" -dw --name ps-exiter -- /bin/sh -c 'exit 5' 2>&1) || return 1
   exit_id=$(printf '%s\n' "$run_out" | extract_id)
   [ -n "$exit_id" ] || return 1
   record_ended_soon "$exit_id" || return 1
@@ -2847,7 +2851,7 @@ test_end_restart_call_records_term_status() {
 
 test_unwitnessed_death_renders_exited_unknown() {
   local out id record pid ppid tries
-  out=$("$HOLD_BIN" -d -- sleep 30 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  out=$("$HOLD_BIN" -dw -- sleep 30 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   record=$(record_path "$id") || return 1
@@ -3386,7 +3390,7 @@ JSON
 # (non-console) call; before this only the console path pinned escalation.
 test_end_plain_call_escalates_to_kill() {
   local out id record pgid ok _
-  out=$("$HOLD_BIN" -d -- /bin/sh -c 'trap "" TERM HUP; while :; do sleep 30; done' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
+  out=$("$HOLD_BIN" -dw -- /bin/sh -c 'trap "" TERM HUP; while :; do sleep 30; done' 2>&1) || { printf '%s\n' "$out" >&2; return 1; }
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   record=$(record_path "$id") || return 1
@@ -4089,8 +4093,13 @@ test_wait_timeout_ended_and_exit_code() {
   set -e
   [ "$rc" -eq 8 ] || { cat "$TEST_ROOT/ended.err" >&2; echo "rc $rc, want 8" >&2; return 1; }
   [ "$("$HOLD_BIN" wait brief)" = 3 ] || return 1
+  "$HOLD_BIN" -dw --name waited -- /bin/sh -c 'exit 4' >/dev/null || return 1
+  [ "$("$HOLD_BIN" wait waited --timeout 5000)" = 4 ] || return 1
+  # A plain -d call leaves nothing behind to record its exit: wait says so.
   "$HOLD_BIN" -d --name plain -- /bin/sh -c 'exit 4' >/dev/null || return 1
-  [ "$("$HOLD_BIN" wait plain --timeout 5000)" = 4 ] || return 1
+  [ "$("$HOLD_BIN" wait plain --timeout 5000 2>"$TEST_ROOT/plain.err")" = -1 ] || return 1
+  grep -q "records no exit code" "$TEST_ROOT/plain.err" || { cat "$TEST_ROOT/plain.err" >&2; return 1; }
+  "$HOLD_BIN" list -a | grep -Eq "Exited [0-9L].* plain$" || { "$HOLD_BIN" list -a >&2; return 1; }
 }
 
 # wait --idle counts silence from the start of the wait, and settles.
@@ -4267,7 +4276,7 @@ PY
 # record still says running - inspect shows "exited" and keeps "recorded_state".
 test_inspect_reports_observed_state() {
   local pid reaper
-  "$HOLD_BIN" -d --name killed -- sleep 60 >/dev/null || return 1
+  "$HOLD_BIN" -dw --name killed -- sleep 60 >/dev/null || return 1
   sleep 0.3
   pid=$("$HOLD_BIN" inspect killed | sed -n 's/^  "pid": \([0-9]*\),$/\1/p')
   reaper=$(ps -o ppid= -p "$pid" | tr -d ' ')
@@ -4319,38 +4328,47 @@ except OSError:
   "$HOLD_BIN" purge plainwait >/dev/null 2>&1 || true
 }
 
-# A plain -d call is the minimal mode everywhere: no control FIFO, and a
-# waiter blocked in waitpid until the child exits. On a normal host it holds no
-# lock on its log either; under the fallback (Unix sockets denied, or
-# HOLD_CONSOLE_TRANSPORT=fifo) a passive lifetime lock on the log lets shells in
-# other PID namespaces see it running.
-test_plain_d_waiter_is_original_unless_fallback() {
-  local id pid waiter log locked fallback=0
-  if [ "${HOLD_CONSOLE_TRANSPORT:-}" = fifo ] || [ -n "${HOLD_TEST_SOCKETS_DENIED:-}" ]; then fallback=1; fi
-  "$HOLD_BIN" -d --name plainwait -- sleep 6000 >/dev/null || return 1
-  sleep 0.3
-  id=$("$HOLD_BIN" inspect plainwait | sed -n 's/^  "id": "\(.*\)",$/\1/p')
-  pid=$("$HOLD_BIN" inspect plainwait | sed -n 's/^  "pid": \([0-9]*\),$/\1/p')
-  waiter=$(ps -o ppid= -p "$pid" | tr -d ' ')
-  log=$(log_path "$id") || return 1
-  [ ! -e "$(dirname "$log")/console/$id.ctl" ] || { echo "a control FIFO appeared" >&2; return 1; }
-  if [ "$(uname -s)" = Linux ] && [ -r "/proc/$waiter/wchan" ]; then
-    [ "$(cat "/proc/$waiter/wchan")" = do_wait ] || { echo "waiter not blocked in waitpid: $(cat "/proc/$waiter/wchan")" >&2; return 1; }
-  fi
-  locked=$(python3 -c 'import fcntl,sys
+# Plain -d leaves nothing behind: one fork, setsid, output straight into the
+# log, exec - the program's parent is not hold. -dw keeps a waiter blocked in
+# waitpid that records the exit code. On a normal host neither holds a lock on
+# the log; under the fallback (Unix sockets denied, or HOLD_CONSOLE_TRANSPORT=
+# fifo) the -d program's own output carries one, and the -dw waiter holds one,
+# so shells in other PID namespaces can see them running.
+log_lock_state() {
+  python3 -c 'import fcntl,sys
 f = open(sys.argv[1])
 try:
     fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB); print("free")
 except OSError:
-    print("held")' "$log") || return 1
-  if [ "$fallback" -eq 1 ]; then
-    [ "$locked" = held ] || { echo "fallback: the log is not locked" >&2; return 1; }
-  else
-    [ "$locked" = free ] || { echo "normal host: the log is locked" >&2; return 1; }
-  fi
-  "$HOLD_BIN" end plainwait >/dev/null || return 1
-  [ "$("$HOLD_BIN" wait plainwait)" = 143 ] || return 1
-  "$HOLD_BIN" purge plainwait >/dev/null 2>&1 || true
+    print("held")' "$1"
+}
+
+test_plain_d_leaves_nothing_behind_dw_waits() {
+  local fallback=0 want=free name pid parent id log
+  if [ "${HOLD_CONSOLE_TRANSPORT:-}" = fifo ] || [ -n "${HOLD_TEST_SOCKETS_DENIED:-}" ]; then fallback=1; want=held; fi
+  "$HOLD_BIN" -d --name plainwait -- sleep 6000 >/dev/null || return 1
+  "$HOLD_BIN" -dw --name waited -- sleep 6000 >/dev/null || return 1
+  sleep 0.3
+  for name in plainwait waited; do
+    id=$("$HOLD_BIN" inspect "$name" | sed -n 's/^  "id": "\(.*\)",$/\1/p')
+    pid=$("$HOLD_BIN" inspect "$name" | sed -n 's/^  "pid": \([0-9]*\),$/\1/p')
+    parent=$(ps -o ppid= -p "$pid" | tr -d ' ')
+    log=$(log_path "$id") || return 1
+    [ ! -e "$(dirname "$log")/console/$id.ctl" ] || { echo "$name: a control FIFO appeared" >&2; return 1; }
+    [ "$(log_lock_state "$log")" = "$want" ] || { echo "$name: log lock is not $want (fallback=$fallback)" >&2; return 1; }
+    if [ "$name" = plainwait ]; then
+      ! ps -o args= -p "$parent" | grep -q hold || { echo "plain -d left a hold process: $(ps -o args= -p "$parent")" >&2; return 1; }
+    else
+      ps -o args= -p "$parent" | grep -q hold || { echo "-dw has no waiter" >&2; return 1; }
+      if [ "$(uname -s)" = Linux ] && [ -r "/proc/$parent/wchan" ]; then
+        [ "$(cat "/proc/$parent/wchan")" = do_wait ] || { echo "waiter not blocked in waitpid: $(cat "/proc/$parent/wchan")" >&2; return 1; }
+      fi
+    fi
+  done
+  "$HOLD_BIN" end plainwait waited >/dev/null || return 1
+  [ "$("$HOLD_BIN" wait waited)" = 143 ] || return 1
+  [ "$("$HOLD_BIN" wait plainwait 2>/dev/null)" = -1 ] || return 1
+  "$HOLD_BIN" purge plainwait waited >/dev/null 2>&1 || true
 }
 
 # Another PID namespace (some sandboxes give each shell its own): pids from
@@ -4373,37 +4391,42 @@ test_other_pid_namespace_follows_chain_of_command() {
   as_root unshare --pid --fork --mount-proc true 2>/dev/null || skip "unshare --pid unavailable"
   local out
   # Launched here, driven and stopped from another namespace.
-  # Only calls launched under the fallback carry the machinery: force it.
+  # Only calls launched under the fallback carry the cross-shell lock: force it.
   HOLD_CONSOLE_TRANSPORT=fifo "$HOLD_BIN" -dt --name nst -- /bin/sh -c 'stty -echo; while IFS= read -r l; do echo "got:$l"; done' >/dev/null || return 1
-  HOLD_CONSOLE_TRANSPORT=fifo "$HOLD_BIN" -d --name nsd -- /bin/sh -c 'trap "exit 7" TERM; sleep 300 & wait' >/dev/null || return 1
+  HOLD_CONSOLE_TRANSPORT=fifo "$HOLD_BIN" -dw --name nsd -- /bin/sh -c 'trap "exit 7" TERM; sleep 300 & wait' >/dev/null || return 1
   sleep 0.4
   out=$(in_new_pid_ns /bin/sh -c '
     "$1" list | grep -Eq "Up .* nst$" && "$1" list | grep -Eq "Up .* nsd$" || { echo "not shown as running"; exit 1; }
     "$1" send nst from-ns --enter --wait 300 >/dev/null && "$1" peek nst | grep -qx got:from-ns || { echo "send/peek failed"; exit 1; }
-    # -d stays minimal (no broker): from here it can only be told apart, not ended.
+    # No broker for a non-TTY call: from here it can be seen, not ended.
     if msg=$("$1" end nsd 2>&1); then echo "ended a -d call from another namespace"; exit 1; fi
     case "$msg" in *"not running in this environment"*) ;; *) echo "no explanation for -d: $msg"; exit 1 ;; esac
     "$1" kill nst >/dev/null && [ "$("$1" wait nst)" = 137 ] || { echo "kill of the TTY call failed"; exit 1; }
     echo ok' sh "$HOLD_REAL_BIN" 2>/dev/null) || true
   [ "$out" = ok ] || { echo "from another namespace: $out" >&2; return 1; }
   "$HOLD_BIN" end nsd >/dev/null && [ "$("$HOLD_BIN" wait nsd)" = 7 ] || { echo "end of the -d call at home failed" >&2; return 1; }
-  # Launched in a namespace that then ends (its processes die with it): reported
-  # as ended, and wait does not hang on an exit nobody will record.
-  in_new_pid_ns /bin/sh -c 'HOLD_CONSOLE_TRANSPORT=fifo "$1" -d --name nsgone -- sleep 300 >/dev/null; sleep 0.5' sh "$HOLD_REAL_BIN" || return 1
+  # Launched with a waiter under the fallback in a namespace that then ends
+  # (its processes die with it): the waiter's lock is gone, so it ended -
+  # Exited (?), and wait does not hang on an exit nobody will record. A plain
+  # sweep removes it.
+  in_new_pid_ns /bin/sh -c 'HOLD_CONSOLE_TRANSPORT=fifo "$1" -dw --name nsgone -- sleep 300 >/dev/null; sleep 0.5' sh "$HOLD_REAL_BIN" || return 1
+  # A plain -d call (no supervisor; at most its own output holds a lock, which
+  # a program may close) in a namespace that ends: this shell cannot tell, so
+  # Unknown - sweeps skip it, end explains, only a named purge --force removes it.
+  in_new_pid_ns /bin/sh -c '"$1" -d --name nsunk -- sleep 300 >/dev/null; sleep 0.5' sh "$HOLD_REAL_BIN" || return 1
   sleep 0.3
-  # This shell cannot see it and nothing answers for it: Unknown, not Exited -
-  # sweeps leave it alone, a plain purge by name says why, --force removes it.
-  "$HOLD_BIN" list -a | grep -Eq 'Unknown.* nsgone$' || { "$HOLD_BIN" list -a >&2; return 1; }
+  "$HOLD_BIN" list -a | grep -Eq 'Exited \(\?\).* nsgone$' || { "$HOLD_BIN" list -a >&2; return 1; }
+  "$HOLD_BIN" list -a | grep -Eq 'Unknown.* nsunk$' || { "$HOLD_BIN" list -a >&2; return 1; }
   local start=$SECONDS
   [ "$("$HOLD_BIN" wait nsgone 2>/dev/null)" = -1 ] && [ $((SECONDS - start)) -le 5 ] || { echo "wait hung or misreported" >&2; return 1; }
   "$HOLD_BIN" purge >/dev/null 2>&1 || true
-  "$HOLD_BIN" list -a | grep -q ' nsgone$' || { echo "a sweep removed a call it could not judge" >&2; return 1; }
-  if "$HOLD_BIN" purge nsgone 2>"$TEST_ROOT/nsgone.err"; then echo "purge removed an unknown call without --force" >&2; return 1; fi
-  grep -q 'another PID namespace' "$TEST_ROOT/nsgone.err" || { cat "$TEST_ROOT/nsgone.err" >&2; return 1; }
-  if "$HOLD_BIN" end nsgone 2>"$TEST_ROOT/nsgone-end.err"; then echo "end claimed an unknown call" >&2; return 1; fi
-  grep -q "not running in this environment" "$TEST_ROOT/nsgone-end.err" || { cat "$TEST_ROOT/nsgone-end.err" >&2; return 1; }
-  "$HOLD_BIN" purge nsgone --force >/dev/null || return 1
-  ! "$HOLD_BIN" list -a | grep -q ' nsgone$' || return 1
+  ! "$HOLD_BIN" list -a | grep -q ' nsgone$' || { echo "a sweep kept a call whose shell ended" >&2; return 1; }
+  "$HOLD_BIN" list -a | grep -q ' nsunk$' || { echo "a sweep removed a call it could not judge" >&2; return 1; }
+  if "$HOLD_BIN" end nsunk 2>"$TEST_ROOT/nsunk-end.err"; then echo "end claimed an unknown call" >&2; return 1; fi
+  grep -q "not running in this environment" "$TEST_ROOT/nsunk-end.err" || { cat "$TEST_ROOT/nsunk-end.err" >&2; return 1; }
+  if "$HOLD_BIN" purge nsunk 2>/dev/null; then echo "purge removed an unknown call without --force" >&2; return 1; fi
+  "$HOLD_BIN" purge nsunk --force >/dev/null || return 1
+  ! "$HOLD_BIN" list -a | grep -q ' nsunk$' || return 1
   # (nst and nsd had ended, so the sweep above already removed them)
 }
 
@@ -4671,8 +4694,7 @@ run_test "peek --image: Noto emoji, and invisible characters draw nothing" test_
 run_test "peek --image draws rounded corners as arcs" test_peek_image_rounded_corner
 run_test "peek --image wraps the footer on narrow screens" test_peek_image_footer_wraps_on_narrow_screens
 run_test "inspect reports the observed state, keeping the recorded one" test_inspect_reports_observed_state
-run_test "a plain -d waiter is the original unless the fallback is selected" test_plain_d_waiter_is_original_unless_fallback
-run_test "a plain -d waiter is the original unless the fallback is selected" test_plain_d_waiter_is_original_unless_fallback
+run_test "plain -d leaves nothing behind; -dw keeps a waiter" test_plain_d_leaves_nothing_behind_dw_waits
 run_test "another PID namespace: status and control go through the supervisor" test_other_pid_namespace_follows_chain_of_command
 run_test "the FIFO console keeps full capability" test_fifo_console_full_capability
 run_test "a closed terminal is reported at once, in both console modes" test_console_closed_terminal_is_reported

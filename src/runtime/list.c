@@ -95,6 +95,7 @@ static void format_status(enum run_state st, const struct hold_run_record *r, ch
     case STATE_EXITED:
         if (r->has_exit_code) snprintf(out, n, "Exited (%d) %s ago", r->exit_code, human);
         else if (r->has_term_signal) snprintf(out, n, "Exited (%d) %s ago", 128 + r->term_signal, human);
+        else if (!hold_call_records_exit(r)) snprintf(out, n, "Exited %s ago", human); /* plain -d: by design */
         else snprintf(out, n, "Exited (?) %s ago", human);
         break;
     case STATE_FAILED: snprintf(out, n, "Failed %s ago", human); break;

@@ -81,23 +81,27 @@ and, from any other, never consults the pid. It follows the chain of command
 instead:
 
 - **Alive?** Under the fallback (Unix sockets denied, or
-  `HOLD_CONSOLE_TRANSPORT=fifo`), a call's supervisor — its broker, or a `-d`
-  call's waiter — holds a passive shared lock on the call's log for life. An
-  exit stamp says the call ended; otherwise a held lock says it runs.
+  `HOLD_CONSOLE_TRANSPORT=fifo`), a shared lock on the call's log, held for
+  its life, says it runs. A supervisor holds it — the broker of a TTY call, the
+  waiter of a `-w` call — so when that lock goes away, the call has ended:
+  `Exited (N)` if the exit was recorded, `Exited (?)` if it died with its
+  shell. A plain `-d` call has no supervisor: its own output descriptors carry
+  the lock, which shows it running, but a program may close its output, so
+  the lock going away proves nothing.
 - **Drive it.** `peek`, `send`, `wait`, `resize`, and `msg` talk to the broker
   through the console endpoint, a path both shells reach.
 - **Stop it.** For a `-dt` call, `end`/`kill` ask the broker (a `signal
-  sig=N` console request) to signal its program, which it can see. A plain
-  `-d` call has no broker — it stays the minimal mode — so from another shell
-  `end` says it is not running in this environment and must be ended from the
-  shell that started it.
-- **Can't tell.** No exit stamp and no supervisor answering (most likely it
-  ended with its namespace): the call reads `Unknown`. Purge sweeps leave it
-  alone, a targeted `hold purge NAME --force` removes it, `end` explains, and
-  `wait` says its exit was never recorded instead of waiting forever.
+  sig=N` console request) to signal its program, which it can see. A non-TTY
+  call has no broker, so from another shell `end` says it is not running in
+  this environment and must be ended from the shell that started it.
+- **Can't tell.** No exit recorded and nothing vouching for the call — a
+  plain `-d` call whose lock is gone, or any call placed without the fallback
+  — reads `Unknown`, the spec's state for a call that cannot be evaluated.
+  Signals refuse it, purge sweeps leave it alone, a targeted
+  `hold purge NAME --force` removes it, and `end` explains.
 
-Without the fallback, nothing is added: the socket broker and the blocking
-`-d` waiter run exactly as before. A plain `-d` call never opens a socket, so
-its waiter checks for the fallback explicitly (is `socket`, `bind`, or
-`listen` refused, or is FIFO forced?) before taking the lock. In the launching
-namespace, and on macOS (no PID namespaces), local evidence decides.
+Without the fallback, nothing is added: no lock is taken, and calls run
+exactly as they do anywhere else. A plain `-d` call never opens a socket, so
+the launcher checks for the fallback explicitly (is `socket`, `bind`, or
+`listen` refused, or is FIFO forced?). In the launching namespace, and on
+macOS (no PID namespaces), local evidence decides.

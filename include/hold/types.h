@@ -15,6 +15,7 @@ struct hold_recipe {
     bool mode_interactive;
     bool mode_tty;
     bool mode_detach;
+    bool mode_wait; /* a waiter records the exit code (-w; implied by foreground, --rm, --restart) */
     bool allow_multi;
     char restart_policy[64];
     int restart_delay_seconds;
@@ -67,6 +68,7 @@ struct hold_run_record {
     bool saved;
     bool auto_remove; /* --rm: removed as soon as it ends */
     uint64_t pid_ns;  /* Linux: the launching PID namespace (inode of /proc/self/ns/pid); 0 = unknown */
+    bool liveness_lock; /* its supervisor holds a lifetime lock on the log (the fallback) */
     struct hold_recipe recipe;
     bool has_observed;
     char observed_exe[HOLD_PATH_MAX];

@@ -11,6 +11,9 @@ enum run_state hold_eval_state(const struct hold_run_record *r, const char *curr
 /* Running, but its pid is not visible from here (another PID namespace): act
  * through its supervisor - the broker, or a -d call's reaper. */
 bool hold_call_elsewhere(const struct hold_run_record *r, const char *current_boot);
+/* Does a hold process record this call's exit code? Its broker (TTY) or a
+ * waiter (-w, foreground, --rm, --restart) does; a plain -d call has none. */
+bool hold_call_records_exit(const struct hold_run_record *r);
 int hold_tail_log_until_exit(const struct hold_run_record *r, bool from_end, bool follow_until_exit);
 void hold_rollback_spawned_group(pid_t pid, pid_t pgid);
 bool hold_wait_target_group_gone(const struct hold_run_record *r, int timeout_ms);

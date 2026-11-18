@@ -52,9 +52,20 @@ int hold_console_request(const char *sock_path, const char *request, size_t requ
     int rc = -1;
     unsigned char lenbuf[4];
     size_t skip = (fd == output) ? 0 : CONSOLE_CONTROL_MAGIC_LEN;
+    /* A broker with every slot taken answers "error busy" and closes at once,
+     * possibly while we are still writing: the write then fails (EPIPE) with
+     * that answer already waiting. Read it, so the caller retries as for any
+     * busy reply; nothing was acted on. */
+    int write_errno = 0;
     if (hold_write_all(output, hdr + skip, sizeof(hdr) - skip) != 0 ||
-        hold_write_all(output, request, request_len) != 0) goto out;
-    if (read_full(fd, lenbuf, 4) != 0) goto out;
+        hold_write_all(output, request, request_len) != 0) {
+        write_errno = errno;
+        if (write_errno != EPIPE && write_errno != ECONNRESET) goto out;
+    }
+    if (read_full(fd, lenbuf, 4) != 0) {
+        if (write_errno) errno = write_errno;
+        goto out;
+    }
     uint32_t n = console_load_be32(lenbuf);
     if (n > (64u << 20)) {
         errno = EPROTO;

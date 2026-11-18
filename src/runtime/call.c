@@ -67,6 +67,7 @@ static int restart_existing_run(const struct hold_invocation *inv,
                                 bool tail,
                                 bool console_mode,
                                 bool auto_remove,
+                                bool wait,
                                 bool interactive_stdin,
                                 bool explicit_session_mode,
                                 const char *restart_policy,
@@ -84,6 +85,7 @@ static int restart_existing_run(const struct hold_invocation *inv,
         tail = !old.recipe.mode_detach;
         console_mode = old.recipe.mode_tty;
         interactive_stdin = old.recipe.mode_interactive;
+        wait = wait || old.recipe.mode_wait;
     }
     char boot[128];
     const char *boot_id = hold_boot_id_or_null(boot);
@@ -119,6 +121,7 @@ static int restart_existing_run(const struct hold_invocation *inv,
         .tail = tail,
         .console_mode = console_mode,
         .auto_remove = auto_remove,
+        .wait = wait,
         .interactive_stdin = interactive_stdin,
         .argc = argc,
         .argv = argv,
@@ -147,6 +150,7 @@ int hold_cmd_redial(const struct hold_invocation *inv,
                       bool tail,
                       bool console_mode,
                       bool auto_remove,
+                      bool wait,
                       bool interactive_stdin,
                       bool explicit_session_mode,
                       const char *restart_policy,
@@ -178,7 +182,7 @@ int hold_cmd_redial(const struct hold_invocation *inv,
         return 0;
     }
     *redialed = true;
-    return restart_existing_run(inv, restart_store, tail, console_mode, auto_remove,
+    return restart_existing_run(inv, restart_store, tail, console_mode, auto_remove, wait,
                                 interactive_stdin, explicit_session_mode, restart_policy,
                                 restart_delay_seconds, restart_id);
 }

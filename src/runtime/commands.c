@@ -69,6 +69,7 @@ void hold_usage(void) {
            "PLACE A CALL\n"
            "  hold <cmd> [args...]         foreground: stream its output\n"
            "  hold -d <cmd> [args...]      detached: print the bare 64-hex call id\n"
+           "  hold -dw <cmd> [args...]     ...and keep a waiter that records its exit code\n"
            "  hold -it <cmd> [args...]     attached on a PTY (Ctrl-P Ctrl-Q holds it)\n"
            "  hold <id|name>               redial: restart a call from its recipe\n"
            "  hold --name web -d <cmd>...  name the call and place it in the background\n\n"

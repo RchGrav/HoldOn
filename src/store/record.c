@@ -24,6 +24,7 @@ const struct hold_record_field hold_record_fields[] = {
     F("saved", RF_BOOL, RF_WRONLY, saved),        /* reader shims legacy "Saved" (D-4) */
     F("auto_remove", RF_BOOL, 0, auto_remove),    /* --rm; absent in older records = false */
     F("pid_ns", RF_U64, 0, pid_ns),               /* launching PID namespace; absent = 0 = unknown */
+    F("liveness_lock", RF_BOOL, 0, liveness_lock), /* lifetime lock on the log; absent = false */
     F("version", RF_INT, RF_REQ, version),
     S("id", RF_REQ, id),
     S("run_id", RF_WRONLY, run_id),               /* reader defaults run_id <- id */
@@ -151,12 +152,14 @@ static int emit_record_json(FILE *f, void *vctx) {
         hold_emit_kv(f, &first, "env");
         hold_write_json_argv(f, r->recipe.envc, r->recipe.env);
     }
-    if (r->recipe.mode_interactive || r->recipe.mode_tty || r->recipe.mode_detach || r->recipe.allow_multi) {
+    if (r->recipe.mode_interactive || r->recipe.mode_tty || r->recipe.mode_detach || r->recipe.mode_wait ||
+        r->recipe.allow_multi) {
         hold_emit_kv(f, &first, "mode");
         const char *sep = "{";
         if (r->recipe.mode_interactive) { fprintf(f, "%s\"interactive\": true", sep); sep = ", "; }
         if (r->recipe.mode_tty) { fprintf(f, "%s\"tty\": true", sep); sep = ", "; }
         if (r->recipe.mode_detach) { fprintf(f, "%s\"detach\": true", sep); sep = ", "; }
+        if (r->recipe.mode_wait) { fprintf(f, "%s\"wait\": true", sep); sep = ", "; }
         if (r->recipe.allow_multi) { fprintf(f, "%s\"allow_multi\": true", sep); sep = ", "; }
         fprintf(f, "}");
     }

@@ -90,6 +90,7 @@ int hold_load_record(const char *path, struct hold_run_record *r) {
         if (hold_json_get_bool(obj, "interactive", &b) == 0) r->recipe.mode_interactive = b;
         if (hold_json_get_bool(obj, "tty", &b) == 0) r->recipe.mode_tty = b;
         if (hold_json_get_bool(obj, "detach", &b) == 0) r->recipe.mode_detach = b;
+        if (hold_json_get_bool(obj, "wait", &b) == 0) r->recipe.mode_wait = b;
         if (hold_json_get_bool(obj, "allow_multi", &b) == 0) r->recipe.allow_multi = b;
     }
     if (hold_json_find_key(j, "observed", &obj) == 0 && obj && *obj == '{') {

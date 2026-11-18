@@ -638,9 +638,17 @@ static int wait_record_exit(const struct screen_target *t, long timeout_ms) {
         enum run_state st = hold_eval_state(&cur, hold_boot_id_or_null(boot));
         bool has = cur.has_exit_code;
         int code = cur.exit_code;
+        bool records = hold_call_records_exit(&cur);
         hold_free_run_record(&cur);
         if (st != STATE_RUNNING && (has || st == STATE_STALE || st == STATE_FAILED)) {
             printf("%d\n", has ? code : -1);
+            return 0;
+        }
+        /* A plain -d call leaves nothing behind to record its exit code. */
+        if (st == STATE_EXITED && !records) {
+            fprintf(stderr, "hold: %s has ended; a plain -d call records no exit code (launch it with -dw to "
+                            "record one)\n", t->label);
+            printf("-1\n");
             return 0;
         }
         /* Not running, nothing recorded, and no supervisor holds the call (it

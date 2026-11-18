@@ -20,15 +20,32 @@
   running call as `Exited (?)`, `send` refused it, `end` could not find it,
   and `wait` hung. hold now records the launching namespace and, from any
   other, never consults the pid. Under the fallback (Unix sockets denied, or
-  forced), a call's supervisor holds a passive lock on its log for life, so
-  `list` shows it running; `send`, `peek`, and `wait` go through the broker as
-  always; `end`/`kill` of a `-dt` call ask the broker to signal its program.
-  A plain `-d` call stays minimal: from another shell `end` says it is not
-  running in this environment. A call this shell cannot judge reads
-  `Unknown`: purge sweeps leave it alone, a targeted `purge --force` removes
-  it, and `wait` says its exit was never recorded instead of waiting forever.
-  Without the fallback, the socket broker and the blocking `-d` waiter run
-  exactly as before.
+  forced), a shared lock on the call's log shows it running; `send`, `peek`,
+  and `wait` go through the broker as always; `end`/`kill` of a `-dt` call
+  ask the broker to signal its program, and a non-TTY call says it is not
+  running in this environment. A call this shell cannot evaluate reads
+  `Unknown`: signals and purge sweeps refuse it, a targeted `purge --force`
+  removes it. Without the fallback, nothing changes.
+
+- `-w`/`--wait` (clusters as `-dw`): keep a waiter as the call's parent,
+  recording its exit code for `list` and `hold wait`.
+
+### Changed
+
+- A plain `-d` call leaves nothing behind. It is one fork, a new session,
+  output straight into its log, and exec, as the original specification
+  describes. The waiter that recorded every call's exit code now stays only
+  where it is needed: `-w`, foreground launches, `--rm`, `--restart`, and
+  root-managed calls (whose public entry must be updated when they end). A
+  plain `-d` call lists as `Exited 2 minutes ago`, and `hold wait` prints
+  `-1` with a note; use `-dw` where the exit code matters.
+
+### Removed
+
+- The log pump: a separate process that copied each non-TTY call's output
+  from a pipe into its log. Left over from the removed log index, it only
+  copied bytes, and a program whose pump died would get a broken pipe. Output
+  now goes straight into the log file.
 
 ### Fixed
 

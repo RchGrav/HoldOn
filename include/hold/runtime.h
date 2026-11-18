@@ -14,6 +14,7 @@ struct hold_start_options {
     bool tail;
     bool console_mode;
     bool auto_remove;
+    bool wait; /* -w: keep a waiter that records the exit code */
     bool interactive_stdin;
     int argc;
     char **argv;
@@ -128,6 +129,7 @@ int hold_cmd_redial(const struct hold_invocation *inv,
                       bool tail,
                       bool console_mode,
                       bool auto_remove,
+                      bool wait,
                       bool interactive_stdin,
                       bool explicit_session_mode,
                       const char *restart_policy,

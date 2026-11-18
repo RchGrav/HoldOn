@@ -14,6 +14,14 @@
  * write, redial reuse, restart supervision, docker-run exit parity. */
 
 static volatile sig_atomic_t g_restart_stop = 0;
+/* Decided once by the launcher, before it forks, and inherited: whether this
+ * -d call's supervisor (waiter or restart supervisor) holds the lifetime log
+ * lock - only under the fallback. The record says the same (liveness_lock). */
+static bool g_liveness_lock = false;
+/* Plain -d under the fallback: no supervisor, so the program's own output
+ * descriptors carry the lock (lock held = it runs; gone proves nothing). */
+static bool g_output_lock = false;
+
 
 static void free_launch_and_observed_argv(char **launch_argv, char **observed_argv, int argc) {
     hold_free_argv_alloc(launch_argv, argc);
@@ -141,6 +149,16 @@ static _Noreturn void child_fail_errno(int handshake_fd) {
     _exit(127);
 }
 
+/* The program's stdout and stderr go straight into the log (the spec's direct
+ * redirection; no copying process in between). */
+static void redirect_output_to_log(const char *log_path, int handshake_fd, bool lock) {
+    int fd = hold_open_append_no_symlink(log_path);
+    if (fd < 0) child_fail_errno(handshake_fd);
+    if (lock) (void)flock(fd, LOCK_SH | LOCK_NB);
+    if (dup2(fd, STDOUT_FILENO) < 0 || dup2(fd, STDERR_FILENO) < 0) child_fail_errno(handshake_fd);
+    if (fd > STDERR_FILENO) close(fd);
+}
+
 /* THE spawn preamble, shared by the direct target and the restart
  * supervisor: new session, optionally pinned privileged cwd, child env,
  * optionally /dev/null stdin. */
@@ -225,6 +243,12 @@ static void run_restart_supervisor(const struct hold_store *store,
                                    int restart_delay_seconds,
                                    bool pin_privileged_cwd) {
     child_session_setup(handshake_fd, pin_privileged_cwd, envc, env, clean_child_env, !interactive_stdin);
+    char log_path[HOLD_PATH_MAX];
+    if (hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) != 0) {
+        errno = ENAMETOOLONG;
+        child_fail_errno(handshake_fd);
+    }
+    redirect_output_to_log(log_path, handshake_fd, false);
     struct sigaction sa = {0};
     sa.sa_handler = handle_restart_signal;
     sigemptyset(&sa.sa_mask);
@@ -235,10 +259,7 @@ static void run_restart_supervisor(const struct hold_store *store,
     close(handshake_fd);
     /* Under the fallback, a passive lifetime lock on the log tells shells in
      * other PID namespaces the call is alive; nothing else changes. */
-    char log_path[HOLD_PATH_MAX];
-    if (hold_console_fallback_selected() &&
-        hold_checked_snprintf(log_path, sizeof(log_path), "%s/%s.log", store->log_dir, id) == 0)
-        hold_supervisor_lock_log(log_path);
+    if (g_liveness_lock) hold_supervisor_lock_log(log_path);
     int failures = 0;
     int status = 0;
     bool have_status = false;
@@ -298,53 +319,6 @@ static pid_t fork_detached(void) {
     if (sync[0] >= 0) close(sync[0]);
     if (sync[1] >= 0) close(sync[1]); /* EOF: detached */
     return 0;
-}
-
-/* Out-of-process pipe logger: drains the target's stdout/stderr pipes into
- * the log. Closes both read ends in the launcher either way. */
-static int spawn_log_capture(int stdout_fd, int stderr_fd, const char *log_path) {
-    pid_t logger = fork_detached();
-    if (logger != 0) {
-        int saved = errno;
-        if (stdout_fd >= 0) close(stdout_fd);
-        if (stderr_fd >= 0) close(stderr_fd);
-        errno = saved;
-        return logger < 0 ? -1 : 0;
-    }
-    hold_close_stdio_to_devnull();
-    int logfd = hold_open_append_no_symlink(log_path);
-    if (logfd < 0) _exit(0);
-    int fds[2] = {stdout_fd, stderr_fd};
-    while (fds[0] >= 0 || fds[1] >= 0) {
-        struct pollfd pfds[2];
-        int slot[2] = {-1, -1};
-        int nfds = 0;
-        for (int i = 0; i < 2; i++) {
-            if (fds[i] < 0) continue;
-            slot[i] = nfds;
-            pfds[nfds].fd = fds[i];
-            pfds[nfds].events = POLLIN;
-            pfds[nfds].revents = 0;
-            nfds++;
-        }
-        if (poll(pfds, (nfds_t)nfds, -1) < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-        char buf[4096];
-        for (int i = 0; i < 2; i++) {
-            if (slot[i] < 0 || !(pfds[slot[i]].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) continue;
-            ssize_t n = read(fds[i], buf, sizeof(buf));
-            if (n > 0) {
-                (void)hold_write_all(logfd, buf, (size_t)n);
-            } else {
-                close(fds[i]);
-                fds[i] = -1;
-            }
-        }
-    }
-    close(logfd);
-    _exit(0);
 }
 
 /* docker run parity: a foreground launch exits with the held process's exit
@@ -560,8 +534,8 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     /* Handshake, stdout, stderr, and target-pid pipe slots; adjacent R/W
      * pairs so hold_cloexec_pipe fills them in place and the unwind closes
      * whatever is still open. */
-    enum { HS_R, HS_W, OUT_R, OUT_W, ERR_R, ERR_W, TP_R, TP_W, IO_N };
-    int io[IO_N] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    enum { HS_R, HS_W, TP_R, TP_W, IO_N };
+    int io[IO_N] = {-1, -1, -1, -1};
     struct launch_undo u = {
         .store = store,
         .id = id,
@@ -660,37 +634,40 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     if (hold_cloexec_pipe(io + HS_R) != 0) {
         launch_die(&u, "hold: pipe failed");
     }
-    if (!console_mode &&
-        (hold_cloexec_pipe(io + OUT_R) != 0 || hold_cloexec_pipe(io + ERR_R) != 0)) {
-        launch_die(&u, "hold: pipe failed");
-    }
-    if (!restart_enabled && hold_cloexec_pipe(io + TP_R) != 0) {
+    /* A waiter stays behind as the program's parent to record its exit code:
+     * foreground (it reports that code), -w, --rm, --restart (whose supervisor
+     * is the waiter), and every root-managed call (its public entry must be
+     * updated on exit - SPEC section 5). A plain -d call leaves nothing behind.
+     * A TTY call's broker is its parent already. */
+    bool waiter = !console_mode && (opts->wait || tail || opts->auto_remove || restart_enabled ||
+                                    store->kind == STORE_SYSTEM_MANAGED);
+    /* The waiter (or broker) reports the program's pid back over this pipe. */
+    if (!restart_enabled && (console_mode || waiter) && hold_cloexec_pipe(io + TP_R) != 0) {
         launch_die(&u, "hold: pipe failed");
     }
 
     child_identity_prepare(id, run_name, console_mode);
+    /* Only under the fallback (Unix sockets denied, or forced) does a call
+     * carry the cross-shell lock; asked once, before the fork (a TTY call's
+     * broker decides by its own listener). */
+    bool fallback = !console_mode && hold_console_fallback_selected();
+    g_liveness_lock = fallback && waiter;
+    g_output_lock = fallback && !waiter;
     pid_t pid = fork();
     if (pid < 0) {
         launch_die(&u, "hold: fork failed");
     }
     if (pid == 0) {
         close(io[HS_R]);
-        if (io[OUT_R] >= 0) close(io[OUT_R]);
-        if (io[ERR_R] >= 0) close(io[ERR_R]);
         if (io[TP_R] >= 0) close(io[TP_R]);
         if (restart_enabled) {
-            if (dup2(io[OUT_W], STDOUT_FILENO) < 0 || dup2(io[ERR_W], STDERR_FILENO) < 0) {
-                child_fail_errno(io[HS_W]);
-            }
-            if (io[OUT_W] > STDERR_FILENO) close(io[OUT_W]);
-            if (io[ERR_W] > STDERR_FILENO) close(io[ERR_W]);
             run_restart_supervisor(store, id, io[HS_W], interactive_stdin,
                                    envc, env, clean_child_env,
                                    resolved_exec_path, launch_argv,
                                    restart_policy, opts->restart_delay_seconds,
                                    pin_privileged_cwd);
         }
-        if (!console_mode) {
+        if (waiter) {
             /* Double-fork: this middle process becomes the waiter; the record
              * pid/pgid/sid are the TARGET's. Its own session first, so killing
              * the caller's process group cannot leave the exit unrecorded (the
@@ -705,15 +682,13 @@ int hold_perform_start_options(const struct hold_invocation *inv,
                  * lifetime lock on the log tells shells in other PID namespaces
                  * the call is alive - taken after the fork, so the target never
                  * holds it. The waiter itself is the original, below. */
-                if (hold_console_fallback_selected()) hold_supervisor_lock_log(log_path);
+                if (g_liveness_lock) hold_supervisor_lock_log(log_path);
                 /* Write the target pid BEFORE closing the handshake pipe, so
                  * the parent never sees exec-success without a pid to read. */
                 if (io[TP_W] >= 0) {
                     (void)hold_write_all(io[TP_W], &target, sizeof(target));
                     close(io[TP_W]);
                 }
-                if (io[OUT_W] >= 0) close(io[OUT_W]);
-                if (io[ERR_W] >= 0) close(io[ERR_W]);
                 close(io[HS_W]);
                 hold_close_stdio_to_devnull();
                 signal(SIGTERM, SIG_IGN);
@@ -753,23 +728,18 @@ int hold_perform_start_options(const struct hold_invocation *inv,
                                       console_init_rows, console_init_cols);
             _exit(127);
         }
-        if (dup2(io[OUT_W], STDOUT_FILENO) < 0 || dup2(io[ERR_W], STDERR_FILENO) < 0) {
-            child_fail_errno(io[HS_W]);
-        }
-        if (io[OUT_W] > STDERR_FILENO) close(io[OUT_W]);
-        if (io[ERR_W] > STDERR_FILENO) close(io[ERR_W]);
+        redirect_output_to_log(log_path, io[HS_W], g_output_lock);
         execv(resolved_exec_path, launch_argv);
         child_fail_errno(io[HS_W]);
     }
 
-    pid_t supervisor_pid = pid;
     u.reap_pid = pid;
     u.group = pid;
     u.supervisor = pid;
     u.unlink_log = owns_new_log;
     close(io[HS_W]);
     io[HS_W] = -1;
-    for (int w = OUT_W; w < IO_N; w += 2) {
+    for (int w = TP_W; w < IO_N; w += 2) {
         if (io[w] >= 0) {
             close(io[w]);
             io[w] = -1;
@@ -814,20 +784,10 @@ int hold_perform_start_options(const struct hold_invocation *inv,
 
     /* The target's identity, read first: a leader that exits at once (its
      * group living on, as in `sh -c 'worker & exit'`) leaves nothing to read
-     * once we have spent time spawning the logger. */
+     * a moment later. */
     uint64_t id_starttime = 0, id_exe_dev = 0, id_exe_ino = 0;
     hold_read_proc_stat_tokens(pid, NULL, &id_starttime);
     hold_read_proc_exe(pid, &id_exe_dev, &id_exe_ino);
-
-    if (!console_mode) {
-        int logger_rc = spawn_log_capture(io[OUT_R], io[ERR_R], log_path);
-        io[OUT_R] = -1;
-        io[ERR_R] = -1;
-        if (logger_rc != 0) {
-            u.reap_pid = supervisor_pid;
-            launch_die(&u, "hold: logger fork failed");
-        }
-    }
 
     struct hold_run_record r;
     hold_record_init_running(&r, id, log_path, pid, pid, pid, start_unix_ns,
@@ -850,6 +810,13 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     }
     r.auto_remove = opts->auto_remove;
     r.pid_ns = hold_current_pid_ns();
+    /* Whether a supervisor holds the lifetime log lock - a waiter under the
+     * fallback, or a broker whose endpoint came up as a FIFO - so that the
+     * lock going away means the call has ended. (A plain -d call's output
+     * lock says only that it runs: a program may close its output.) */
+    struct stat ep;
+    r.liveness_lock = console_mode ? (console_sock[0] && lstat(console_sock, &ep) == 0 && S_ISFIFO(ep.st_mode))
+                                   : g_liveness_lock;
     if (console_sock[0]) {
         r.has_console = true;
         copy_field(&u, r.console_sock, sizeof(r.console_sock), console_sock, "hold: console socket path too long");
@@ -857,6 +824,7 @@ int hold_perform_start_options(const struct hold_invocation *inv,
     r.recipe.mode_interactive = interactive_stdin;
     r.recipe.mode_tty = console_mode;
     r.recipe.mode_detach = !tail && !console_mode;
+    r.recipe.mode_wait = waiter;
     r.recipe.allow_multi = false;
     if (envc > 0 && hold_copy_argv(&r.recipe.env, envc, env) != 0) {
         launch_die(&u, "hold: failed to copy env metadata");

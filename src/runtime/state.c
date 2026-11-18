@@ -105,16 +105,23 @@ static enum run_state eval_state(const struct hold_run_record *r, const char *cu
         return STATE_FAILED;
     if (r->has_boot && current_boot && strcmp(r->boot_id, current_boot) != 0) return STATE_STALE;
     if (r->has_exit_code) return STATE_EXITED;
-    /* No stamp and no supervisor answering: most likely it ended with its
-     * namespace - but this shell cannot know, so it says so (and purge's
-     * sweeps leave it alone). */
-    if (!supervisor_holds_log(r)) return STATE_UNKNOWN;
-    if (elsewhere) *elsewhere = true;
-    return STATE_RUNNING;
+    if (supervisor_holds_log(r)) {
+        if (elsewhere) *elsewhere = true;
+        return STATE_RUNNING;
+    }
+    /* Its supervisor held a lock for the call's life and no longer does: it
+     * ended (with the shell that started it) before recording an exit. Only a
+     * call that never carried the lock - started without the fallback - is
+     * beyond what this shell can know. */
+    return r->liveness_lock ? STATE_EXITED : STATE_UNKNOWN;
 }
 
 enum run_state hold_eval_state(const struct hold_run_record *r, const char *current_boot) {
     return eval_state(r, current_boot, NULL);
+}
+
+bool hold_call_records_exit(const struct hold_run_record *r) {
+    return r->has_console || r->recipe.mode_wait;
 }
 
 bool hold_call_elsewhere(const struct hold_run_record *r, const char *current_boot) {
