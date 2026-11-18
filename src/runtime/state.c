@@ -89,19 +89,23 @@ static bool supervisor_holds_log(const struct hold_run_record *r) {
     return held;
 }
 
-/* What this process can see, corrected for what it cannot: launched in another
- * PID namespace, a call whose pid means nothing here - and with no exit
- * stamped - is still running if its supervisor holds the log. *elsewhere says
- * so. In the launching namespace local evidence stays authoritative (a call
- * that just exited is ended, even before its waiter stamps it). */
+/* What this process can tell about a call. Launched in another PID namespace,
+ * the call's pid means nothing here - it may even name an unrelated process -
+ * so it is never consulted: an exit stamp says the call ended, and otherwise
+ * its supervisor's lock on the log says whether it still runs (*elsewhere).
+ * In the launching namespace (and where there are none, macOS) local
+ * evidence decides, as always: a call that just exited is ended even before
+ * its waiter stamps it. */
 static enum run_state eval_state(const struct hold_run_record *r, const char *current_boot, bool *elsewhere) {
     if (elsewhere) *elsewhere = false;
-    enum run_state st = eval_local_state(r, current_boot);
-    if (st == STATE_RUNNING || st == STATE_FAILED || r->has_exit_code) return st;
     uint64_t here = hold_current_pid_ns();
-    if (r->pid_ns == 0 || here == 0 || r->pid_ns == here) return st;
-    if (r->has_boot && current_boot && strcmp(r->boot_id, current_boot) != 0) return st;
-    if (!supervisor_holds_log(r)) return st;
+    bool foreign = r->pid_ns != 0 && here != 0 && r->pid_ns != here;
+    if (!foreign) return eval_local_state(r, current_boot);
+    if ((r->has_state && strcmp(r->state, "failed") == 0) || (r->has_launch_error && r->launch_error[0] != '\0'))
+        return STATE_FAILED;
+    if (r->has_boot && current_boot && strcmp(r->boot_id, current_boot) != 0) return STATE_STALE;
+    if (r->has_exit_code) return STATE_EXITED;
+    if (!supervisor_holds_log(r)) return STATE_EXITED; /* ended, its exit never recorded */
     if (elsewhere) *elsewhere = true;
     return STATE_RUNNING;
 }
