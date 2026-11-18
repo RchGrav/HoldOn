@@ -80,7 +80,8 @@ static int attach_data_sink(void *ctx, const unsigned char *bytes, size_t n) {
 }
 
 int hold_run_native_console(const char *sock_path) {
-    int sock = hold_connect_console_socket(sock_path);
+    int writer = -1;
+    int sock = hold_open_channel(sock_path, 'A', &writer);
     if (sock < 0) {
         int e = errno;
         fprintf(stderr, "hold: cannot attach: %s\n", strerror(e));
@@ -111,7 +112,7 @@ int hold_run_native_console(const char *sock_path) {
     bool stdin_open = true;
     struct hold_term_detach detach;
     hold_term_detach_init(&detach, g_detach_keys, g_detach_key_count);
-    if (hold_write_all(sock, CONSOLE_ATTACH_MAGIC, CONSOLE_ATTACH_MAGIC_LEN) != 0) {
+    if (hold_write_all(writer, CONSOLE_ATTACH_MAGIC, CONSOLE_ATTACH_MAGIC_LEN) != 0) {
         rc = 3;
         goto out;
     }
@@ -120,7 +121,7 @@ int hold_run_native_console(const char *sock_path) {
         if (g_resized) {
             struct winsize ws;
             g_resized = 0;
-            if (terminal_size(&ws) == 0 && send_resize(sock, &ws) != 0) {
+            if (writer >= 0 && terminal_size(&ws) == 0 && send_resize(writer, &ws) != 0) {
                 rc = 3;
                 break;
             }
@@ -144,7 +145,7 @@ int hold_run_native_console(const char *sock_path) {
             break;
         }
         if (detach.pending_len > 0 && (sr == 0 || hold_term_detach_timeout_ms(&detach) == 0)) {
-            if (hold_term_detach_flush(&detach, attach_data_sink, &sock) != 0) {
+            if (hold_term_detach_flush(&detach, attach_data_sink, &writer) != 0) {
                 rc = 3;
                 break;
             }
@@ -158,12 +159,12 @@ int hold_run_native_console(const char *sock_path) {
                 if (interactive) {
                     for (ssize_t i = 0; i < n; i++) {
                         int completed = 0;
-                        if (hold_term_detach_feed(&detach, buf[i], attach_data_sink, &sock, &completed) != 0) {
+                        if (hold_term_detach_feed(&detach, buf[i], attach_data_sink, &writer, &completed) != 0) {
                             rc = 3;
                             break;
                         }
                         if (completed == 1) {
-                            if (write_frame(sock, CONSOLE_FRAME_DETACH, NULL, 0) != 0) {
+                            if (write_frame(writer, CONSOLE_FRAME_DETACH, NULL, 0) != 0) {
                                 rc = 3;
                                 break;
                             }
@@ -173,17 +174,21 @@ int hold_run_native_console(const char *sock_path) {
                     if (rc != 0) {
                         break;
                     }
-                } else if (write_frame(sock, CONSOLE_FRAME_DATA, buf, (uint16_t)n) != 0) {
+                } else if (write_frame(writer, CONSOLE_FRAME_DATA, buf, (uint16_t)n) != 0) {
                     rc = 3;
                     break;
                 }
             } else if (n == 0) {
-                if (hold_term_detach_flush(&detach, attach_data_sink, &sock) != 0) {
+                if (hold_term_detach_flush(&detach, attach_data_sink, &writer) != 0) {
                     rc = 3;
                     break;
                 }
                 stdin_open = false;
-                shutdown(sock, SHUT_WR);
+                if (writer == sock) shutdown(sock, SHUT_WR);
+                else {
+                    close(writer);
+                    writer = -1;
+                }
             } else if (errno != EINTR) {
                 rc = 3;
                 break;
@@ -232,6 +237,7 @@ out:
         (void)hold_write_all(STDOUT_FILENO, "\033[?25h", 6);
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_termios);
     }
+    if (writer >= 0 && writer != sock) close(writer);
     close(sock);
     return rc;
 }

@@ -30,7 +30,7 @@ int hold_format_console_sock_path(const struct hold_store *store,
  * returning — the broker forks and execs the target after this call, and that
  * process must run in the caller's original cwd, so fchdir failure is fatal
  * (never launch the target in the wrong directory). */
-static int console_socket_in_dir(const char *sock_path, bool bind_listener) {
+static int console_socket_in_dir(const char *sock_path, bool bind_listener, int *fifo_writer) {
     struct sockaddr_un addr;
     char dir[HOLD_PATH_MAX];
     const char *slash = strrchr(sock_path, '/');
@@ -53,9 +53,21 @@ static int console_socket_in_dir(const char *sock_path, bool bind_listener) {
     int err = 0;
     int cwd_fd = -1;
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0) {
+    if (fd < 0 && fifo_writer && (errno == EPERM || errno == EACCES || errno == EAFNOSUPPORT)) {
+        if (mkfifo(sock_path, 0600) < 0) return -1;
+        int flags = O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
+        fd = open(sock_path, flags | O_RDONLY);
+        if (fd >= 0) {
+            *fifo_writer = open(sock_path, flags | O_WRONLY);
+            if (*fifo_writer >= 0) return fd;
+            close(fd);
+        }
+        int saved = errno;
+        unlink(sock_path);
+        errno = saved;
         return -1;
     }
+    if (fd < 0) return -1;
 #ifdef HOLD_NEED_SOCKET_CLOEXEC
     if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
         err = errno;
@@ -109,8 +121,8 @@ out:
     return fd;
 }
 
-int hold_make_console_listener(const char *sock_path) {
-    return console_socket_in_dir(sock_path, true);
+int hold_make_console_listener(const char *sock_path, int *fifo_writer) {
+    return console_socket_in_dir(sock_path, true, fifo_writer);
 }
 
 int hold_connect_console_socket(const char *sock_path) {
@@ -120,7 +132,7 @@ int hold_connect_console_socket(const char *sock_path) {
         errno = ENOTSOCK;
         return -1;
     }
-    int fd = console_socket_in_dir(sock_path, false);
+    int fd = console_socket_in_dir(sock_path, false, NULL);
     if (fd < 0) {
         if (errno == ENAMETOOLONG) {
             fprintf(stderr, "hold: console socket path is too long\n");

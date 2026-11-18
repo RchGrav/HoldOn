@@ -61,6 +61,7 @@ struct broker {
     const char *sock_path; /* NULL/"" = nothing to unlink */
     int parent_pipe;
     int listener;
+    int fifo_writer;
     int master;
     int logfd;
     pid_t target; /* >0: our held child (waited, SIGKILLed on cleanup) */
@@ -106,6 +107,7 @@ static void broker_cleanup_and_exit(struct broker *b, int exit_code) {
         }
     }
     if (b->parent_pipe >= 0) close(b->parent_pipe);
+    if (b->fifo_writer >= 0) close(b->fifo_writer);
     if (b->listener >= 0) close(b->listener);
     if (b->master >= 0) close(b->master);
     if (b->logfd >= 0) close(b->logfd);
@@ -221,6 +223,7 @@ static int take_snapshot(const struct broker *b, struct hold_snapshot *snap) {
 /* ---- the attach client: magic sniff, then 3-byte frames or raw ---------- */
 
 struct attach_client {
+    int output;
     int fd;            /* -1 = no client attached */
     bool input_closed; /* client half-closed its write side */
     bool decided;
@@ -232,6 +235,7 @@ struct attach_client {
 
 static void drop_attach(struct attach_client *c) {
     if (c->fd >= 0) {
+        if (c->output != c->fd) close(c->output);
         close(c->fd);
     }
     memset(c, 0, sizeof(*c));
@@ -315,7 +319,7 @@ static int repaint_attach(struct broker *b, struct attach_client *c) {
     size_t len = 0, cap = 0;
     int rc = hold_snapshot_repaint(&snap, &buf, &len, &cap);
     hold_snapshot_free(&snap);
-    if (rc == 0) rc = write_all_wait(c->fd, buf, len);
+    if (rc == 0) rc = write_all_wait(c->output, buf, len);
     free(buf);
     return rc;
 }
@@ -339,6 +343,7 @@ struct wait_request {
 };
 
 struct control_client {
+    int output;
     int fd; /* -1 = free slot */
     enum control_phase phase;
     int64_t accepted_ms;
@@ -350,7 +355,10 @@ struct control_client {
 };
 
 static void drop_control(struct control_client *c) {
-    if (c->fd >= 0) close(c->fd);
+    if (c->fd >= 0) {
+        if (c->output != c->fd) close(c->output);
+        close(c->fd);
+    }
     free(c->buf);
     free(c->wait.match);
     if (c->wait.re_ok) regfree(&c->wait.re);
@@ -363,8 +371,8 @@ static void control_reply(struct control_client *c, const char *header, const vo
     size_t hl = strlen(header);
     unsigned char len[4];
     console_store_be32(len, (uint32_t)(hl + body_len));
-    if (write_all_wait(c->fd, len, 4) == 0 && write_all_wait(c->fd, header, hl) == 0 && body_len > 0)
-        (void)write_all_wait(c->fd, body, body_len);
+    if (write_all_wait(c->output, len, 4) == 0 && write_all_wait(c->output, header, hl) == 0 && body_len > 0)
+        (void)write_all_wait(c->output, body, body_len);
     drop_control(c);
 }
 
@@ -1025,6 +1033,7 @@ static void sniff_connection(struct broker *b, struct control_client *c, struct 
     }
     memset(cl, 0, sizeof(*cl));
     cl->fd = c->fd;
+    cl->output = c->output;
     cl->needs_repaint = true;
     c->fd = -1;
     drop_control(c);
@@ -1042,6 +1051,7 @@ static void sniff_timeout(struct control_client *c, struct attach_client *cl, in
     }
     memset(cl, 0, sizeof(*cl));
     cl->fd = c->fd;
+    cl->output = c->output;
     cl->decided = true; /* raw */
     cl->needs_repaint = true;
     c->fd = -1;
@@ -1110,12 +1120,28 @@ static void broker_serve(struct broker *b) {
         }
 
         if (pr > 0 && (pfds[listener_idx].revents & POLLIN)) {
-            int next = accept(b->listener, NULL, NULL);
+            bool fifo = b->fifo_writer >= 0;
+            int output = -1;
+            char kind = 0;
+            int next = fifo ? hold_fifo_accept(b->listener, b->sock_path, &kind, &output)
+                            : accept(b->listener, NULL, NULL);
+            if (!fifo) output = next;
             if (next >= 0) {
                 int slot = -1;
                 for (int i = 0; i < BROKER_MAX_CONTROL && slot < 0; i++)
                     if (ctl[i].fd < 0) slot = i;
-                if (set_fd_nonblocking(next) != 0 || !authorize_client(b, next)) {
+                if (fifo && kind == 'A') {
+                    bool available = cl.fd < 0;
+                    if (write(output, available ? "R" : "B", 1) == 1 && available) {
+                        memset(&cl, 0, sizeof(cl));
+                        cl.fd = next;
+                        cl.output = output;
+                        cl.needs_repaint = true;
+                    } else {
+                        close(output);
+                        close(next);
+                    }
+                } else if (!fifo && (set_fd_nonblocking(next) != 0 || !authorize_client(b, next))) {
                     close(next);
                 } else if (slot < 0) {
                     /* Full: say so in protocol, so the client knows nothing
@@ -1124,17 +1150,23 @@ static void broker_serve(struct broker *b) {
                     unsigned char frame[4 + sizeof(busy) - 1];
                     console_store_be32(frame, (uint32_t)(sizeof(busy) - 1));
                     memcpy(frame + 4, busy, sizeof(busy) - 1);
-                    (void)!write(next, frame, sizeof(frame));
+                    if (fifo) {
+                        (void)!write(output, "B", 1);
+                        close(output);
+                    } else (void)!write(next, frame, sizeof(frame));
                     close(next);
                 } else {
                     /* Every connection starts undecided; its first bytes
                      * route it to control or attach (polled next pass). */
                     memset(&ctl[slot], 0, sizeof(ctl[slot]));
                     ctl[slot].fd = next;
-                    ctl[slot].phase = CTL_SNIFF;
+                    ctl[slot].output = output;
+                    ctl[slot].phase = fifo ? CTL_READING : CTL_SNIFF;
                     ctl[slot].accepted_ms = now_ms();
                     ctl[slot].gen = ++b->next_gen;
-                    if (hold_console_peer_pid(next, &ctl[slot].peer_pid) != 0) ctl[slot].peer_pid = 0;
+                    if (fifo) {
+                        if (write(output, "R", 1) != 1) drop_control(&ctl[slot]);
+                    } else if (hold_console_peer_pid(next, &ctl[slot].peer_pid) != 0) ctl[slot].peer_pid = 0;
                 }
             }
         }
@@ -1182,7 +1214,7 @@ static void broker_serve(struct broker *b) {
                 else flush_screen_output(b);
                 /* Before the repaint, the client gets nothing: the repaint
                  * already includes these bytes. */
-                if (cl.fd >= 0 && !cl.needs_repaint && write_all_wait(cl.fd, buf, (size_t)n) != 0) {
+                if (cl.fd >= 0 && !cl.needs_repaint && write_all_wait(cl.output, buf, (size_t)n) != 0) {
                     drop_attach(&cl);
                 }
             } else if (n == 0) {
@@ -1230,7 +1262,7 @@ static void broker_serve(struct broker *b) {
         if (ctl[i].fd >= 0) drop_control(&ctl[i]);
     }
     for (int i = 0; i < BROKER_MAX_MSGS; i++) free(b->msgs[i].text);
-    if (cl.fd >= 0) close(cl.fd);
+    if (cl.fd >= 0) drop_attach(&cl);
     broker_cleanup_and_exit(b, 0);
 }
 
@@ -1257,6 +1289,7 @@ void hold_run_console_broker(int parent_pipe,
         .sock_path = sock_path,
         .parent_pipe = parent_pipe,
         .listener = -1,
+        .fifo_writer = -1,
         .master = -1,
         .logfd = -1,
         .target = -1,
@@ -1271,7 +1304,7 @@ void hold_run_console_broker(int parent_pipe,
     if (!b.screen) {
         broker_fail_errno(&b, ENOMEM);
     }
-    b.listener = hold_make_console_listener(sock_path);
+    b.listener = hold_make_console_listener(sock_path, &b.fifo_writer);
     if (b.listener < 0) {
         broker_fail_errno(&b, errno);
     }

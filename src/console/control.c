@@ -32,7 +32,14 @@ int hold_console_request(const char *sock_path, const char *request, size_t requ
         errno = EMSGSIZE;
         return -1;
     }
-    int fd = hold_connect_console_socket(sock_path);
+    int output = -1;
+    int fd = hold_open_channel(sock_path, 'C', &output);
+    if (fd < 0 && errno == EBUSY) {
+        *reply = (unsigned char *)strdup("error busy\n");
+        if (!*reply) return -1;
+        *reply_len = strlen((const char *)*reply);
+        return 0;
+    }
     if (fd < 0) return -1;
     struct sigaction ign, old;
     memset(&ign, 0, sizeof(ign));
@@ -44,7 +51,9 @@ int hold_console_request(const char *sock_path, const char *request, size_t requ
     console_store_be32(hdr + CONSOLE_CONTROL_MAGIC_LEN, (uint32_t)request_len);
     int rc = -1;
     unsigned char lenbuf[4];
-    if (hold_write_all(fd, hdr, sizeof(hdr)) != 0 || hold_write_all(fd, request, request_len) != 0) goto out;
+    size_t skip = (fd == output) ? 0 : CONSOLE_CONTROL_MAGIC_LEN;
+    if (hold_write_all(output, hdr + skip, sizeof(hdr) - skip) != 0 ||
+        hold_write_all(output, request, request_len) != 0) goto out;
     if (read_full(fd, lenbuf, 4) != 0) goto out;
     uint32_t n = console_load_be32(lenbuf);
     if (n > (64u << 20)) {
@@ -65,6 +74,7 @@ out:
     {
         int saved = errno;
         sigaction(SIGPIPE, &old, NULL);
+        if (fd != output) close(output);
         close(fd);
         errno = saved;
     }
