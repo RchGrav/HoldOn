@@ -283,6 +283,7 @@ for name in \
   HOLD_TEST_FAIL_PUBLIC_INDEX_WRITE \
   HOLD_FAKE_SUDO_ARGV \
   HOLD_FAKE_SUDO_RC \
+  HOLD_CONSOLE_TRANSPORT \
   HOLD_CALL_ID \
   HOLD_CALL_NAME \
   HOLD_CALL_PARENT \
@@ -4172,7 +4173,7 @@ test_fifo_console_full_capability() {
     [ "$("$HOLD_BIN" wait "fv$n" --exit --timeout 5000)" = 0 ] || { echo "attach $n did not detach cleanly" >&2; return 1; }
   done
   [ "$("$HOLD_BIN" peek ff | grep -c '^GOT via-attach-')" = 2 ] || { "$HOLD_BIN" peek ff >&2; return 1; }
-  mkdir "$ep.abcdef" && mkfifo "$ep.abcdef/in" "$ep.abcdef/out" || return 1
+  as_user /bin/sh -c 'mkdir "$1" && mkfifo "$1/in" "$1/out"' sh "$ep.abcdef" || return 1
   "$HOLD_BIN" end ff fw >/dev/null 2>&1 || true
   "$HOLD_BIN" purge ff >/dev/null || return 1
   [ ! -e "$ep.abcdef" ] || { echo "half-made channel left behind" >&2; return 1; }
@@ -4218,7 +4219,7 @@ test_fifo_console_access() {
   "$HOLD_BIN" peek fa | grep -qx 'got:from-root' || { "$HOLD_BIN" peek fa >&2; return 1; }
   if id nobody >/dev/null 2>&1 && "$SUDO_BIN" -n -u nobody true >/dev/null 2>&1; then
     cdir=$(dirname "$ep")
-    chmod 0711 "$ACTOR_HOME" "$ACTOR_HOME/.local" "$ACTOR_HOME/.local/state" "$HOME/.local/state/hold" || return 1
+    chmod 0711 "$ACTOR_HOME" "$ACTOR_HOME/.local" "$ACTOR_HOME/.local/state" "$ACTOR_HOME/.local/state/hold" || return 1
     chmod 0733 "$cdir" && chmod 0622 "$ep" || return 1
     ack=$("$SUDO_BIN" -n -u nobody env -i PATH=/usr/bin:/bin python3 - "$ep" <<'PY'
 import os, select, sys, tempfile
