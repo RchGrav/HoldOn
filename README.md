@@ -370,7 +370,7 @@ Flags look like Docker's where they exist (and cluster the same way: `-dit`):
 `--detach-keys`. A plain `-d` call leaves nothing behind: its output goes
 straight into its log, and no hold process stays to watch it. `-w` keeps a
 small waiter as its parent, which records the exit code (`--rm`, `--restart`,
-foreground and root calls always have one). Every call gets its own session and process group; before any
+and foreground calls always have one). Every call gets its own session and process group; before any
 signal, hold re-checks the boot ID and the leader's identity, so a recycled PID
 is never killed by mistake. Root or `--system` calls live in a separate system
 store. More than nohup, less than systemd.

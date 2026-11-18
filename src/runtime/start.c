@@ -635,12 +635,11 @@ int hold_perform_start_options(const struct hold_invocation *inv,
         launch_die(&u, "hold: pipe failed");
     }
     /* A waiter stays behind as the program's parent to record its exit code:
-     * foreground (it reports that code), -w, --rm, --restart (whose supervisor
-     * is the waiter), and every root-managed call (its public entry must be
-     * updated on exit - SPEC section 5). A plain -d call leaves nothing behind.
-     * A TTY call's broker is its parent already. */
-    bool waiter = !console_mode && (opts->wait || tail || opts->auto_remove || restart_enabled ||
-                                    store->kind == STORE_SYSTEM_MANAGED);
+     * foreground (it reports that code), -w, --rm, and --restart (whose
+     * supervisor is the waiter). A plain -d call leaves nothing behind - root's
+     * too: other users see a global call's liveness from its process group,
+     * not from the public entry's hint. A TTY call's broker is its parent. */
+    bool waiter = !console_mode && (opts->wait || tail || opts->auto_remove || restart_enabled);
     /* The waiter (or broker) reports the program's pid back over this pipe. */
     if (!restart_enabled && (console_mode || waiter) && hold_cloexec_pipe(io + TP_R) != 0) {
         launch_die(&u, "hold: pipe failed");

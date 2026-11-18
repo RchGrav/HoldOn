@@ -189,6 +189,22 @@ static int collect_list_private(const struct hold_store *store, const char *name
  * "hidden" -- exists-but-not-yours-to-see rather than "-"'s none. A row
  * carries the call id, its name if published, the honest projected status,
  * CREATED, and the ports root last observed. */
+/* Is a global call running? Anyone can see root's processes (/proc on Linux,
+ * sysctl on macOS), so look: live members of its process group in its
+ * session. The entry's hint is only what root wrote when it started (or a
+ * waiter at exit); it decides only when there is no group to look at or the
+ * process table cannot be read. Display only: acting on a global call goes
+ * through root, which checks the private record first. */
+static bool public_call_running(const struct hold_public_index *pi) {
+    bool hint = pi->state_hint[0] && strcmp(pi->state_hint, "running") == 0;
+    if (pi->has_exit_code) return false;
+    if (pi->pgid <= 1 || pi->sid <= 0) return hint;
+    enum group_liveness gl = hold_group_session_liveness(pi->pgid, pi->sid);
+    if (gl == GROUP_LIVE) return true;
+    if (gl == GROUP_EMPTY || gl == GROUP_ZOMBIE_ONLY) return false;
+    return hint;
+}
+
 static int collect_list_public(const struct hold_store *store, const char *name_filter,
                                bool running_only, struct list_rows *rows) {
     DIR *d = opendir(store->public_dir);
@@ -201,7 +217,7 @@ static int collect_list_public(const struct hold_store *store, const char *name_
         struct hold_public_index pi;
         if (hold_load_public_index(path, &pi) != 0 || strcmp(pi.id, file_id) != 0) continue;
         if (name_filter && (!pi.has_name || strcmp(pi.name, name_filter) != 0)) continue;
-        bool running = pi.state_hint[0] && strcmp(pi.state_hint, "running") == 0;
+        bool running = public_call_running(&pi);
         if (running_only && !running) continue;
         struct list_row row;
         memset(&row, 0, sizeof(row));
@@ -210,7 +226,7 @@ static int collect_list_public(const struct hold_store *store, const char *name_
         snprintf(row.id, sizeof(row.id), "%s", display_id);
         snprintf(row.owner, sizeof(row.owner), "hidden");
         if (pi.has_name && pi.name[0]) snprintf(row.name, sizeof(row.name), "%s", pi.name);
-        snprintf(row.state, sizeof(row.state), "%s", pi.state_hint[0] ? pi.state_hint : "unknown");
+        snprintf(row.state, sizeof(row.state), "%s", running ? "running" : "exited");
         row.running = running;
         row.redacted = true;
         row.start_unix_ns = 0;
@@ -224,8 +240,10 @@ static int collect_list_public(const struct hold_store *store, const char *name_
             snprintf(row.status, sizeof(row.status), "Up %s", human);
         } else if (running) {
             snprintf(row.status, sizeof(row.status), "Up");
+        } else if (pi.has_exit_code) {
+            snprintf(row.status, sizeof(row.status), "Exited (%d)", pi.exit_code);
         } else {
-            snprintf(row.status, sizeof(row.status), "%s", pi.state_hint[0] ? pi.state_hint : "Unknown");
+            snprintf(row.status, sizeof(row.status), "Exited");
         }
         /* The table never shows a raw ISO stamp: humanize the published
          * created_at, falling back to "-" when unparseable. */

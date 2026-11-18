@@ -1921,10 +1921,10 @@ test_public_root_index_list_reads_projected_state() {
 }
 JSON
   chmod 0644 "$HOLD_TEST_SYSTEM_STATE_DIR/public/$id.json" || return 1
-  # The projected State.Status ("exited") drives the STATUS column; USER and
-  # COMMAND stay redacted to the literal "hidden". Ended public rows need -a.
+  # A recorded exit reads like any call's ("Exited (7)"); USER and COMMAND
+  # stay redacted to the literal "hidden". Ended public rows need -a.
   "$HOLD_BIN" list -a >"$TEST_ROOT/list.out" 2>"$TEST_ROOT/list.err" || return 1
-  grep -Eq '^deadbeefcafe[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*[[:space:]]exited([[:space:]]|$)' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
+  grep -Eq '^deadbeefcafe[[:space:]]+hidden[[:space:]]+hidden[[:space:]].*[[:space:]]Exited \(7\)([[:space:]]|$)' "$TEST_ROOT/list.out" || { cat "$TEST_ROOT/list.out" >&2; return 1; }
   ! grep -q 'secret' "$TEST_ROOT/list.out"
 }
 
@@ -3538,10 +3538,33 @@ test_drop_alias_matches_prune() {
 
 # G35: SPEC — a public entry whose private record is gone is an orphan;
 # a root purge of the global store sweeps it so no view can resurrect it.
+# Root's plain -d leaves nothing behind either: no waiter rewrites the public
+# entry at exit, so other users' list looks at the call's process group
+# (anyone can) instead of trusting the entry's "running" hint.
+test_global_plain_d_seen_live_by_users() {
+  [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "root actor unavailable"
+  local id public pid parent
+  id=$(as_root "$HOLD_REAL_BIN" -d --name globald -- sleep 300 2>/dev/null | extract_id) || return 1
+  [ -n "$id" ] || return 1
+  public=$(record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/public") || return 1
+  pid=$(sed -n 's/.*"pid": \([0-9]*\).*/\1/p' "$public" | head -n1)
+  [ -n "$pid" ] || { cat "$public" >&2; return 1; }
+  parent=$(ps -o ppid= -p "$pid" | tr -d ' ')
+  ! ps -o args= -p "$parent" | grep -q hold || { echo "root -d left a hold process" >&2; return 1; }
+  "$HOLD_BIN" list -s | grep -Eq "Up .* globald$" || { "$HOLD_BIN" list -s >&2; return 1; }
+  as_root kill -KILL "$pid" || return 1
+  sleep 0.3
+  grep -q '"state_hint": "running"' "$public" || { echo "something rewrote the public entry" >&2; return 1; }
+  ! "$HOLD_BIN" list -s | grep -Eq "Up .* globald$" || { echo "a dead global call still listed as running" >&2; return 1; }
+  "$HOLD_BIN" list -s | grep -Eq "Exited .* globald$" || { "$HOLD_BIN" list -s >&2; return 1; }
+  ! "$HOLD_BIN" list -s -l | grep -q " globald$" || { echo "list --live showed a dead global call" >&2; return 1; }
+  as_root "$HOLD_REAL_BIN" purge -s globald >/dev/null 2>&1 || true
+}
+
 test_orphan_public_entry_swept() {
   [ "$ROOT_ACTOR_AVAILABLE" -eq 1 ] || skip "root actor unavailable"
   local out id json public_json ok _
-  out=$(as_root "$HOLD_REAL_BIN" -d true 2>&1) || return 1
+  out=$(as_root "$HOLD_REAL_BIN" -dw true 2>&1) || return 1
   id=$(printf '%s\n' "$out" | extract_id)
   [ -n "$id" ] || { printf '%s\n' "$out" >&2; return 1; }
   json=$(root_record_path "$id" "$HOLD_TEST_SYSTEM_STATE_DIR/runs") || return 1
@@ -4656,6 +4679,7 @@ run_test "attach is the primary console spelling" test_attach_verb_matches_conso
 run_test "logs to a non-TTY dumps plain raw bytes automatically" test_logs_non_tty_auto_plain
 run_test "list -u shows only the invoking user's calls, even under sudo" test_list_user_scope_only_personal
 run_test "drop removes a call exactly like prune" test_drop_alias_matches_prune
+run_test "root's plain -d is seen live by other users" test_global_plain_d_seen_live_by_users
 run_test "sudo purge sweeps an orphan public entry" test_orphan_public_entry_swept
 run_test "unless-stopped restarts crashes but stays down after end" test_restart_unless_stopped
 run_test "peek prints the screen as text, with a ruler, and as JSON" test_peek_text_ruler_and_json

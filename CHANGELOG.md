@@ -35,10 +35,12 @@
 - A plain `-d` call leaves nothing behind. It is one fork, a new session,
   output straight into its log, and exec, as the original specification
   describes. The waiter that recorded every call's exit code now stays only
-  where it is needed: `-w`, foreground launches, `--rm`, `--restart`, and
-  root-managed calls (whose public entry must be updated when they end). A
+  where it is needed: `-w`, foreground launches, `--rm`, and `--restart`. A
   plain `-d` call lists as `Exited 2 minutes ago`, and `hold wait` prints
-  `-1` with a note; use `-dw` where the exit code matters.
+  `-1` with a note; use `-dw` where the exit code matters. Root's calls
+  included: other users' `list` now sees whether a global call runs by
+  looking at its process group (anyone can), instead of trusting the public
+  entry's hint, so nothing has to stay behind to update it.
 
 ### Removed
 

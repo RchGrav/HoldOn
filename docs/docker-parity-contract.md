@@ -55,8 +55,7 @@ Two launch flags are Hold-native rather than Docker-borrowed:
 A plain `-d` call leaves nothing behind: one fork, a new session, output
 straight into its log, exec. Nothing then records how it ended, so it lists as
 `Exited 2 minutes ago` and `hold wait` prints `-1`. `-w` keeps a waiter;
-foreground launches, `--rm`, `--restart`, and root-managed calls always have
-one (a root call's public entry must be updated when it ends). TTY calls
+foreground launches, `--rm`, and `--restart` always have one. TTY calls
 record their exit through their broker.
 
 ## The call table
