@@ -3842,6 +3842,24 @@ test_wait_match_since_ignores_stale_screen() {
   "$HOLD_BIN" end stale >/dev/null 2>&1 || true
 }
 
+# The screenshot footer wraps within the screen's width instead of stretching
+# the image beside a narrow terminal: a 10x3 screen at scale 1, no ruler, puts
+# CURSOR and SIZE on two lines (160 px wide: the longer one; 3 rows + gutter +
+# 2 lines = 96 px high).
+test_peek_image_footer_wraps_on_narrow_screens() {
+  "$HOLD_BIN" -dt --name narrow -- /bin/sh -c 'stty -echo; sleep 20' >/dev/null || return 1
+  "$HOLD_BIN" resize narrow 10 3 || return 1
+  "$HOLD_BIN" wait narrow --idle 300 --timeout 5000 >/dev/null 2>&1 || true
+  W=$(actor_dir) || return 1
+  "$HOLD_BIN" peek narrow --image "$W/n.png" --scale 1 --no-ruler || return 1
+  python3 - "$W/n.png" <<'PY' || return 1
+import struct, sys
+w, h = struct.unpack(">II", open(sys.argv[1], "rb").read()[16:24])
+assert (w, h) == (160, 96), "footer did not wrap: image is %dx%d" % (w, h)
+PY
+  "$HOLD_BIN" end narrow >/dev/null 2>&1 || true
+}
+
 # Screenshot fidelity: a rounded corner is an arc - it reaches the bottom and
 # right edge midpoints like a square corner does, but leaves the cell centre
 # (where a square corner's lines would meet) empty.
@@ -4506,6 +4524,7 @@ run_test "peek --image draws CJK and emoji glyphs" test_peek_image_draws_cjk_and
 run_test "peek --image draws Hebrew, Ethiopic, sextants, math letters" test_peek_image_draws_other_scripts
 run_test "peek --image: Noto emoji, and invisible characters draw nothing" test_peek_image_emoji_and_invisibles
 run_test "peek --image draws rounded corners as arcs" test_peek_image_rounded_corner
+run_test "peek --image wraps the footer on narrow screens" test_peek_image_footer_wraps_on_narrow_screens
 run_test "the FIFO console keeps full capability" test_fifo_console_full_capability
 run_test "a closed terminal is reported at once, in both console modes" test_console_closed_terminal_is_reported
 run_test "FIFO console: root drives a user's call; others get nothing" test_fifo_console_access

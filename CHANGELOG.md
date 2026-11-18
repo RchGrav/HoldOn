@@ -24,6 +24,9 @@
   gets the exit code.
 - `peek` falling back to the saved screen now says when the console was
   unreachable for another reason, instead of claiming the call ended.
+- On a narrow screen, the screenshot footer (`CURSOR … SIZE … MOUSE …`) was
+  wider than the terminal and stretched the image into an empty band beside
+  it; it now wraps onto lines within the screen's width.
 - On macOS, `hold attach` with stdin from `/dev/null` spun at full CPU:
   macOS `poll()` reports character devices as invalid (`POLLNVAL`), which the
   attach loop ignored. It now reads the end of input.

@@ -686,18 +686,38 @@ int hold_snapshot_write_png(const struct hold_snapshot *snap, const struct hold_
         lm = bl + cw;
         tm = bt + ch;
     }
-    char foot[160] = "", foot_mouse[48] = "";
+    /* The footer: CURSOR, SIZE, and (after a mouse event) MOUSE, three spaces
+     * apart, filling lines no wider than the screen - a narrow screen wraps
+     * it instead of stretching the image beside the terminal. */
+    char seg[3][48] = {"", "", ""};
+    int nseg = 0, seg_line[3] = {0, 0, 0}, seg_col[3] = {0, 0, 0}, lines = 0, foot_chars = 0;
     if (o->footer) {
-        snprintf(foot, sizeof(foot), "CURSOR: col %u, row %u   SIZE: %ux%u", snap->cursor_col, snap->cursor_row,
-                 snap->cols, snap->rows);
+        snprintf(seg[nseg++], sizeof(seg[0]), "CURSOR: col %u, row %u", snap->cursor_col, snap->cursor_row);
+        snprintf(seg[nseg++], sizeof(seg[0]), "SIZE: %ux%u", snap->cols, snap->rows);
         if (o->mouse_marker && snap->meta.has_mouse)
-            snprintf(foot_mouse, sizeof(foot_mouse), "   MOUSE: col %u, row %u", snap->meta.mouse_col,
-                     snap->meta.mouse_row);
+            snprintf(seg[nseg++], sizeof(seg[0]), "MOUSE: col %u, row %u", snap->meta.mouse_col, snap->meta.mouse_row);
+        int avail = snap->cols, col = 0;
+        for (int i = 0; i < nseg; i++)
+            if ((int)strlen(seg[i]) > avail) avail = (int)strlen(seg[i]);
+        lines = 1;
+        for (int i = 0; i < nseg; i++) {
+            int len = (int)strlen(seg[i]);
+            if (col > 0 && col + 3 + len > avail) {
+                lines++;
+                col = 0;
+            }
+            if (col > 0) col += 3;
+            seg_line[i] = lines - 1;
+            seg_col[i] = col;
+            col += len;
+            if (col > foot_chars) foot_chars = col;
+        }
     }
-    int foot_w = (int)(strlen(foot) + strlen(foot_mouse)) * cw;
+    int foot_w = foot_chars * cw;
     int view_w = lm + snap->cols * cw;
-    /* footer: a one-cell blank gutter, then the line */
-    struct fb fb = {view_w > lm + foot_w ? view_w : lm + foot_w, tm + snap->rows * ch + (o->footer ? 2 * ch : 0), NULL};
+    /* footer: a one-cell blank gutter, then its lines */
+    struct fb fb = {view_w > lm + foot_w ? view_w : lm + foot_w, tm + snap->rows * ch + (o->footer ? (1 + lines) * ch : 0),
+                    NULL};
     fb.px = malloc(((size_t)fb.w * 3 + 1) * fb.h);
     if (!fb.px) return -1;
     fill(&fb, 0, 0, fb.w, fb.h, THEME_BG);
@@ -716,11 +736,9 @@ int hold_snapshot_write_png(const struct hold_snapshot *snap, const struct hold_
                   CURSOR_MARK);
     }
     if (o->ruler) draw_ruler(&fb, snap, lm, tm, bl, bt, s, mouse);
-    if (o->footer) {
-        int fy = tm + snap->rows * ch + ch;
-        draw_text(&fb, lm, fy, s, foot, RULER_FG);
-        draw_text(&fb, lm + (int)strlen(foot) * cw, fy, s, foot_mouse, MOUSE_MARK);
-    }
+    for (int i = 0; i < nseg; i++)
+        draw_text(&fb, lm + seg_col[i] * cw, tm + snap->rows * ch + (1 + seg_line[i]) * ch, s, seg[i],
+                  i == 2 ? MOUSE_MARK : RULER_FG);
     int rc = write_png(&fb, f);
     free(fb.px);
     return rc;
